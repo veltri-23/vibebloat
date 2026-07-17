@@ -20,3 +20,16 @@ test("doctor reports missing proof and hook drift", () => {
     { status: "error", check: "codex-hook", message: "Codex hook is missing." },
   ]);
 });
+
+test("doctor CLI returns a three-line repair error when checks fail", () => {
+  const home = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-doctor-"));
+  tempDirectories.push(home);
+  const result = Bun.spawnSync(["bun", "src/cli.ts", "doctor"], {
+    cwd: import.meta.dir + "/..",
+    env: { ...process.env, VIBEBLOAT_HOME: home, CLAUDE_CONFIG_DIR: home, CODEX_HOME: home },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(result.exitCode).toBe(1);
+  expect(new TextDecoder().decode(result.stderr)).toContain("WHAT failed: doctor found 3 problem(s).");
+});

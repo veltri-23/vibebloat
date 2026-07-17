@@ -1,4 +1,7 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { disableGuard, disabledGuardIds } from "./cli/disable";
+import { runDoctor } from "./doctor/checks";
 import { gitStashUntrackedGuard, mcpConfigWrongFileGuard } from "./guards";
 import { runPreToolUse } from "./hooks";
 import { Runtime } from "./runtime";
@@ -6,6 +9,26 @@ import type { Event, Guard } from "./types";
 
 const guards: Guard[] = [gitStashUntrackedGuard, mcpConfigWrongFileGuard];
 const mode = process.argv[2];
+
+function configText(path: string): string {
+  return existsSync(path) ? readFileSync(path, "utf8") : "";
+}
+
+if (mode === "doctor") {
+  const home = process.env.VIBEBLOAT_HOME ?? join(process.env.USERPROFILE ?? process.env.HOME ?? ".", ".vibebloat");
+  const claudeHome = process.env.CLAUDE_CONFIG_DIR ?? join(process.env.USERPROFILE ?? process.env.HOME ?? ".", ".claude");
+  const codexHome = process.env.CODEX_HOME ?? join(process.env.USERPROFILE ?? process.env.HOME ?? ".", ".codex");
+  const findings = runDoctor({
+    guardDirectory: join(home, "guards"),
+    hookConfigs: { claude: configText(join(claudeHome, "settings.json")), codex: configText(join(codexHome, "config.toml")) },
+  });
+  if (findings.length === 0) {
+    process.stdout.write("VibeBloat doctor: healthy.\n");
+    process.exit(0);
+  }
+  process.stderr.write(`WHAT failed: doctor found ${findings.length} problem(s).\nWHY: ${findings.map((finding) => finding.message).join(" ")}\nFIX: vibebloat install\n`);
+  process.exit(1);
+}
 
 if (mode === "disable") {
   try {
@@ -42,5 +65,5 @@ if (mode === "hook") {
   process.exit(response.exitCode);
 }
 
-process.stderr.write("WHAT failed: expected eval, hook, or disable.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts disable <guard-id>\n");
+process.stderr.write("WHAT failed: expected eval, hook, disable, or doctor.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
 process.exit(1);
