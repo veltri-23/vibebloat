@@ -21,6 +21,11 @@ function normalizeCommand(command: string, variables: Record<string, string> = {
   });
 }
 
+function hasCommandKeyword(command: string, binary: string): boolean {
+  const expression = new RegExp(`(^|[^A-Za-z0-9_])${binary.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=$|[^A-Za-z0-9_])`);
+  return expression.test(command);
+}
+
 function tokenize(command: string): string[] {
   const words: string[] = [];
   let word = "";
@@ -87,6 +92,7 @@ export function match(guard: Guard, event: Event): Verdict {
   try {
     const expected = guard.match.command.split(" ");
     const normalizedCommand = normalizeCommand(event.command, event.variables);
+    if (!hasCommandKeyword(normalizedCommand, expected[0])) return { fired: false };
     for (const candidate of shellCommands(normalizedCommand)) {
       if (candidate.binary === "git" && candidate.args[0]) {
         candidate.args[0] = event.aliases?.[candidate.args[0]] ?? candidate.args[0];
