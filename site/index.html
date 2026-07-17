@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>VibeBloat</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Serif:wght@600&family=JetBrains+Mono&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <header><a class="wordmark" href="#top">vibebloat</a><a href="#library">Guard library</a></header>
+    <main id="top">
+      <section class="hero" aria-labelledby="hero-title">
+        <p class="eyebrow">AGENT SAFETY, LOCAL FIRST</p>
+        <h1 id="hero-title">Your agent's memory taxes every prompt.</h1>
+        <p>VibeBloat turns repeat mistakes into local tripwires that block before damage happens.</p>
+        <a class="button" href="#install">Install VibeBloat</a>
+      </section>
+      <section class="receipt" aria-label="Example block receipt">
+        <p>BLOCKED by VibeBloat</p>
+        <code>git stash -u</code>
+        <span>Untracked files remain untouched. Incident: 2026-07-15.</span>
+      </section>
+      <section id="library" aria-labelledby="library-title">
+        <p class="eyebrow">CURATED LIBRARY</p>
+        <h2 id="library-title">Rules stay readable.</h2>
+        <div class="table-wrap"><table role="grid"><thead><tr><th>Rule</th><th>Class</th><th>Confidence</th><th>Binds</th></tr></thead><tbody><tr><td>git-stash-untracked</td><td>A</td><td>high</td><td>Claude Code, Codex, Hermes, OpenClaw</td></tr><tr><td>mcp-config-wrong-file</td><td>B</td><td>high</td><td>Claude Code, Codex</td></tr></tbody></table></div>
+      </section>
+      <section id="install" aria-labelledby="install-title"><h2 id="install-title">Run locally. Keep control.</h2><pre><code>npx vibebloat</code></pre></section>
+    </main>
+    <footer>Apache-2.0 · Local rules, human approval.</footer>
+  </body>
+</html>

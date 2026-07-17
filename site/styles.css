@@ -1,0 +1,14 @@
+:root { --ink-900:#1a1a1a; --ink-700:#404040; --paper:#fafaf7; --paper-tint:#f4f3ee; --line:#e6e4dc; --accent:#9e3700; --block:#d63841; --font-display:'IBM Plex Serif',serif; --font-body:'IBM Plex Sans',sans-serif; --font-mono:'JetBrains Mono',monospace; }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--paper); color:var(--ink-900); font:16px/1.55 var(--font-body); }
+header, main, footer { max-width:1080px; margin:auto; padding-left:24px; padding-right:24px; }
+header { min-height:72px; display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid var(--line); }
+a { color:var(--accent); } .wordmark { color:var(--ink-900); font:600 24px var(--font-display); text-decoration:none; }
+section { padding:72px 0; border-bottom:1px solid var(--line); } .hero { max-width:760px; }
+h1,h2 { font-family:var(--font-display); line-height:1.08; margin:0 0 20px; } h1 { font-size:clamp(42px,7vw,68px); } h2 { font-size:36px; }
+.eyebrow { color:var(--accent); font:600 13px var(--font-mono); letter-spacing:.08em; } .hero p { max-width:620px; font-size:20px; }
+.button { display:inline-block; min-height:44px; padding:10px 16px; background:var(--accent); border-radius:4px; color:white; font-weight:600; text-decoration:none; }
+.receipt { border-top:3px solid var(--block); background:rgba(214,56,65,.04); font-family:var(--font-mono); } .receipt p { color:var(--block); font-weight:600; margin:0 0 6px; } .receipt code,.receipt span { display:block; } .receipt span { color:var(--ink-700); font-size:14px; }
+.table-wrap { overflow-x:auto; } table { width:100%; border-collapse:collapse; text-align:left; } th,td { padding:14px 8px; border-bottom:1px solid var(--line); } th { font:600 13px var(--font-mono); color:var(--ink-700); }
+pre { display:inline-block; margin:0; padding:14px 18px; background:var(--paper-tint); border:1px solid var(--line); font-family:var(--font-mono); } footer { padding-top:32px; padding-bottom:32px; color:var(--ink-700); } :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+@media (max-width:640px) { section { padding:48px 0; } header,main,footer { padding-left:18px; padding-right:18px; } }
