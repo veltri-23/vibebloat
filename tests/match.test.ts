@@ -37,10 +37,12 @@ describe("Phase 0 matcher", () => {
     })).toMatchObject({ fired: true });
   });
 
-  test("fails closed on a Class A parse error and open for Class B", () => {
+  test("fails closed on a Class A parse error and open for Class B, C, and D", () => {
     const malformed = { chokepoint: "shell" as const, command: "git stash -u '" };
     expect(match(gitStashUntrackedGuard, malformed)).toMatchObject({ fired: true, parseError: true });
-    expect(match({ ...gitStashUntrackedGuard, class: "B" }, malformed)).toMatchObject({ fired: false, parseError: true });
+    for (const guardClass of ["B", "C", "D"] as const) {
+      expect(match({ ...gitStashUntrackedGuard, class: guardClass }, malformed)).toMatchObject({ fired: false, parseError: true });
+    }
   });
 
   test("allows exactly one override", () => {
