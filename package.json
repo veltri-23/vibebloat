@@ -1,0 +1,16 @@
+{
+  "name": "vibebloat",
+  "version": "0.0.0-spike",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "scripts": {
+    "test": "bun test",
+    "eval": "bun src/cli.ts eval",
+    "hook": "bun src/cli.ts hook"
+  },
+  "dependencies": {
+    "tree-sitter": "^0.21.1",
+    "tree-sitter-bash": "^0.21.0"
+  }
+}

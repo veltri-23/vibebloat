@@ -1,0 +1,26 @@
+{
+  "guard": {
+    "id": "git-stash-untracked",
+    "class": "A",
+    "provenance": {
+      "incident": "git stash -u deleted operational untracked files",
+      "date": "2026-07-15",
+      "source": "claude-code"
+    },
+    "match": {
+      "chokepoint": "shell",
+      "command": "git stash",
+      "argsContains": ["-u"]
+    },
+    "action": {
+      "type": "block",
+      "message": "blocked",
+      "override": "vibebloat allow git-stash-untracked --once"
+    },
+    "enabled": true
+  },
+  "event": {
+    "chokepoint": "shell",
+    "command": "git stash -u"
+  }
+}

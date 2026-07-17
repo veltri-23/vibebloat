@@ -1,0 +1,35 @@
+import type { Guard } from "./types";
+
+export const gitStashUntrackedGuard: Guard = {
+  id: "git-stash-untracked",
+  class: "A",
+  provenance: {
+    incident: "git stash -u deleted operational untracked files",
+    date: "2026-07-15",
+    source: "claude-code",
+  },
+  match: { chokepoint: "shell", command: "git stash", argsContains: ["-u"] },
+  action: {
+    type: "block",
+    message: "07-15 this deleted untracked files. Use git stash -u -- <path> or commit first.",
+    override: "vibebloat allow git-stash-untracked --once",
+  },
+  enabled: true,
+};
+
+export const mcpConfigWrongFileGuard: Guard = {
+  id: "mcp-config-wrong-file",
+  class: "B",
+  provenance: {
+    incident: "MCP config written to the wrong file loaded zero servers",
+    date: "2026-07-15",
+    source: "codex",
+  },
+  match: { chokepoint: "file", path: ".mcp.json" },
+  action: {
+    type: "block",
+    message: "07-15 this put MCP config in the wrong file. Use .claude.json instead.",
+    override: "vibebloat allow mcp-config-wrong-file --once",
+  },
+  enabled: true,
+};
