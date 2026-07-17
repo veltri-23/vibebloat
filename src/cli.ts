@@ -15,6 +15,16 @@ if (mode === "eval") {
 
 if (mode === "hook") {
   const response = runPreToolUse(guards, JSON.parse(input));
+  if (response.exitCode === 2 && process.argv[3] === "--agent=codex") {
+    process.stdout.write(`${JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "deny",
+        permissionDecisionReason: response.stderr,
+      },
+    })}\n`);
+    process.exit(0);
+  }
   if (response.stderr) process.stderr.write(`${response.stderr}\n`);
   process.exit(response.exitCode);
 }

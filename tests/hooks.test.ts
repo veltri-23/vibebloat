@@ -7,7 +7,7 @@ test("Claude Code Class A hook cell blocks", () => {
 });
 
 test("Codex Class A hook cell blocks", () => {
-  expect(runPreToolUse([gitStashUntrackedGuard], { tool_input: { command: "git stash -u" } })).toMatchObject({ exitCode: 2 });
+  expect(runPreToolUse([gitStashUntrackedGuard], { toolInput: { command: "git stash -u" } })).toMatchObject({ exitCode: 2 });
 });
 
 test("Claude Code Class B file cell blocks", () => {
@@ -15,5 +15,21 @@ test("Claude Code Class B file cell blocks", () => {
 });
 
 test("Codex Class B file cell blocks", () => {
+  expect(runPreToolUse([mcpConfigWrongFileGuard], { toolInput: { file_path: ".mcp.json" } })).toMatchObject({ exitCode: 2 });
+  expect(runPreToolUse([mcpConfigWrongFileGuard], {
+    tool_name: "apply_patch",
+    tool_input: { command: "*** Add File: .mcp.json" },
+  })).toMatchObject({ exitCode: 2 });
   expect(runFileGuard([mcpConfigWrongFileGuard], { chokepoint: "file", path: ".mcp.json" })).toMatchObject({ exitCode: 2 });
+});
+
+test("Codex hook transport emits a deny decision", () => {
+  const result = Bun.spawnSync(["bun", "src/cli.ts", "hook", "--agent=codex"], {
+    cwd: import.meta.dir + "/..",
+    stdin: new Blob([JSON.stringify({ tool_input: { command: "git stash -u" } })]),
+  });
+  expect(result.exitCode).toBe(0);
+  expect(JSON.parse(new TextDecoder().decode(result.stdout))).toMatchObject({
+    hookSpecificOutput: { permissionDecision: "deny" },
+  });
 });
