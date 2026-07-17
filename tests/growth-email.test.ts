@@ -14,3 +14,12 @@ test("email capture is local and forget removes it", () => {
   forgetEmail(directory);
   expect(loadEmail(directory)).toBeUndefined();
 });
+
+test("email forget CLI removes local opt-in", async () => {
+  const directory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-email-"));
+  tempDirectories.push(directory);
+  saveEmail(directory, "person@example.com");
+  const child = Bun.spawn(["bun", "src/cli.ts", "email", "--forget"], { cwd: import.meta.dir + "/..", env: { ...process.env, VIBEBLOAT_HOME: directory }, stdout: "pipe", stderr: "pipe" });
+  expect(await child.exited).toBe(0);
+  expect(loadEmail(directory)).toBeUndefined();
+});

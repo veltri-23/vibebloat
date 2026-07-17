@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { disableGuard, disabledGuardIds } from "./cli/disable";
 import { runDoctor } from "./doctor/checks";
+import { forgetEmail } from "./growth/email-capture";
 import { gitStashUntrackedGuard, mcpConfigWrongFileGuard } from "./guards";
 import { runPreToolUse } from "./hooks";
 import { Runtime } from "./runtime";
@@ -28,6 +29,13 @@ if (mode === "doctor") {
   }
   process.stderr.write(`WHAT failed: doctor found ${findings.length} problem(s).\nWHY: ${findings.map((finding) => finding.message).join(" ")}\nFIX: vibebloat install\n`);
   process.exit(1);
+}
+
+if (mode === "email" && process.argv[3] === "--forget") {
+  const home = process.env.VIBEBLOAT_HOME ?? join(process.env.USERPROFILE ?? process.env.HOME ?? ".", ".vibebloat");
+  forgetEmail(home);
+  process.stdout.write("Email removed.\n");
+  process.exit(0);
 }
 
 if (mode === "disable") {
@@ -65,5 +73,5 @@ if (mode === "hook") {
   process.exit(response.exitCode);
 }
 
-process.stderr.write("WHAT failed: expected eval, hook, disable, or doctor.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
+process.stderr.write("WHAT failed: expected eval, hook, disable, doctor, or email.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
 process.exit(1);
