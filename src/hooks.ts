@@ -1,12 +1,17 @@
 import { Runtime } from "./runtime";
-import type { Event, Guard } from "./types";
+import type { Event, Guard, Verdict } from "./types";
 
 export interface HookResponse {
   exitCode: 0 | 2;
   stderr?: string;
 }
 
-export function runPreToolUse(guards: Guard[], payload: unknown, runtime = new Runtime()): HookResponse {
+interface HookBinding {
+  event: Event;
+  guards: Guard[];
+}
+
+export function bindingFromPreToolUse(guards: Guard[], payload: unknown): HookBinding | undefined {
   const hookPayload = payload as {
     tool_input?: { command?: unknown; file_path?: unknown; path?: unknown };
     toolInput?: { command?: unknown; file_path?: unknown; path?: unknown };
@@ -27,12 +32,20 @@ export function runPreToolUse(guards: Guard[], payload: unknown, runtime = new R
     : typeof path === "string"
       ? { chokepoint: "file" as const, path }
       : undefined;
-  if (!event) return { exitCode: 0 };
-  const verdict = runtime.evaluate(fileGuard ? [fileGuard] : guards, event);
-  return verdict.fired ? { exitCode: 2, stderr: verdict.reason } : { exitCode: 0 };
+  return event ? { event, guards: fileGuard ? [fileGuard] : guards } : undefined;
+}
+
+export function evaluatePreToolUse(guards: Guard[], payload: unknown, runtime = new Runtime()): Verdict {
+  const binding = bindingFromPreToolUse(guards, payload);
+  return binding ? runtime.evaluate(binding.guards, binding.event) : { fired: false };
+}
+
+export function runPreToolUse(guards: Guard[], payload: unknown, runtime = new Runtime()): HookResponse {
+  const verdict = evaluatePreToolUse(guards, payload, runtime);
+  return verdict.blocked ? { exitCode: 2, stderr: verdict.reason } : { exitCode: 0 };
 }
 
 export function runFileGuard(guards: Guard[], event: Event, runtime = new Runtime()): HookResponse {
   const verdict = runtime.evaluate(guards, event);
-  return verdict.fired ? { exitCode: 2, stderr: verdict.reason } : { exitCode: 0 };
+  return verdict.blocked ? { exitCode: 2, stderr: verdict.reason } : { exitCode: 0 };
 }

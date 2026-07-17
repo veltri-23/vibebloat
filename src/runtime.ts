@@ -25,7 +25,7 @@ export class Runtime {
       const verdict = match(guard, event);
       if (!verdict.fired) continue;
       if (this.overrides.delete(guard.id)) return { fired: false };
-      return { ...verdict, ...runAction(guard, event, context) };
+      return { ...verdict, ...runAction(guard, event, context), actionType: guard.action.type };
     }
     return { fired: false };
   }

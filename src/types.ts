@@ -47,4 +47,5 @@ export interface Verdict {
   blocked?: boolean;
   warning?: string;
   quarantinedPath?: string;
+  actionType?: ActionType;
 }
