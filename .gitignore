@@ -2,3 +2,4 @@ node_modules/
 .vibebloat/
 __pycache__/
 *.pyc
+dist/
