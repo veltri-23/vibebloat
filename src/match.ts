@@ -26,6 +26,20 @@ function hasCommandKeyword(command: string, binary: string): boolean {
   return expression.test(command);
 }
 
+function hasObviousSyntaxError(command: string): boolean {
+  let quote: "'" | '"' | undefined;
+  let substitutions = 0;
+  for (let index = 0; index < command.length; index += 1) {
+    const character = command[index];
+    if (character === "\\") { index += 1; continue; }
+    if (quote) { if (character === quote) quote = undefined; continue; }
+    if (character === "'" || character === '"') { quote = character; continue; }
+    if (character === "$" && command[index + 1] === "(") { substitutions += 1; index += 1; continue; }
+    if (character === ")" && substitutions > 0) substitutions -= 1;
+  }
+  return quote !== undefined || substitutions !== 0;
+}
+
 function tokenize(command: string): string[] {
   const words: string[] = [];
   let word = "";
@@ -92,6 +106,7 @@ export function match(guard: Guard, event: Event): Verdict {
   try {
     const expected = guard.match.command.split(" ");
     const normalizedCommand = normalizeCommand(event.command, event.variables);
+    if (hasObviousSyntaxError(normalizedCommand)) return parseErrorVerdict(guard);
     if (!hasCommandKeyword(normalizedCommand, expected[0])) return { fired: false };
     for (const candidate of shellCommands(normalizedCommand)) {
       if (candidate.binary === "git" && candidate.args[0]) {
