@@ -1,6 +1,9 @@
 import { mkdirSync, renameSync, watch, writeFileSync, type FSWatcher } from "node:fs";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { Runtime } from "../runtime";
+import type { Event, Guard } from "../types";
+import { writeProof } from "./proof";
 
 export function replaceGuardAtomically(path: string, content: string): void {
   const directory = dirname(path);
@@ -20,4 +23,15 @@ export function watchGuardDirectory(directory: string, onChange: (path: string) 
     const path = guardWatchPath(directory, filename);
     if (path) onChange(path);
   });
+}
+
+export function compileLive(directory: string, guard: Guard, event: Event): { status: "pass" | "fail" } {
+  const verdict = new Runtime().evaluate([guard], event);
+  if (!verdict.fired) {
+    writeProof(directory, { status: "fail", cases: ["synthetic event did not fire"] });
+    return { status: "fail" };
+  }
+  replaceGuardAtomically(join(directory, `${guard.id}.json`), `${JSON.stringify(guard)}\n`);
+  writeProof(directory, { status: "pass", cases: ["synthetic event fired"] });
+  return { status: "pass" };
 }
