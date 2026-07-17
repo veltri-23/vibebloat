@@ -1,5 +1,18 @@
 export type GuardClass = "A" | "B" | "C" | "D";
 export type Chokepoint = "shell" | "file";
+export type ActionType = "block" | "warn" | "require-confirm" | "quarantine-file" | "run-check";
+
+interface ActionBase {
+  message: string;
+  override: string;
+}
+
+export type Action =
+  | (ActionBase & { type: "block" })
+  | (ActionBase & { type: "warn" })
+  | (ActionBase & { type: "require-confirm" })
+  | (ActionBase & { type: "quarantine-file"; quarantinePath?: string })
+  | (ActionBase & { type: "run-check"; check: string });
 
 export interface Guard {
   id: string;
@@ -11,7 +24,10 @@ export interface Guard {
     argsContains?: string[];
     path?: string;
   };
-  action: { type: "block"; message: string; override: string };
+  action: Action;
+  confidence?: "high" | "low";
+  tier?: "local" | "community";
+  binds?: string[];
   enabled: boolean;
 }
 
@@ -28,4 +44,7 @@ export interface Verdict {
   guardId?: string;
   reason?: string;
   parseError?: boolean;
+  blocked?: boolean;
+  warning?: string;
+  quarantinedPath?: string;
 }
