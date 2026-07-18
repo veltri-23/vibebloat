@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { gitStashUntrackedGuard, mcpConfigWrongFileGuard } from "../src/guards";
 import { match } from "../src/match";
 import { Runtime } from "../src/runtime";
+import type { Guard } from "../src/types";
 
 describe("Phase 0 matcher", () => {
   test("eval fires for a synthetic destructive event", () => {
@@ -85,6 +86,16 @@ describe("Phase 0 matcher", () => {
     runtime.allowOnce(gitStashUntrackedGuard.id);
     expect(runtime.evaluate([gitStashUntrackedGuard], { chokepoint: "shell", command: "git stash -u" }).fired).toBeFalse();
     expect(runtime.evaluate([gitStashUntrackedGuard], { chokepoint: "shell", command: "git stash -u" }).fired).toBeTrue();
+  });
+
+  test("applies explicit agent binds and treats empty binds as all agents", () => {
+    const claudeOnly: Guard = { ...gitStashUntrackedGuard, binds: ["claude-code"] };
+    const allAgents: Guard = { ...gitStashUntrackedGuard, binds: [] };
+    const event = { chokepoint: "shell" as const, command: "git stash -u" };
+
+    expect(new Runtime().evaluate([claudeOnly], event, { agent: "codex" })).toEqual({ fired: false });
+    expect(new Runtime().evaluate([claudeOnly], event, { agent: "claude-code" })).toMatchObject({ fired: true });
+    expect(new Runtime().evaluate([allAgents], event, { agent: "codex" })).toMatchObject({ fired: true });
   });
 
   test("blocks Class B wrong-file writes", () => {

@@ -33,6 +33,7 @@ export class Runtime {
     for (const guard of guards) {
       const guardId = canonicalGuardId(guard.id);
       if (this.disabled.has(guardId)) continue;
+      if (guard.binds?.length && context.agent && !guard.binds.includes(context.agent)) continue;
       const verdict = match(guard, normalizedEvent);
       if (!verdict.fired) continue;
       if (this.overrides.delete(guardId) || compatiblePersistedGuardIds(guardId).some((id) => this.consumePersistedOverride?.(id))) return { fired: false };

@@ -26,6 +26,13 @@ test("OpenClaw native hook blocks the shared Class A guard", () => {
   })).toMatchObject({ block: true, blockReason: gitStashUntrackedGuard.action.message });
 });
 
+test("OpenClaw native hook skips guards bound to another agent", () => {
+  expect(beforeToolCall([{ ...gitStashUntrackedGuard, binds: ["codex"] }], {
+    toolName: "exec",
+    params: { command: "git stash -u" },
+  })).toBeUndefined();
+});
+
 test("OpenClaw maps require-confirm to its native approval UI", () => {
   const guard: Guard = {
     ...gitStashUntrackedGuard,

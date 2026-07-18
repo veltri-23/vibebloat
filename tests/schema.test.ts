@@ -31,6 +31,11 @@ describe("guard schema", () => {
     expect(() => parseGuard({ ...validGuard, action: { ...validGuard.action, type: "shell-script", command: "rm -rf /" } })).toThrow();
   });
 
+  test("rejects unknown agent bindings", () => {
+    expect(() => parseGuard({ ...validGuard, binds: ["unknown-agent"] })).toThrow("binds must contain known agents");
+    expect(() => parseGuard({ ...validGuard, binds: null })).toThrow("binds must contain known agents");
+  });
+
   test("loads only validated JSON guards before the hot path", () => {
     const directory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-guards-"));
     tempDirectories.push(directory);

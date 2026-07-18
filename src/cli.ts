@@ -7,6 +7,7 @@ import { loadGuards } from "./guard-loader";
 import { forgetEmail } from "./growth/email-capture";
 import { canonicalGuardId, gitStashUntrackedGuard, mcpConfigWrongFileGuard } from "./guards";
 import { runPreToolUse } from "./hooks";
+import { match } from "./match";
 import { closeWatcherOnSignals, hasUnenforceableFileGuard, watchGuardedWrites } from "./install/fs-guard";
 import { installNativeHooks } from "./install/orchestrator";
 import { installHermesHook, preflightHermesHook } from "./install/hermes";
@@ -26,7 +27,7 @@ import { executeCommand } from "./scrub/command";
 import { ControlledScrubbersUnavailableError, resolveControlledScrubberCommands } from "./scrub/controlled-release";
 import { createLocalOnlySink } from "./scrub/local-sink";
 import { readLocalStats } from "./stats/local";
-import type { Event, Guard } from "./types";
+import type { Event, Guard, GuardAgent } from "./types";
 
 const guards: Guard[] = [gitStashUntrackedGuard, mcpConfigWrongFileGuard];
 const guardIdPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -74,6 +75,14 @@ function argumentValue(flag: string): string | undefined {
   const value = process.argv[index + 1];
   if (!value || value.startsWith("--")) throw new Error(`${flag} requires a value`);
   return value;
+}
+
+function hookAgent(): GuardAgent {
+  const argument = process.argv[3];
+  if (!argument) return "claude-code";
+  if (argument === "--agent=codex") return "codex";
+  if (argument === "--agent=hermes") return "hermes";
+  throw new Error("hook agent must be claude-code, codex, or hermes");
 }
 
 function readFallbackShellPath(shell: Shell, probe: string): string {
@@ -173,11 +182,22 @@ async function runModelCommand(command: readonly string[], candidates: HistoryCh
 }
 
 if (mode === "doctor") {
-  const claudeHome = process.env.CLAUDE_CONFIG_DIR ?? join(process.env.USERPROFILE ?? process.env.HOME ?? ".", ".claude");
-  const codexHome = process.env.CODEX_HOME ?? join(process.env.USERPROFILE ?? process.env.HOME ?? ".", ".codex");
+  const base = process.env.USERPROFILE ?? process.env.HOME ?? ".";
+  const claudeHome = process.env.CLAUDE_CONFIG_DIR ?? join(base, ".claude");
+  const codexHome = process.env.CODEX_HOME ?? join(base, ".codex");
+  const hermesHome = process.env.HERMES_HOME ?? join(base, ".hermes");
+  const installedAgents: GuardAgent[] = ["claude-code", "codex"];
+  if (existsSync(hermesHome)) installedAgents.push("hermes");
+  if (process.env.OPENCLAW_SESSION) installedAgents.push("openclaw");
   const findings = runDoctor({
     guardDirectories: guardDirectories(),
-    hookConfigs: { claude: configText(join(claudeHome, "settings.json")), codex: configText(join(codexHome, "config.toml")) },
+    guards: runtimeGuards(),
+    installedAgents,
+    hookConfigs: {
+      claude: configText(join(claudeHome, "settings.json")),
+      codex: configText(join(codexHome, "config.toml")),
+      hermes: configText(join(hermesHome, "config.yaml")),
+    },
   });
   if (findings.length === 0) {
     process.stdout.write("VibeBloat doctor: healthy.\n");
@@ -457,7 +477,7 @@ const input = await Bun.stdin.text();
 if (mode === "eval") {
   try {
     const { guard, event } = JSON.parse(input) as { guard: Guard; event: Event };
-    process.stdout.write(`${JSON.stringify(new Runtime(disabledGuards()).evaluate([guard], event))}\n`);
+    process.stdout.write(`${JSON.stringify(match(guard, event))}\n`);
     process.exit(0);
   } catch (error) {
     process.stderr.write(`WHAT failed: eval input could not be processed.\nWHY: ${error instanceof Error ? error.message : "unknown error"}\nFIX: provide a guard and event JSON object\n`);
@@ -471,7 +491,7 @@ if (mode === "hook") {
     response = runPreToolUse(runtimeGuards(), JSON.parse(input), new Runtime(
       disabledGuards(),
       (guardId) => consumeAllowedOnce(guardId, guardHomeForScope(guardScope())),
-    ));
+    ), hookAgent());
   } catch (error) {
     response = { exitCode: 2 as const, stderr: `Guard runtime failed closed: ${error instanceof Error ? error.message : "unknown error"}` };
   }

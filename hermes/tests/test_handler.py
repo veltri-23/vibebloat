@@ -30,7 +30,7 @@ def test_gateway_command_event_uses_configured_cli_and_denies():
         decision = asyncio.run(HANDLER.handle("command:stash", {"command": "stash", "raw_command": "/stash", "args": "-u", "raw_args": "-u"}))
 
     assert decision == {"decision": "deny", "message": "blocked by guard"}
-    assert run.call_args.args[0] == ["vibebloat-bin", "hook"]
+    assert run.call_args.args[0] == ["vibebloat-bin", "hook", "--agent=hermes"]
     assert run.call_args.kwargs["input"] == '{"tool_name":"Bash","tool_input":{"command":"stash -u"}}'
 
 
@@ -65,7 +65,7 @@ def test_mutating_tool_events_map_to_shared_hook_payload(event_type, context, pa
         decision = asyncio.run(HANDLER.handle(event_type, context))
 
     assert decision == {"decision": "deny", "message": "blocked by guard"}
-    assert run.call_args.args[0] == ["vibebloat-bin", "hook"]
+    assert run.call_args.args[0] == ["vibebloat-bin", "hook", "--agent=hermes"]
     assert run.call_args.kwargs["input"] == payload
 
 
@@ -116,7 +116,7 @@ def test_shell_hook_protocol_maps_mutating_tool_to_shared_hook_payload():
         decision = asyncio.run(HANDLER.handle_shell_hook(payload))
 
     assert decision == {"decision": "block", "reason": "blocked by guard"}
-    assert run.call_args.args[0] == ["vibebloat-bin", "hook"]
+    assert run.call_args.args[0] == ["vibebloat-bin", "hook", "--agent=hermes"]
     assert run.call_args.kwargs["input"] == '{"tool_name":"Bash","tool_input":{"command":"git stash -u"}}'
 
 
@@ -169,7 +169,7 @@ def test_copied_handler_uses_cli_contract_without_source_tree():
             decision = asyncio.run(handler.handle("command:stash", {"command": "stash", "args": "-u"}))
 
     assert decision == {"decision": "deny", "message": "blocked by guard"}
-    assert run.call_args.args[0] == ["vibebloat-bin", "hook"]
+    assert run.call_args.args[0] == ["vibebloat-bin", "hook", "--agent=hermes"]
 
 
 def test_unrecognized_event_preserves_handler_fallback():

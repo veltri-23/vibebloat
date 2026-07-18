@@ -99,7 +99,7 @@ async def handle(event_type: str, context: dict[str, Any]) -> dict[str, str] | N
         return {"decision": "deny", "message": "VibeBloat CLI unavailable."}
     try:
         result = subprocess.run(
-            [cli, "hook"],
+            [cli, "hook", "--agent=hermes"],
             input=json.dumps(payload, separators=(",", ":")),
             text=True,
             capture_output=True,

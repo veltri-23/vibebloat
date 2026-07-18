@@ -1,5 +1,6 @@
 export type GuardClass = "A" | "B" | "C" | "D";
 export type Chokepoint = "shell" | "file";
+export type GuardAgent = "claude-code" | "codex" | "hermes" | "openclaw";
 export type ActionType = "block" | "warn" | "require-confirm" | "quarantine-file" | "run-check";
 
 interface ActionBase {
@@ -28,7 +29,7 @@ export interface Guard {
   action: Action;
   confidence?: "high" | "low";
   tier?: "local" | "community";
-  binds?: string[];
+  binds?: GuardAgent[];
   enabled: boolean;
 }
 

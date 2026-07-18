@@ -33,3 +33,12 @@ test("Codex hook transport emits a deny decision", () => {
     hookSpecificOutput: { permissionDecision: "deny" },
   });
 });
+
+test("unknown hook agent fails closed", () => {
+  const result = Bun.spawnSync(["bun", "src/cli.ts", "hook", "--agent=unknown"], {
+    cwd: import.meta.dir + "/..",
+    stdin: new Blob([JSON.stringify({ tool_input: { command: "git stash -u" } })]),
+  });
+  expect(result.exitCode).toBe(2);
+  expect(new TextDecoder().decode(result.stderr)).toContain("hook agent must be claude-code, codex, or hermes");
+});

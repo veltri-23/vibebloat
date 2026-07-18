@@ -43,7 +43,7 @@ function payloadFor(event: BeforeToolCallEvent): unknown {
 }
 
 export function beforeToolCall(guards: Guard[], event: BeforeToolCallEvent, runtime = new Runtime()): BeforeToolCallResult | undefined {
-  const verdict = evaluatePreToolUse(guards, payloadFor(event), runtime);
+  const verdict = evaluatePreToolUse(guards, payloadFor(event), runtime, "openclaw");
   if (!verdict.fired) return undefined;
   if (verdict.actionType === "require-confirm") {
     return {

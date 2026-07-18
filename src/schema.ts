@@ -1,6 +1,7 @@
-import type { Action, Guard, GuardClass } from "./types";
+import type { Action, Guard, GuardAgent, GuardClass } from "./types";
 
 const guardClasses = new Set<GuardClass>(["A", "B", "C", "D"]);
+const guardAgents = new Set<GuardAgent>(["claude-code", "codex", "hermes", "openclaw"]);
 const actionTypes = new Set<Action["type"]>(["block", "warn", "require-confirm", "quarantine-file", "run-check"]);
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -23,5 +24,6 @@ export function parseGuard(value: unknown): Guard {
   assert(actionTypes.has(guard.action?.type as Action["type"]), "action.type is not trusted");
   assert(guard.action?.type !== "run-check" || typeof guard.action.check === "string", "run-check requires a check name");
   assert(typeof guard.enabled === "boolean", "enabled is required");
+  assert(guard.binds === undefined || (Array.isArray(guard.binds) && guard.binds.every((agent) => guardAgents.has(agent))), "binds must contain known agents");
   return value as Guard;
 }
