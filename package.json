@@ -1,12 +1,15 @@
 {
   "name": "vibebloat",
   "version": "0.0.0-spike",
-  "private": true,
   "type": "module",
   "license": "Apache-2.0",
   "files": [
     "bin",
+    "dist/openclaw-plugin.js",
     "src",
+    "hermes/HOOK.yaml",
+    "hermes/handler.py",
+    "openclaw.plugin.json",
     "LICENSE",
     "NOTICE",
     "README.md"
@@ -17,8 +20,27 @@
   "bin": {
     "vibebloat": "./bin/vibebloat.js"
   },
+  "exports": {
+    "./openclaw-plugin": "./dist/openclaw-plugin.js"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.4.0"
+  },
+  "openclaw": {
+    "extensions": [
+      "./src/hooks/openclaw-plugin.ts"
+    ],
+    "runtimeExtensions": [
+      "./dist/openclaw-plugin.js"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.4.0"
+    }
+  },
   "scripts": {
     "build": "bun scripts/build.ts",
+    "build:openclaw": "bun build src/hooks/openclaw-plugin.ts --outdir dist --target bun",
+    "prepack": "bun run build:openclaw",
     "test": "bun test",
     "eval": "bun src/cli.ts eval",
     "hook": "bun src/cli.ts hook"

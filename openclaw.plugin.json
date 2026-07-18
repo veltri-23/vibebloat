@@ -1,0 +1,12 @@
+{
+  "id": "vibebloat",
+  "name": "VibeBloat",
+  "description": "Blocks known agent failure modes before tool execution.",
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false
+  }
+}

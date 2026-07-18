@@ -1,0 +1,3 @@
+dist/*.exe
+hermes/__pycache__/
+hermes/tests/
