@@ -17,6 +17,7 @@ import { closeWatcherOnSignals, fsGuardReceiptPath, hasUnenforceableFileGuard, i
 import { discoverCurrentRepoGitHookPaths, installCurrentRepoGitHooks, planGitHook, type GitHookName } from "./install/git-hooks";
 import { installNativeHooks } from "./install/orchestrator";
 import { installHermesHook, preflightHermesHook } from "./install/hermes";
+import { installOnboardingBindings } from "./install/onboarding-bindings";
 import { verifyShellPaths, type Shell } from "./install/shim";
 import { compileGuard } from "./compiler/codex-fill";
 import { compileLiveForScope, drainQueuedLiveCompilesForScope } from "./compiler/live-compile";
@@ -388,6 +389,23 @@ function onboardingBindingSetup(): void {
   installCurrentRepoGitHooks(process.cwd(), gitHookCommands);
 }
 
+function installVerifiedOnboardingBindings(environmentIds: readonly string[]): void {
+  const homes = agentHomes();
+  const hermesPython = process.env.VIBEBLOAT_HERMES_PYTHON ?? Bun.which("python3") ?? Bun.which("python");
+  installOnboardingBindings({
+    permitted: true,
+    environmentIds,
+    repository: resolve(process.cwd()),
+    command: "vibebloat hook",
+    gitCommands: gitHookCommands,
+    claudePath: homes.claudePath,
+    codexPath: homes.codexPath,
+    ...(environmentIds.includes("hermes") && hermesPython
+      ? { hermes: { hermesHome: homes.hermesHome, pythonExecutable: hermesPython } }
+      : {}),
+  });
+}
+
 function createProductionOnboardingCoordinator(
   home: string,
   resume: OnboardingCheckpoint | undefined,
@@ -440,7 +458,7 @@ function createProductionOnboardingCoordinator(
       },
       modelPass: async (candidates, semanticContext) => runModelCommand(modelCommandFromEnvironment(modelRoute), candidates, semanticContext),
     },
-    installBindings: onboardingBindingSetup,
+    installBindings: (_guards, environmentIds) => installVerifiedOnboardingBindings(environmentIds),
   });
 }
 
