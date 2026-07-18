@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { disableGuard, disabledGuardIds } from "./cli/disable";
 import { runDoctor } from "./doctor/checks";
+import { loadGuards } from "./guard-loader";
 import { forgetEmail } from "./growth/email-capture";
 import { gitStashUntrackedGuard, mcpConfigWrongFileGuard } from "./guards";
 import { runPreToolUse } from "./hooks";
@@ -12,12 +13,24 @@ import type { Event, Guard } from "./types";
 const guards: Guard[] = [gitStashUntrackedGuard, mcpConfigWrongFileGuard];
 const mode = process.argv[2];
 
+function homeDirectory(): string {
+  return process.env.VIBEBLOAT_HOME ?? join(process.env.USERPROFILE ?? process.env.HOME ?? ".", ".vibebloat");
+}
+
+function runtimeGuards(): Guard[] {
+  const installed = loadGuards(join(homeDirectory(), "guards"));
+  const builtInIds = new Set(guards.map((guard) => guard.id));
+  const duplicate = installed.find((guard) => builtInIds.has(guard.id));
+  if (duplicate) throw new Error(`Installed guard duplicates built-in id: ${duplicate.id}`);
+  return [...guards, ...installed];
+}
+
 function configText(path: string): string {
   return existsSync(path) ? readFileSync(path, "utf8") : "";
 }
 
 if (mode === "doctor") {
-  const home = process.env.VIBEBLOAT_HOME ?? join(process.env.USERPROFILE ?? process.env.HOME ?? ".", ".vibebloat");
+  const home = homeDirectory();
   const claudeHome = process.env.CLAUDE_CONFIG_DIR ?? join(process.env.USERPROFILE ?? process.env.HOME ?? ".", ".claude");
   const codexHome = process.env.CODEX_HOME ?? join(process.env.USERPROFILE ?? process.env.HOME ?? ".", ".codex");
   const findings = runDoctor({
@@ -33,8 +46,7 @@ if (mode === "doctor") {
 }
 
 if (mode === "email" && process.argv[3] === "--forget") {
-  const home = process.env.VIBEBLOAT_HOME ?? join(process.env.USERPROFILE ?? process.env.HOME ?? ".", ".vibebloat");
-  forgetEmail(home);
+  forgetEmail(homeDirectory());
   process.stdout.write("Email removed.\n");
   process.exit(0);
 }
@@ -82,7 +94,12 @@ if (mode === "eval") {
 }
 
 if (mode === "hook") {
-  const response = runPreToolUse(guards, JSON.parse(input), new Runtime(disabledGuardIds()));
+  let response;
+  try {
+    response = runPreToolUse(runtimeGuards(), JSON.parse(input), new Runtime(disabledGuardIds()));
+  } catch (error) {
+    response = { exitCode: 2 as const, stderr: `Guard runtime failed closed: ${error instanceof Error ? error.message : "unknown error"}` };
+  }
   if (response.exitCode === 2 && process.argv[3] === "--agent=codex") {
     process.stdout.write(`${JSON.stringify({
       hookSpecificOutput: {
