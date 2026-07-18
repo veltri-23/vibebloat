@@ -9,10 +9,15 @@ import { runPreToolUse } from "./hooks";
 import { closeWatcherOnSignals, watchGuardedWrites } from "./install/fs-guard";
 import { installNativeHooks } from "./install/orchestrator";
 import { installHermesHook } from "./install/hermes";
+import { scanHistory } from "./ingest/scan";
+import { rankIncidents, type IncidentManifest } from "./ingest/rank";
+import type { HistoryChunk } from "./ingest/types";
 import { isGateChoice } from "./onboarding/gates";
 import { OnboardingRunner, type RunnerState } from "./onboarding/runner";
 import { loadOnboardingState, saveOnboardingState } from "./onboarding/state";
 import { Runtime } from "./runtime";
+import { executeCommand } from "./scrub/command";
+import { createLocalOnlySink } from "./scrub/local-sink";
 import type { Event, Guard } from "./types";
 
 const guards: Guard[] = [gitStashUntrackedGuard, mcpConfigWrongFileGuard];
@@ -32,6 +37,69 @@ function runtimeGuards(): Guard[] {
 
 function configText(path: string): string {
   return existsSync(path) ? readFileSync(path, "utf8") : "";
+}
+
+function commandFromEnvironment(name: string): string[] {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is required`);
+  const command = JSON.parse(value);
+  if (!Array.isArray(command) || command.length === 0 || command.some((part) => typeof part !== "string" || !part)) {
+    throw new Error(`${name} must be a non-empty JSON command array`);
+  }
+  return command;
+}
+
+function isHistoryChunk(value: unknown): value is HistoryChunk {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const chunk = value as Record<string, unknown>;
+  return (chunk.source === "claude-code" || chunk.source === "codex" || chunk.source === "hermes")
+    && typeof chunk.sessionId === "string"
+    && typeof chunk.messageIndex === "number"
+    && typeof chunk.chunkIndex === "number"
+    && typeof chunk.role === "string"
+    && typeof chunk.content === "string";
+}
+
+function parseIncidentManifest(value: unknown): IncidentManifest | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const incident = value as Record<string, unknown>;
+  if (!(typeof incident.incident_id === "string"
+    && (incident.class === "A" || incident.class === "B" || incident.class === "C" || incident.class === "D")
+    && (incident.chokepoint === "shell" || incident.chokepoint === "file")
+    && typeof incident.condition === "string"
+    && Array.isArray(incident.evidence_refs)
+    && incident.evidence_refs.every((reference) => typeof reference === "string")
+    && typeof incident.severity === "number"
+    && typeof incident.frequency === "number"
+    && typeof incident.recency === "string")) return undefined;
+  return {
+    incident_id: incident.incident_id,
+    class: incident.class,
+    chokepoint: incident.chokepoint,
+    ...(typeof incident.command === "string" ? { command: incident.command } : {}),
+    ...(typeof incident.path === "string" ? { path: incident.path } : {}),
+    condition: incident.condition,
+    evidence_refs: incident.evidence_refs,
+    severity: incident.severity,
+    frequency: incident.frequency,
+    recency: incident.recency,
+  };
+}
+
+function hasRawBearerToken(value: unknown): boolean {
+  return /\bbearer\s+(?!<redacted>)\S+/i.test(JSON.stringify(value));
+}
+
+async function runModelCommand(command: readonly string[], candidates: HistoryChunk[]): Promise<IncidentManifest[]> {
+  const result = await executeCommand(command, JSON.stringify({ candidates }));
+  if (result.exitCode !== 0) throw new Error("model command failed");
+  const incidents: unknown = JSON.parse(result.stdout);
+  if (!Array.isArray(incidents) || hasRawBearerToken(incidents)) {
+    throw new Error("model command returned an unsafe incident manifest");
+  }
+  const manifests = incidents.map(parseIncidentManifest);
+  if (manifests.some((incident) => incident === undefined)) throw new Error("model command returned an unsafe incident manifest");
+  return manifests;
 }
 
 if (mode === "doctor") {
@@ -153,6 +221,50 @@ if (mode === "watch") {
   }
 }
 
+if (mode === "scan") {
+  const historyPath = process.argv[3];
+  if (!historyPath) {
+    process.stderr.write("WHAT failed: history file was not supplied.\nWHY: scan needs one JSON array of history chunks.\nFIX: vibebloat scan <history.json>\n");
+    process.exit(1);
+  }
+  try {
+    const presidioCommand = commandFromEnvironment("VIBEBLOAT_PRESIDIO_COMMAND");
+    const gitleaksCommand = commandFromEnvironment("VIBEBLOAT_GITLEAKS_COMMAND");
+    const modelCommand = commandFromEnvironment("VIBEBLOAT_MODEL_COMMAND");
+    const parsed: unknown = JSON.parse(readFileSync(historyPath, "utf8"));
+    if (!Array.isArray(parsed) || !parsed.every(isHistoryChunk)) throw new Error("history file must contain valid history chunks");
+
+    let candidateCount = 0;
+    let incidents: IncidentManifest[] = [];
+    const result = await scanHistory(parsed, {
+      presidioCommand,
+      gitleaksCommand,
+      localSink: createLocalOnlySink(join(homeDirectory(), "failed-ingest")),
+      modelPass: async (candidates) => {
+        candidateCount = candidates.length;
+        return runModelCommand(modelCommand, candidates);
+      },
+      publish: async (mined) => { incidents = mined; },
+    });
+    if (result.status === "paused") {
+      process.stderr.write(`WHAT failed: scan paused.\nWHY: ${result.message}\nFIX: repair scrubber commands and rerun vibebloat scan <history.json>\n`);
+      process.exit(1);
+    }
+    const ranked = rankIncidents(incidents);
+    process.stdout.write(`${JSON.stringify({
+      status: result.status,
+      chunks_scanned: parsed.length,
+      candidates_scanned: candidateCount,
+      incidents_found: ranked.length,
+      ranked_incidents: ranked,
+    })}\n`);
+    process.exit(0);
+  } catch (error) {
+    process.stderr.write(`WHAT failed: scan could not run.\nWHY: ${error instanceof Error ? error.message : "unknown error"}\nFIX: set scrubber and model commands, then rerun vibebloat scan <history.json>\n`);
+    process.exit(1);
+  }
+}
+
 const input = await Bun.stdin.text();
 
 if (mode === "eval") {
@@ -187,5 +299,5 @@ if (mode === "hook") {
   process.exit(response.exitCode);
 }
 
-process.stderr.write("WHAT failed: expected eval, hook, disable, doctor, init, install, watch, or email.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
+process.stderr.write("WHAT failed: expected eval, hook, disable, doctor, init, install, scan, watch, or email.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
 process.exit(1);
