@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { guardedBeforeToolCall } from "../../src/hooks/openclaw-plugin";
@@ -96,4 +96,51 @@ test("same learned guard denies Claude Code, Codex, OpenClaw, and Hermes", () =>
   });
   expect(hermes.exitCode).toBe(0);
   expect(JSON.parse(hermes.stdout.toString())).toEqual({ decision: "deny", message: "VibeBloat found no-publish in 1 incident." });
+});
+
+test("Hermes bridge resolves a repository Git alias before blocking a compiled guard", () => {
+  const root = mkdtempSync(join(tmpdir(), "vibebloat-hermes-alias-"));
+  temporaryDirectories.push(root);
+  const guardHome = join(root, "guard-home");
+  const incidentPath = join(root, "incident.json");
+  mkdirSync(join(root, ".git"));
+  writeFileSync(join(root, ".git", "config"), "[alias]\n  rh = reset --hard\n");
+  writeFileSync(incidentPath, JSON.stringify({
+    incident_id: "no-git-reset-hard",
+    class: "A",
+    chokepoint: "shell",
+    command: "git reset",
+    condition: "test Hermes alias bridge",
+    evidence_refs: ["test"],
+    severity: 5,
+    frequency: 1,
+    recency: "2026-07-18",
+  }));
+  const compiled = Bun.spawnSync({
+    cmd: [process.execPath, cliPath, "compile", incidentPath],
+    cwd: root,
+    env: { ...process.env, VIBEBLOAT_HOME: guardHome },
+  });
+  expect(compiled.exitCode).toBe(0);
+
+  const hermesScript = [
+    "import asyncio, importlib.util, json, sys",
+    "spec = importlib.util.spec_from_file_location('vibebloat_handler', sys.argv[1])",
+    "handler = importlib.util.module_from_spec(spec)",
+    "spec.loader.exec_module(handler)",
+    "result = asyncio.run(handler.handle('tool:terminal', {'command': 'git rh'}))",
+    "print(json.dumps(result))",
+  ].join("\n");
+  const hermes = Bun.spawnSync({
+    cmd: [process.env.PYTHON ?? "python", "-c", hermesScript, hermesHandlerPath],
+    cwd: root,
+    env: {
+      ...process.env,
+      VIBEBLOAT_HOME: guardHome,
+      VIBEBLOAT_CLI: createHermesCliWrapper(root),
+    },
+  });
+
+  expect(hermes.exitCode).toBe(0);
+  expect(JSON.parse(hermes.stdout.toString())).toEqual({ decision: "deny", message: "VibeBloat found no-git-reset-hard in 1 incident." });
 });
