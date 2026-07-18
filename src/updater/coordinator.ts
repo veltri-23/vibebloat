@@ -2,11 +2,13 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   chmodSync,
   cpSync,
+  copyFileSync,
   existsSync,
   lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -86,6 +88,7 @@ const metadataFields = new Set([
 ]);
 const manifestFields = new Set(["schemaVersion", "guards"]);
 const guardFilePattern = /^[a-z0-9]+(?:-[a-z0-9]+)*\.json$/;
+const proofFile = "proof.json";
 
 function verificationFailure(currentVersion: string, candidateVersion?: string, cause?: unknown): UpdateCoordinatorError {
   return new UpdateCoordinatorError("verification", currentVersion, candidateVersion, { cause });
@@ -120,10 +123,11 @@ function parseControlledMetadata(text: string): ControlledUpdateMetadata {
 }
 
 function releasePath(directory: string, relativePath: string): string {
-  const root = resolve(directory);
+  const root = realpathSync(resolve(directory));
   const path = resolve(root, relativePath);
   if (path !== root && !path.startsWith(`${root}\\`) && !path.startsWith(`${root}/`)) throw new Error("Controlled release path escaped its directory.");
   if (lstatSync(path).isSymbolicLink()) throw new Error("Controlled release files cannot be symbolic links.");
+  if (realpathSync(path) !== path) throw new Error("Controlled release paths cannot traverse symbolic links.");
   return path;
 }
 
@@ -164,17 +168,30 @@ export function parseCommunityGuardManifest(text: string): CommunityGuardManifes
   return validateCommunityGuardManifest(parseCommunityGuardManifestEnvelope(text));
 }
 
-function loadInstalledCommunityGuards(directory: string): Guard[] {
-  if (!existsSync(directory)) return [];
+interface InstalledGuardInventory {
+  community: Guard[];
+  localIds: Set<string>;
+}
+
+function loadInstalledGuardInventory(directory: string): InstalledGuardInventory {
+  if (!existsSync(directory)) return { community: [], localIds: new Set() };
   if (lstatSync(directory).isSymbolicLink()) throw new Error("Community guard directory cannot be a symbolic link.");
-  return readdirSync(directory, { withFileTypes: true })
+  const guards = readdirSync(directory, { withFileTypes: true })
     .sort((left, right) => left.name.localeCompare(right.name))
-    .map((entry) => {
+    .flatMap((entry) => {
+      if (entry.name === proofFile) {
+        if (!entry.isFile() || entry.isSymbolicLink()) throw new Error("Installed community guard directory contains an unsupported proof entry.");
+        return [];
+      }
       if (!entry.isFile() || !guardFilePattern.test(entry.name)) throw new Error("Installed community guard directory contains an unsupported entry.");
       const guard = parseGuard(JSON.parse(readFileSync(join(directory, entry.name), "utf8")));
       if (`${guard.id}.json` !== entry.name) throw new Error("Installed community guard filename does not match its ID.");
-      return guard;
+      return [guard];
     });
+  return {
+    community: guards.filter((guard) => guard.tier === "community"),
+    localIds: new Set(guards.filter((guard) => guard.tier !== "community").map((guard) => guard.id)),
+  };
 }
 
 function digest(value: string | Uint8Array): string {
@@ -233,6 +250,18 @@ function stageCommunityGuards(directory: string, guards: readonly Guard[]): stri
   const staged = join(dirname(directory), `.${basename(directory)}.${randomUUID()}.update`);
   mkdirSync(staged);
   try {
+    if (existsSync(directory)) {
+      for (const entry of readdirSync(directory, { withFileTypes: true })) {
+        if (!entry.isFile() || entry.isSymbolicLink()) throw new Error("Installed guard directory contains an unsupported entry.");
+        if (entry.name === proofFile) {
+          copyFileSync(join(directory, entry.name), join(staged, entry.name));
+          continue;
+        }
+        if (!guardFilePattern.test(entry.name)) throw new Error("Installed guard directory contains an unsupported entry.");
+        const guard = parseGuard(JSON.parse(readFileSync(join(directory, entry.name), "utf8")));
+        if (guard.tier !== "community") copyFileSync(join(directory, entry.name), join(staged, entry.name));
+      }
+    }
     for (const guard of guards) {
       const path = join(staged, `${guard.id}.json`);
       writeFileSync(path, canonicalGuardFile(guard));
@@ -328,8 +357,9 @@ export function coordinateUpdate(options: UpdateCoordinatorOptions): UpdateCoord
     const verified = verifyControlledRelease(metadata, options.pinnedPublicKey, options.run);
     const candidateEnvelope = parseCommunityGuardManifestEnvelope(verified.manifestText);
     const candidateManifest = validateCommunityGuardManifest(candidateEnvelope);
-    const currentGuards = loadInstalledCommunityGuards(resolve(options.communityGuardDirectory));
-    const diff = diffCommunityGuards(currentGuards, candidateManifest.guards);
+    const inventory = loadInstalledGuardInventory(resolve(options.communityGuardDirectory));
+    if (candidateManifest.guards.some((guard) => inventory.localIds.has(guard.id))) throw new Error("Community update conflicts with an installed local guard.");
+    const diff = diffCommunityGuards(inventory.community, candidateManifest.guards);
     const preview = formatGuardDiff(options.currentVersion, metadata.version, diff);
     if (!options.apply) return { applied: false, currentVersion: options.currentVersion, candidateVersion: metadata.version, diff, preview };
 

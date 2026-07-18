@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { isAbsolute, join, resolve } from "node:path";
+import packageMetadata from "../package.json";
 import { createFiringRecorder, readAndPruneFirings, readLastFiredSummaries } from "./audit/firings";
 import { disableGuard, disabledGuardIds } from "./cli/disable";
 import { formatDailyStrengtheningFailure, runDailyStrengtheningCommand } from "./cli/daily";
@@ -45,6 +46,7 @@ import { readLocalStats } from "./stats/local";
 import { applyPull, fetchAndPlanPull, GuardSyncError, type GuardSyncDiff } from "./sync";
 import type { Event, Guard, GuardAgent } from "./types";
 import { uninstallVibeBloat } from "./uninstall";
+import { formatUpdateCommandFailure, formatUpdateCommandResult, parseUpdateArguments, runControlledUpdateCommand } from "./updater/command";
 
 const guards: Guard[] = [gitStashUntrackedGuard, mcpConfigWrongFileGuard];
 const gitHookCommands = {
@@ -548,6 +550,39 @@ if (mode === "sync") {
     process.exit(0);
   } catch (error) {
     process.stderr.write(`${syncFailure(error)}\n`);
+    process.exit(1);
+  }
+}
+
+if (mode === "update") {
+  try {
+    const apply = parseUpdateArguments(process.argv.slice(3));
+    const selfCommand = cliSelfCommand();
+    const result = runControlledUpdateCommand({
+      apply,
+      communityGuardDirectory: join(globalGuardHome(), "guards"),
+      currentVersion: packageMetadata.version,
+      doctor: () => {
+        try {
+          return Bun.spawnSync([...selfCommand, "doctor"], { stdout: "ignore", stderr: "ignore" }).exitCode === 0;
+        } catch {
+          return false;
+        }
+      },
+      packageRoot: resolve(import.meta.dir, ".."),
+      run: (command) => {
+        try {
+          return Bun.spawnSync([...command], { stdout: "ignore", stderr: "ignore" }).exitCode;
+        } catch {
+          return 127;
+        }
+      },
+      selfCommand,
+    });
+    process.stdout.write(formatUpdateCommandResult(result));
+    process.exit(0);
+  } catch (error) {
+    process.stderr.write(formatUpdateCommandFailure(error));
     process.exit(1);
   }
 }
