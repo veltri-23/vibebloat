@@ -22,3 +22,8 @@ test("review, scan, and cancellation branches remain resumable", () => {
   expect(nextFirstRunGate("J3", "no", { reviewsRemaining: 1 })).toBe("K");
   expect(nextFirstRunGate("F1", "cancel")).toBe("CANCELLED");
 });
+
+test("review conditions reach the locked unsure and overlap gates", () => {
+  expect(nextFirstRunGate("J0", "One at a time", { reviewUncertain: true })).toBe("J1-unsure");
+  expect(nextFirstRunGate("J0", "One at a time", { reviewOverlap: true })).toBe("J-cluster");
+});

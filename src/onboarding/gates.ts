@@ -15,6 +15,8 @@ export interface OnboardingContext {
   staleSourceSelected?: boolean;
   declinedToolsRemaining?: number;
   reviewsRemaining?: number;
+  reviewUncertain?: boolean;
+  reviewOverlap?: boolean;
 }
 
 export type GateChoice = string | number;
@@ -74,6 +76,17 @@ export function isGateChoice(gate: GateId, choice: GateChoice): boolean {
   return prompt.options.some((option, index) => option.toLowerCase() === value || value === String(index + 1) || value === String.fromCharCode(97 + index));
 }
 
+export function canonicalGateChoice(gate: GateId, choice: GateChoice): string {
+  const options = getGate(gate).options;
+  if (typeof choice === "number") return options[choice] ?? String(choice);
+  const index = /^[a-z]$/i.test(choice) ? choice.toLowerCase().charCodeAt(0) - 97 : Number(choice) - 1;
+  return Number.isInteger(index) && options[index] ? options[index] : choice;
+}
+
+export function autoAdvances(gate: GateId): boolean {
+  return new Set<GateId>(["A0", "F2.1", "SCAN", "I1", "K", "M"]).has(gate);
+}
+
 function selected(choice: GateChoice, option: number, ...words: string[]): boolean {
   const value = String(choice).trim().toLowerCase();
   return choice === option || value === String(option + 1) || value === String.fromCharCode(97 + option) || words.some((word) => value === word);
@@ -111,7 +124,7 @@ export function nextFirstRunGate(gate: GateId, choice: GateChoice, context: Onbo
     case "G-empty": return "N1";
     case "I1": return "J0";
     case "I-zero": return selected(choice, 0, "yes") ? "J0" : "N1";
-    case "J0": return "J1";
+    case "J0": return context.reviewOverlap ? "J-cluster" : context.reviewUncertain ? "J1-unsure" : "J1";
     case "J1": return selected(choice, 0, "yes") ? "J3" : selected(choice, 1, "change") ? "J2" : nextReview(context);
     case "J1-unsure": return selected(choice, 0, "yes") ? "J1" : nextReview(context);
     case "J-cluster": return "J1";
