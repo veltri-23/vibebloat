@@ -40,9 +40,10 @@ test("filesystem watcher quarantines a guarded new file after the filesystem eve
 
   expect(response).toEqual({ path: ".mcp.json", exitCode: 2 });
   expect(existsSync(join(directory, ".mcp.json"))).toBeFalse();
-  const quarantine = readdirSync(directory).find((entry) => entry.startsWith(".mcp.json.") && entry.endsWith(".vibebloat-quarantine"));
+  const quarantineDirectory = join(directory, ".vibebloat", "quarantine", "fs-guard");
+  const quarantine = readdirSync(quarantineDirectory).find((entry) => entry.startsWith(".mcp.json.") && entry.endsWith(".rejected"));
   expect(quarantine).toBeTruthy();
-  expect(readFileSync(join(directory, quarantine!), "utf8")).toBe("{}");
+  expect(readFileSync(join(quarantineDirectory, quarantine!), "utf8")).toBe("{}");
 });
 
 test("filesystem watcher restores the previous guarded file without losing the rejected write", async () => {
@@ -66,9 +67,10 @@ test("filesystem watcher restores the previous guarded file without losing the r
   });
 
   expect(readFileSync(target, "utf8")).toBe("trusted\n");
-  const quarantine = readdirSync(directory).find((entry) => entry.startsWith(".mcp.json.") && entry.endsWith(".vibebloat-quarantine"));
+  const quarantineDirectory = join(directory, ".vibebloat", "quarantine", "fs-guard");
+  const quarantine = readdirSync(quarantineDirectory).find((entry) => entry.startsWith(".mcp.json.") && entry.endsWith(".rejected"));
   expect(quarantine).toBeTruthy();
-  expect(readFileSync(join(directory, quarantine!), "utf8")).toBe("rejected\n");
+  expect(readFileSync(join(quarantineDirectory, quarantine!), "utf8")).toBe("rejected\n");
 });
 
 test("filesystem watcher closes once when signaled", () => {

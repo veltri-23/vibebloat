@@ -509,11 +509,22 @@ function snapshotGuardedFile(path: string): GuardedFileSnapshot {
   return { existed: true, content: readFileSync(path), mode: stat.mode };
 }
 
-function recoverGuardedFile(path: string, snapshot: GuardedFileSnapshot): void {
+function ensureOwnedQuarantineDirectory(root: string): string {
+  let current = root;
+  for (const segment of [".vibebloat", "quarantine", "fs-guard"]) {
+    current = join(current, segment);
+    if (!existsSync(current)) mkdirSync(current);
+    const stat = lstatSync(current);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error("Filesystem guard quarantine path is unsafe.");
+  }
+  return current;
+}
+
+function recoverGuardedFile(path: string, snapshot: GuardedFileSnapshot, quarantineDirectory: string): void {
   if (existsSync(path)) {
     const stat = lstatSync(path);
     if (stat.isSymbolicLink() || !stat.isFile()) throw new Error("Guarded write target changed type during recovery.");
-    renameSync(path, `${path}.${randomUUID()}.vibebloat-quarantine`);
+    renameSync(path, join(quarantineDirectory, `${path.replace(/^.*[\\/]/, "")}.${randomUUID()}.rejected`));
   }
   if (snapshot.existed) applyAtomicFilePlans([{ path, content: snapshot.content!, mode: snapshot.mode }]);
 }
@@ -523,6 +534,7 @@ export function watchGuardedWrites(directory: string, guards: Guard[], onDetecte
   if (!statSync(root).isDirectory()) throw new Error("Filesystem guard root must be a directory.");
   const guarded = guardedFileNames(guards);
   const snapshots = new Map([...guarded].map((name) => [name, snapshotGuardedFile(join(root, name))]));
+  const quarantineDirectory = guarded.size > 0 ? ensureOwnedQuarantineDirectory(root) : undefined;
   const recovering = new Set<string>();
   return watch(root, { persistent: true }, (_eventType, filename) => {
     if (!filename) return;
@@ -533,7 +545,7 @@ export function watchGuardedWrites(directory: string, guards: Guard[], onDetecte
     if (response.exitCode === 2 && snapshot) {
       recovering.add(name);
       try {
-        recoverGuardedFile(join(root, name), snapshot);
+        recoverGuardedFile(join(root, name), snapshot, quarantineDirectory!);
         onDetected(name, response);
       } finally {
         setTimeout(() => recovering.delete(name), 50);
