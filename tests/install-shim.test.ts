@@ -108,3 +108,31 @@ test("Windows git.cmd blocks a repo-scoped compiled shell guard", () => {
   expect(result.exitCode).toBe(2);
   expect(result.stderr.toString()).toContain("Repo guard blocked status.");
 });
+
+test("shell shim resolves a repository Git alias before blocking Class A work", () => {
+  const directory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-shim-alias-"));
+  temporaryDirectories.push(directory);
+  const repository = join(directory, "repository");
+  const shimDirectory = join(directory, "shim");
+  const gitExecutable = Bun.which("git");
+  const shell = Bun.which("sh");
+  expect(gitExecutable).toBeTruthy();
+  expect(shell).toBeTruthy();
+  mkdirSync(join(repository, ".git"), { recursive: true });
+  writeFileSync(join(repository, ".git", "config"), "[alias]\n  st = stash\n");
+  const shim = installGitShellShim({
+    shimDirectory,
+    runtimePath: join(import.meta.dir, "..", "src", "hooks", "shell-shim-cli.ts"),
+    gitExecutable: gitExecutable!,
+  });
+
+  const result = Bun.spawnSync([shell!, shim, "st", "-u"], {
+    cwd: repository,
+    env: { ...process.env, HOME: join(directory, "home"), USERPROFILE: join(directory, "home") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  expect(result.exitCode).toBe(2);
+  expect(result.stderr.toString()).toContain("07-15 this deleted untracked files");
+});
