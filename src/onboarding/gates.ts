@@ -84,7 +84,7 @@ export function canonicalGateChoice(gate: GateId, choice: GateChoice): string {
 }
 
 export function autoAdvances(gate: GateId): boolean {
-  return new Set<GateId>(["A0", "F2.1", "SCAN", "I1", "K", "M"]).has(gate);
+  return new Set<GateId>(["F2.1", "SCAN", "I1", "K", "M"]).has(gate);
 }
 
 function selected(choice: GateChoice, option: number, ...words: string[]): boolean {

@@ -22,6 +22,11 @@ test("no-question gates auto-advance and Cancel persists any current gate", () =
   expect(saved).toHaveLength(1);
 });
 
+test("opening consent gate always waits for a human choice", () => {
+  const runner = new OnboardingRunner({ gate: "A0", answers: {} });
+  expect(runner.advanceAutomaticGates()).toMatchObject({ gate: "A0", answers: {} });
+});
+
 test("ASSIST uses FAQ first and applies only the recommended locked choice", () => {
   const runner = new OnboardingRunner({ gate: "A1", answers: {} });
   const response = runner.assist("recommend and apply", {
