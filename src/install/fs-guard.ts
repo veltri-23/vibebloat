@@ -74,6 +74,12 @@ export interface PersistentFsGuardHealthOptions {
   probeProcess?: (pid: number, instanceId: string) => ProcessIdentityState;
 }
 
+interface GuardedFileSnapshot {
+  content?: Buffer;
+  existed: boolean;
+  mode?: number;
+}
+
 const instanceArgument = "--vibebloat-fs-guard-instance";
 const receiptArgument = "--vibebloat-fs-guard-receipt";
 const instanceIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -488,11 +494,53 @@ export function hasUnenforceableFileGuard(guards: Guard[]): boolean {
   return guards.some((guard) => guard.enabled && guard.match.chokepoint === "file" && guard.action.type !== "warn");
 }
 
+function guardedFileNames(guards: Guard[]): Set<string> {
+  return new Set(guards.flatMap((guard) => {
+    if (!guard.enabled || guard.match.chokepoint !== "file" || guard.action.type === "warn") return [];
+    const path = guard.match.path;
+    return path && path === path.replaceAll("\\", "/").replace(/^.*\//, "") ? [path] : [];
+  }));
+}
+
+function snapshotGuardedFile(path: string): GuardedFileSnapshot {
+  if (!existsSync(path)) return { existed: false };
+  const stat = lstatSync(path);
+  if (stat.isSymbolicLink() || !stat.isFile()) throw new Error("Guarded file target must be a regular file.");
+  return { existed: true, content: readFileSync(path), mode: stat.mode };
+}
+
+function recoverGuardedFile(path: string, snapshot: GuardedFileSnapshot): void {
+  if (existsSync(path)) {
+    const stat = lstatSync(path);
+    if (stat.isSymbolicLink() || !stat.isFile()) throw new Error("Guarded write target changed type during recovery.");
+    renameSync(path, `${path}.${randomUUID()}.vibebloat-quarantine`);
+  }
+  if (snapshot.existed) applyAtomicFilePlans([{ path, content: snapshot.content!, mode: snapshot.mode }]);
+}
+
 export function watchGuardedWrites(directory: string, guards: Guard[], onDetected: (path: string, response: HookResponse) => void, runtime = new Runtime()): FSWatcher {
-  return watch(directory, { persistent: true }, (_eventType, filename) => {
+  const root = realpathSync(resolve(directory));
+  if (!statSync(root).isDirectory()) throw new Error("Filesystem guard root must be a directory.");
+  const guarded = guardedFileNames(guards);
+  const snapshots = new Map([...guarded].map((name) => [name, snapshotGuardedFile(join(root, name))]));
+  const recovering = new Set<string>();
+  return watch(root, { persistent: true }, (_eventType, filename) => {
     if (!filename) return;
-    const response = evaluateFsWrite(guards, filename.toString(), runtime);
-    if (response.exitCode === 2) onDetected(filename.toString(), response);
+    const name = filename.toString().replaceAll("\\", "/").replace(/^.*\//, "");
+    if (recovering.has(name)) return;
+    const response = evaluateFsWrite(guards, name, runtime);
+    const snapshot = snapshots.get(name);
+    if (response.exitCode === 2 && snapshot) {
+      recovering.add(name);
+      try {
+        recoverGuardedFile(join(root, name), snapshot);
+        onDetected(name, response);
+      } finally {
+        setTimeout(() => recovering.delete(name), 50);
+      }
+      return;
+    }
+    if (snapshot) snapshots.set(name, snapshotGuardedFile(join(root, name)));
   });
 }
 

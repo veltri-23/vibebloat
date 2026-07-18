@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { mcpConfigWrongFileGuard } from "../src/guards";
 import { closeWatcherOnSignals, evaluateFsWrite, fsGuardReceiptPath, fsGuardStopRequestPath, hasUnenforceableFileGuard, inspectPersistentFsGuard, launchPersistentFsGuard, stopPersistentFsGuard, waitForFsGuardLaunchReceipt, watchFsGuardStopRequests, watchGuardedWrites } from "../src/install/fs-guard";
@@ -14,13 +14,13 @@ test("filesystem guard evaluation identifies wrong MCP config writes", () => {
   expect(evaluateFsWrite([mcpConfigWrongFileGuard], "C:/repo/.mcp.json")).toMatchObject({ exitCode: 2 });
 });
 
-test("filesystem watcher observes block guards without claiming pre-write enforcement", () => {
+test("filesystem watcher identifies file guards that require post-write recovery", () => {
   expect(hasUnenforceableFileGuard([mcpConfigWrongFileGuard])).toBe(true);
   const watcher = watchGuardedWrites(import.meta.dir, [mcpConfigWrongFileGuard], () => {});
   watcher.close();
 });
 
-test("filesystem watcher reports a guarded write after the filesystem event", async () => {
+test("filesystem watcher quarantines a guarded new file after the filesystem event", async () => {
   const directory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-fs-guard-"));
   temporaryDirectories.push(directory);
 
@@ -39,6 +39,36 @@ test("filesystem watcher reports a guarded write after the filesystem event", as
   });
 
   expect(response).toEqual({ path: ".mcp.json", exitCode: 2 });
+  expect(existsSync(join(directory, ".mcp.json"))).toBeFalse();
+  const quarantine = readdirSync(directory).find((entry) => entry.startsWith(".mcp.json.") && entry.endsWith(".vibebloat-quarantine"));
+  expect(quarantine).toBeTruthy();
+  expect(readFileSync(join(directory, quarantine!), "utf8")).toBe("{}");
+});
+
+test("filesystem watcher restores the previous guarded file without losing the rejected write", async () => {
+  const directory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-fs-restore-"));
+  temporaryDirectories.push(directory);
+  const target = join(directory, ".mcp.json");
+  writeFileSync(target, "trusted\n");
+
+  await new Promise<void>((resolve, reject) => {
+    let timeout: ReturnType<typeof setTimeout>;
+    const watcher = watchGuardedWrites(directory, [mcpConfigWrongFileGuard], () => {
+      watcher.close();
+      clearTimeout(timeout);
+      resolve();
+    });
+    timeout = setTimeout(() => {
+      watcher.close();
+      reject(new Error("fs.watch did not recover the guarded write"));
+    }, 1_000);
+    writeFileSync(target, "rejected\n");
+  });
+
+  expect(readFileSync(target, "utf8")).toBe("trusted\n");
+  const quarantine = readdirSync(directory).find((entry) => entry.startsWith(".mcp.json.") && entry.endsWith(".vibebloat-quarantine"));
+  expect(quarantine).toBeTruthy();
+  expect(readFileSync(join(directory, quarantine!), "utf8")).toBe("rejected\n");
 });
 
 test("filesystem watcher closes once when signaled", () => {
