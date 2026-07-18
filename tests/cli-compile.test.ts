@@ -124,7 +124,13 @@ test("compile receipt stays outside the runtime guard set", () => {
   const result = hook(project, "npm publish");
 
   expect(result.exitCode).toBe(2);
-  expect(result.stderr.toString()).toBe("VibeBloat found no-publish in 2 incidents.\n");
+  expect(result.stderr.toString()).toBe([
+    "BLOCKED  guard: no-publish  class: A",
+    "incident: untracked files present  date: 2026-07-17",
+    "why: VibeBloat found no-publish in 2 incidents.",
+    "fix: vibebloat allow no-publish --once",
+    "",
+  ].join("\n"));
 });
 
 test("compile --drain executes a persisted local compile job", () => {
