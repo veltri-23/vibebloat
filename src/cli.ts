@@ -381,17 +381,9 @@ function onboardingRunnerContext(
 }
 
 function onboardingBindingSetup(): void {
-  const homes = agentHomes();
   const gitHookPaths = discoverCurrentRepoGitHookPaths(process.cwd());
   planGitHook(gitHookPaths["pre-commit"], gitHookCommands["pre-commit"]);
   planGitHook(gitHookPaths["pre-push"], gitHookCommands["pre-push"]);
-  installNativeHooks({
-    permitted: true,
-    claudePath: homes.claudePath,
-    codexPath: homes.codexPath,
-    command: "vibebloat hook",
-  });
-  installCurrentRepoGitHooks(process.cwd(), gitHookCommands);
 }
 
 function installVerifiedOnboardingBindings(environmentIds: readonly string[]): void {

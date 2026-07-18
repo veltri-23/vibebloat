@@ -70,7 +70,7 @@ test("unknown mode keeps the three-line error", () => {
   expect(result.stderr.toString()).toBe("WHAT failed: expected allow, compile, eval, hook, git-hook, disable, doctor, init, onboard, install, uninstall, update, scan, stats, sync, watch, daily, rules, or email.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
 });
 
-test("F0 consent installs native hooks before advancing", () => {
+test("F0 consent preflights helpers but defers writes until selected binding install", () => {
   const home = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-init-"));
   temporaryDirectories.push(home);
   const repository = join(home, "repo");
@@ -81,10 +81,10 @@ test("F0 consent installs native hooks before advancing", () => {
   const result = initAt(repository, home, { CLAUDE_CONFIG_DIR: claudeHome, CODEX_HOME: codexHome }, "--answer", "Yes");
   expect(result.exitCode).toBe(0);
   expect(JSON.parse(result.stdout.toString())).toMatchObject({ gate: "B1" });
-  expect(readFileSync(join(claudeHome, "settings.json"), "utf8")).toContain("vibebloat hook");
-  expect(readFileSync(join(codexHome, "config.toml"), "utf8")).toContain("plugin_hooks = true");
-  expect(readFileSync(join(repository, ".git", "hooks", "pre-commit"), "utf8")).toContain("vibebloat git-hook pre-commit");
-  expect(readFileSync(join(repository, ".git", "hooks", "pre-push"), "utf8")).toContain("vibebloat git-hook pre-push");
+  expect(existsSync(join(claudeHome, "settings.json"))).toBeFalse();
+  expect(existsSync(join(codexHome, "config.toml"))).toBeFalse();
+  expect(existsSync(join(repository, ".git", "hooks", "pre-commit"))).toBeFalse();
+  expect(existsSync(join(repository, ".git", "hooks", "pre-push"))).toBeFalse();
 });
 
 test("F0 does not create Git hooks before consent", () => {
