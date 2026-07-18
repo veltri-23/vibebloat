@@ -23,6 +23,10 @@ import type { Event, Guard } from "./types";
 
 const guards: Guard[] = [gitStashUntrackedGuard, mcpConfigWrongFileGuard];
 const mode = process.argv[2];
+const scrubberCommands = {
+  VIBEBLOAT_PRESIDIO_COMMAND: ["presidio-wrapper", "--json"],
+  VIBEBLOAT_GITLEAKS_COMMAND: ["gitleaks-wrapper", "--json"],
+} as const;
 
 function guardScope(): "repo" | "machine" {
   return loadOnboardingState(onboardingHome())?.scope ?? "machine";
@@ -48,11 +52,20 @@ function configText(path: string): string {
 function commandFromEnvironment(name: string): string[] {
   const value = process.env[name];
   if (!value) throw new Error(`${name} is required`);
-  const command = JSON.parse(value);
+  let command: unknown;
+  try {
+    command = JSON.parse(value);
+  } catch {
+    throw new Error(`${name} must be a JSON command array`);
+  }
   if (!Array.isArray(command) || command.length === 0 || command.some((part) => typeof part !== "string" || !part)) {
     throw new Error(`${name} must be a non-empty JSON command array`);
   }
-  return command;
+  const trusted = scrubberCommands[name as keyof typeof scrubberCommands];
+  if (trusted && (command.length !== trusted.length || command.some((part, index) => part !== trusted[index]))) {
+    throw new Error(`${name} must use the installed ${trusted[0]} command`);
+  }
+  return trusted ? [...trusted] : command;
 }
 
 function isHistoryChunk(value: unknown): value is HistoryChunk {
