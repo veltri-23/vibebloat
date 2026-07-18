@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { disableGuard, disabledGuardIds } from "./cli/disable";
 import { runDoctor } from "./doctor/checks";
 import { globalGuardHome, guardDirectories, guardHomeForScope, guardHomes, onboardingHome } from "./guard-home";
@@ -10,6 +10,7 @@ import { runPreToolUse } from "./hooks";
 import { closeWatcherOnSignals, watchGuardedWrites } from "./install/fs-guard";
 import { installNativeHooks } from "./install/orchestrator";
 import { installHermesHook } from "./install/hermes";
+import type { Shell } from "./install/shim";
 import { scanHistory } from "./ingest/scan";
 import { rankIncidents, type IncidentManifest } from "./ingest/rank";
 import type { HistoryChunk } from "./ingest/types";
@@ -66,6 +67,26 @@ function commandFromEnvironment(name: string): string[] {
     throw new Error(`${name} must use the installed ${trusted[0]} command`);
   }
   return trusted ? [...trusted] : command;
+}
+
+function argumentValue(flag: string): string | undefined {
+  const index = process.argv.indexOf(flag);
+  if (index < 0) return undefined;
+  const value = process.argv[index + 1];
+  if (!value || value.startsWith("--")) throw new Error(`${flag} requires a value`);
+  return value;
+}
+
+function readFallbackShellPath(shell: Shell, probe: string): string {
+  const command: Record<Shell, string[]> = {
+    bash: ["bash", "-lc", probe],
+    zsh: ["zsh", "-lc", probe],
+    fish: ["fish", "-c", probe],
+    pwsh: ["pwsh", "-NoProfile", "-NonInteractive", "-Command", probe],
+  };
+  const result = Bun.spawnSync(command[shell], { stdout: "pipe", stderr: "pipe" });
+  if (result.exitCode !== 0) throw new Error(`PATH verification could not run ${shell}: ${result.stderr.toString().trim() || "shell unavailable"}`);
+  return result.stdout.toString();
 }
 
 function isHistoryChunk(value: unknown): value is HistoryChunk {
@@ -157,14 +178,32 @@ if (mode === "install") {
     process.exit(1);
   }
   try {
+    const fallbackShimDirectory = argumentValue("--fallback-shim-dir");
+    const fallbackGitExecutable = argumentValue("--fallback-git");
+    if (Boolean(fallbackShimDirectory) !== Boolean(fallbackGitExecutable)) {
+      throw new Error("fallback installation requires both --fallback-shim-dir and --fallback-git");
+    }
+    if (fallbackShimDirectory && (!isAbsolute(fallbackShimDirectory) || !isAbsolute(fallbackGitExecutable!))) {
+      throw new Error("fallback paths must be absolute");
+    }
     installNativeHooks({
       permitted: true,
       claudePath: join(claudeHome, "settings.json"),
       codexPath: join(codexHome, "config.toml"),
       command: "vibebloat hook",
+      ...(fallbackShimDirectory ? {
+        fallback: {
+          shimDirectory: fallbackShimDirectory,
+          gitExecutable: fallbackGitExecutable,
+          gitHookPaths: [],
+          readPath: readFallbackShellPath,
+        },
+      } : {}),
     });
     if (hermesHooksDirectory) installHermesHook({ permitted: true, hooksDirectory: hermesHooksDirectory });
-    process.stdout.write("Native hooks installed. Run: vibebloat doctor\n");
+    process.stdout.write(fallbackShimDirectory
+      ? `Native hooks and fallback git shims installed. Add ${fallbackShimDirectory} first on PATH in each shell, then run: vibebloat doctor\n`
+      : "Native hooks installed. Run: vibebloat doctor\n");
     process.exit(0);
   } catch (error) {
     process.stderr.write(`WHAT failed: native hook installation stopped.\nWHY: ${error instanceof Error ? error.message : "unknown error"}\nFIX: vibebloat install --yes\n`);

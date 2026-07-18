@@ -8,7 +8,7 @@ export const gitStashUntrackedGuard: Guard = {
     date: "2026-07-15",
     source: "claude-code",
   },
-  match: { chokepoint: "shell", command: "git stash", argsContains: ["-u"] },
+  match: { chokepoint: "shell", command: "git stash", argsAnyOf: ["-u", "--include-untracked", "-a", "--all"] },
   action: {
     type: "block",
     message: "07-15 this deleted untracked files. Use git stash -u -- <path> or commit first.",

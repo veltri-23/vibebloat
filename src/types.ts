@@ -22,6 +22,7 @@ export interface Guard {
     chokepoint: Chokepoint;
     command?: string;
     argsContains?: string[];
+    argsAnyOf?: string[];
     path?: string;
   };
   action: Action;

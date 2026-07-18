@@ -114,7 +114,9 @@ export function match(guard: Guard, event: Event): Verdict {
       }
       if (candidate.binary !== expected[0] || candidate.args[0] !== expected[1]) continue;
       if (candidate.args.includes("--")) continue;
-      if (!guard.match.argsContains || guard.match.argsContains.every((argument) => candidate.args.includes(argument))) {
+      const containsRequiredArgs = !guard.match.argsContains || guard.match.argsContains.every((argument) => candidate.args.includes(argument));
+      const containsAnyRiskyArg = !guard.match.argsAnyOf || guard.match.argsAnyOf.some((argument) => candidate.args.includes(argument));
+      if (containsRequiredArgs && containsAnyRiskyArg) {
         return { fired: true, guardId: guard.id, reason: guard.action.message };
       }
     }

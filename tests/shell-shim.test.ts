@@ -9,3 +9,7 @@ test.each(["bash", "zsh", "fish", "pwsh"])("shell shim blocks Class A command fr
 test("shell shim allows scoped stash true-negative", () => {
   expect(runShellShim([gitStashUntrackedGuard], "git stash -u -- src/file.ts", "bash")).toEqual({ exitCode: 0 });
 });
+
+test.each(["--include-untracked", "-a", "--all"])('shell shim blocks destructive stash variant %s', (flag) => {
+  expect(runShellShim([gitStashUntrackedGuard], `git stash ${flag}`, "bash")).toMatchObject({ exitCode: 2 });
+});

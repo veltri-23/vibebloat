@@ -16,6 +16,8 @@ export function parseGuard(value: unknown): Guard {
   assert(typeof guard.provenance?.date === "string", "provenance.date is required");
   assert(typeof guard.provenance?.source === "string", "provenance.source is required");
   assert(guard.match?.chokepoint === "shell" || guard.match?.chokepoint === "file", "match.chokepoint is required");
+  assert(!guard.match?.argsContains || guard.match.argsContains.every((argument) => typeof argument === "string" && argument.length > 0), "match.argsContains must contain non-empty strings");
+  assert(!guard.match?.argsAnyOf || guard.match.argsAnyOf.every((argument) => typeof argument === "string" && argument.length > 0), "match.argsAnyOf must contain non-empty strings");
   assert(typeof guard.action?.message === "string", "action.message is required");
   assert(typeof guard.action?.override === "string", "action.override is required");
   assert(actionTypes.has(guard.action?.type as Action["type"]), "action.type is not trusted");
