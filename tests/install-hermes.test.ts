@@ -1,10 +1,20 @@
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { installHermesHook } from "../src/install/hermes";
 
 const tempDirectories: string[] = [];
 afterEach(() => { for (const directory of tempDirectories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
+
+function createVibeBloatCli(directory: string): string {
+  const wrapper = join(directory, process.platform === "win32" ? "vibebloat.cmd" : "vibebloat");
+  const source = join(import.meta.dir, "../src/cli.ts");
+  writeFileSync(wrapper, process.platform === "win32"
+    ? `@echo off\r\n"${process.execPath}" "${source}" %*\r\n`
+    : `#!/usr/bin/env sh\n"${process.execPath}" "${source}" "$@"\n`);
+  if (process.platform !== "win32") chmodSync(wrapper, 0o755);
+  return wrapper;
+}
 
 test("Hermes installer copies self-contained HookRegistry hook into supplied hooks directory", () => {
   const directory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-hermes-"));
@@ -78,7 +88,7 @@ test("Hermes installer adds only its exact pre-tool command to the upstream allo
 
 const upstreamHermesSource = process.env.VIBEBLOAT_HERMES_SOURCE;
 const upstreamHermesPython = process.env.VIBEBLOAT_HERMES_PYTHON;
-if (upstreamHermesSource && upstreamHermesPython) test("installed Hermes bridge registers upstream pre-tool hook without a TTY", () => {
+if (upstreamHermesSource && upstreamHermesPython) test("installed Hermes bridge registers and blocks through upstream pre-tool hooks without a TTY", () => {
   const directory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-hermes-upstream-"));
   tempDirectories.push(directory);
   installHermesHook({ permitted: true, hermesHome: directory, pythonExecutable: upstreamHermesPython });
@@ -87,16 +97,22 @@ if (upstreamHermesSource && upstreamHermesPython) test("installed Hermes bridge 
       "import json",
       "from agent import shell_hooks",
       "from hermes_cli.config import load_config",
-      "from hermes_cli.plugins import get_plugin_manager",
+      "from hermes_cli.plugins import get_plugin_manager, get_pre_tool_call_directive",
       "shell_hooks.reset_for_tests()",
       "registered = shell_hooks.register_from_config(load_config(), accept_hooks=False)",
-      "print(json.dumps({'registered': len(registered), 'has_pre_tool_hook': get_plugin_manager().has_hook('pre_tool_call')}))",
+      "decision, message = get_pre_tool_call_directive('terminal', {'command': 'git stash -u'})",
+      "print(json.dumps({'registered': len(registered), 'has_pre_tool_hook': get_plugin_manager().has_hook('pre_tool_call'), 'decision': decision, 'message': message}))",
     ].join("; ")],
-    env: { ...process.env, HERMES_HOME: directory, PYTHONPATH: upstreamHermesSource },
+    env: { ...process.env, HERMES_HOME: directory, PYTHONPATH: upstreamHermesSource, VIBEBLOAT_CLI: createVibeBloatCli(directory) },
   });
 
   expect(result.exitCode).toBe(0);
-  expect(JSON.parse(result.stdout.toString())).toEqual({ registered: 1, has_pre_tool_hook: true });
+  expect(JSON.parse(result.stdout.toString())).toEqual({
+    registered: 1,
+    has_pre_tool_hook: true,
+    decision: "block",
+    message: "07-15 this deleted untracked files. Use git stash -u -- <path> or commit first.",
+  });
 });
 
 test("CLI configures Hermes shell bridge only with explicit home and Python", () => {
