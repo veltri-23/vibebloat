@@ -2,13 +2,16 @@ import { existsSync, readFileSync } from "node:fs";
 import { withClaudePreToolUseHook } from "./claude";
 import { withCodexPreToolUseHook } from "./codex";
 import { replaceGuardAtomically } from "../compiler/live-compile";
+import { fileURLToPath } from "node:url";
 import { installGitHook } from "./git-hooks";
+import { installGitShellShim } from "./shell-shim";
 import { verifyShellPaths, type Shell } from "./shim";
 
 export interface FallbackInstallOptions {
   shimDirectory: string;
   readPath: (shell: Shell, probe: string) => string;
   gitHookPaths: readonly string[];
+  gitExecutable?: string;
 }
 
 export interface InstallOptions {
@@ -36,5 +39,10 @@ export function installNativeHooks(options: InstallOptions): void {
   replaceGuardAtomically(options.claudePath, `${JSON.stringify(claude, null, 2)}\n`);
   replaceGuardAtomically(options.codexPath, codex);
   if (!fallback) return;
+  if (fallback.gitExecutable) installGitShellShim({
+    shimDirectory: fallback.shimDirectory,
+    runtimePath: fileURLToPath(new URL("../hooks/shell-shim-cli.ts", import.meta.url)),
+    gitExecutable: fallback.gitExecutable,
+  });
   for (const hookPath of fallback.gitHookPaths) installGitHook(hookPath, options.command);
 }
