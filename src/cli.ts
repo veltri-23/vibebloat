@@ -582,6 +582,52 @@ function createProductionOnboardingCoordinator(
   });
 }
 
+async function runProductionReturningScan(
+  home: string,
+  state: OnboardingState,
+  gate: "R1" | "R2" | "R4",
+): Promise<{ status: "ingested" | "paused"; chunksScanned: number; incidentsFound: number }> {
+  const sourceIds = state.coordinator?.selectedSourceIds;
+  if (!sourceIds?.length) throw new Error("Returning scan cursor cannot be used because the original history selection is unavailable.");
+  const base = process.env.USERPROFILE ?? process.env.HOME ?? ".";
+  const homes = agentHomes();
+  const catalog = discoverLocalHistory({
+    homeDirectory: base,
+    claudeHome: process.env.CLAUDE_CONFIG_DIR,
+    codexHome: process.env.CODEX_HOME,
+    hermesHome: homes.hermesHome,
+  });
+  const available = new Set(catalog.sources.map(({ id }) => id));
+  if (sourceIds.some((id) => !available.has(id as "claude-code" | "codex" | "hermes"))) {
+    throw new Error("Returning scan cursor cannot be used because a previously selected history source is unavailable.");
+  }
+  const scrubbers = resolveControlledScrubberCommands();
+  let incidents: IncidentManifest[] = [];
+  const scan = await scanIncrementalHistory({
+    directory: join(home, "returning-scan"),
+    loadHistory: async () => catalog.loadConfirmed({
+      confirmed: true,
+      scrubbersVerified: true,
+      sourceIds: sourceIds as Array<"claude-code" | "codex" | "hermes">,
+    }),
+    scan: {
+      presidioCommand: scrubbers.presidio,
+      gitleaksCommand: scrubbers.gitleaks,
+      localSink: createLocalOnlySink(join(home, "failed-ingest")),
+      semantic: {
+        repoRoot: resolve(process.cwd()),
+        coordinator: {
+          primary: createCodebaseMemorySemanticAdapter(),
+          local: createLocalSemanticAdapter({ home }),
+        },
+      },
+      modelPass: async (candidates, semanticContext) => runModelCommand(modelCommandFromEnvironment(state.preferences?.modelRoute), candidates, semanticContext),
+      publish: async (mined) => { incidents = mined; },
+    },
+  });
+  return { ...scan, incidentsFound: rankIncidents(incidents).length };
+}
+
 function currentDoctorOptions() {
   const homes = agentHomes();
   const hermesConfig = configText(join(homes.hermesHome, "config.yaml"));
@@ -684,12 +730,13 @@ if (mode === "onboard") {
   const gate = returningRoute(choice);
   try {
     const { options: doctorOptions } = currentDoctorOptions();
-    const result = runReturningService(gate, {
+    const result = await runReturningService(gate, {
       globalHome: globalGuardHome(),
       guards: runtimeGuards(),
       disabledGuardIds: disabledGuards(),
       doctorOptions,
       dailyOptions: { scope: guardScope() },
+      incrementalScan: (returningGate) => runProductionReturningScan(home, state, returningGate),
     });
     saveOnboardingState(home, recordReturningConversation(state, { reason: choice }));
     process.stdout.write(`${JSON.stringify({ gate, result })}\n`);

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { compileGuard } from "../compiler/codex-fill";
 import { guardHomeForScope, type GuardScope } from "../guard-home";
+import { seedIncrementalCursor } from "../ingest/incremental-cursor";
 import { scanHistory, type ScanOptions } from "../ingest/scan";
 import type { IncidentManifest } from "../ingest/rank";
 import type { HistoryChunk } from "../ingest/types";
@@ -89,6 +90,10 @@ export interface OnboardingCoordinatorOptions {
   installBindings(guards: readonly Guard[], environmentIds: readonly string[]): Promise<void> | void;
   environment?: NodeJS.ProcessEnv;
   cwd?: string;
+  incrementalCursor?: {
+    directory: string;
+    maxSessionsPerSource?: number;
+  };
   resume?: OnboardingCheckpoint;
   save?(checkpoint: OnboardingCheckpoint): void;
 }
@@ -300,8 +305,12 @@ export class OnboardingCoordinator {
     const scope = this.#scope;
     if (!scope) throw new Error("Onboarding scope is missing.");
     const checkpointDirectory = join(guardHomeForScope(scope, this.options.environment, this.options.cwd), "scan");
+    let loadedHistory: HistoryChunk[] | undefined;
     const result = await scanHistory(
-      () => this.options.loadHistory(this.#selectedSourceIds, { confirmed: true, scrubbersVerified: true }),
+      async () => {
+        loadedHistory = await this.options.loadHistory(this.#selectedSourceIds, { confirmed: true, scrubbersVerified: true });
+        return loadedHistory;
+      },
       {
         ...this.options.scan,
         ...(verifiedScrubbers ? {
@@ -321,6 +330,13 @@ export class OnboardingCoordinator {
       this.#incidents = [];
       this.#phase = "paused";
       return this.#save();
+    }
+    if (loadedHistory && this.options.incrementalCursor) {
+      seedIncrementalCursor(
+        this.options.incrementalCursor.directory,
+        loadedHistory,
+        this.options.incrementalCursor.maxSessionsPerSource,
+      );
     }
     this.#incidents = mined;
     this.#phase = "review";

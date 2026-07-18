@@ -12,6 +12,13 @@ export interface ReturningServiceOptions {
   doctorOptions?: DoctorOptions;
   dailyOptions?: DailyCommandOptions;
   now?: Date;
+  incrementalScan?: (gate: "R1" | "R2" | "R4") => Promise<ReturningIncrementalScanResult>;
+}
+
+export interface ReturningIncrementalScanResult {
+  status: "ingested" | "paused";
+  chunksScanned: number;
+  incidentsFound: number;
 }
 
 export interface ReturningRuleActivity extends RuleSummary {
@@ -29,31 +36,46 @@ export interface ManageRulesResult {
 
 export interface CatchUpResult {
   kind: "catch-up";
-  complete: false;
+  complete: boolean;
   doctor: {
     healthy: boolean;
     findings: DoctorFinding[];
     auditWarnings: AuditWarning[];
   };
   daily: DailyCommandResult;
-  incrementalScan: {
-    status: "blocked";
-    reason: "No durable returning-scan cursor exists.";
-  };
+  incrementalScan: ReturningIncrementalScanResult;
 }
 
-export type ReturningServiceResult = ManageRulesResult | CatchUpResult;
-
-function unsupportedScan(gate: "R1" | "R2"): never {
-  const action = gate === "R1" ? "since-last-run problem scan" : "targeted project or tool scan";
-  throw new Error(`${action} is unavailable because no durable returning-scan cursor exists.`);
+export interface ProblemScanResult {
+  kind: "scan-problem";
+  compareExistingRules: true;
+  incrementalScan: ReturningIncrementalScanResult;
 }
 
-export function runReturningService(
+export interface ProjectScanResult {
+  kind: "discover-project-or-tool";
+  scopedRules: true;
+  incrementalScan: ReturningIncrementalScanResult;
+}
+
+export type ReturningServiceResult = ManageRulesResult | CatchUpResult | ProblemScanResult | ProjectScanResult;
+
+async function runIncrementalScan(options: ReturningServiceOptions, gate: "R1" | "R2" | "R4"): Promise<ReturningIncrementalScanResult> {
+  if (!options.incrementalScan) throw new Error("Returning scan is unavailable because no durable returning-scan cursor is configured.");
+  const result = await options.incrementalScan(gate);
+  if (result.status !== "ingested" && result.status !== "paused") throw new Error("Returning scan returned an invalid status.");
+  if (!Number.isSafeInteger(result.chunksScanned) || result.chunksScanned < 0 || !Number.isSafeInteger(result.incidentsFound) || result.incidentsFound < 0) {
+    throw new Error("Returning scan returned invalid counts.");
+  }
+  return result;
+}
+
+export async function runReturningService(
   gate: Exclude<ReturningGate, "R0">,
   options: ReturningServiceOptions,
-): ReturningServiceResult {
-  if (gate === "R1" || gate === "R2") return unsupportedScan(gate);
+): Promise<ReturningServiceResult> {
+  if (gate === "R1") return { kind: "scan-problem", compareExistingRules: true, incrementalScan: await runIncrementalScan(options, gate) };
+  if (gate === "R2") return { kind: "discover-project-or-tool", scopedRules: true, incrementalScan: await runIncrementalScan(options, gate) };
 
   const now = options.now ?? new Date();
   if (gate === "R3") {
@@ -90,18 +112,16 @@ export function runReturningService(
     },
   });
   const daily = runDailyStrengtheningCommand({ ...options.dailyOptions, now });
+  const incrementalScan = await runIncrementalScan(options, "R4");
   return {
     kind: "catch-up",
-    complete: false,
+    complete: incrementalScan.status === "ingested",
     doctor: {
       healthy: findings.every((finding) => finding.status !== "error"),
       findings,
       auditWarnings: lastFired.warnings,
     },
     daily,
-    incrementalScan: {
-      status: "blocked",
-      reason: "No durable returning-scan cursor exists.",
-    },
+    incrementalScan,
   };
 }

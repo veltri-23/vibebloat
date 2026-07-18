@@ -17,7 +17,7 @@ function guard(id: string): Guard {
   };
 }
 
-test("R3 returns safe rule and firing evidence without inventing override counts", () => {
+test("R3 returns safe rule and firing evidence without inventing override counts", async () => {
   const home = mkdtempSync(join(tmpdir(), "vibebloat-returning-r3-"));
   const first = guard("alpha-rule");
   const second = guard("beta-rule");
@@ -36,7 +36,7 @@ test("R3 returns safe rule and firing evidence without inventing override counts
     blocked: true,
   }, new Date("2026-07-18T13:00:00.000Z"));
 
-  const result = runReturningService("R3", {
+  const result = await runReturningService("R3", {
     globalHome: home,
     guards: [second, first],
     disabledGuardIds: [second.id],
@@ -53,9 +53,9 @@ test("R3 returns safe rule and firing evidence without inventing override counts
   expect(result.limitations).toEqual(["Historical override counts are not recorded."]);
 });
 
-test("R4 runs doctor and writes daily evidence without claiming an incremental scan", () => {
+test("R4 runs doctor, writes daily evidence, and reports its incremental scan", async () => {
   const home = mkdtempSync(join(tmpdir(), "vibebloat-returning-r4-"));
-  const result = runReturningService("R4", {
+  const result = await runReturningService("R4", {
     globalHome: home,
     guards: [],
     now: new Date("2026-07-18T14:00:00.000Z"),
@@ -71,19 +71,38 @@ test("R4 runs doctor and writes daily evidence without claiming an incremental s
       environment: { VIBEBLOAT_HOME: home, USERPROFILE: home },
       cwd: home,
     },
+    incrementalScan: async () => ({ status: "ingested", chunksScanned: 2, incidentsFound: 1 }),
   });
 
   expect(result.kind).toBe("catch-up");
   if (result.kind !== "catch-up") throw new Error("Expected catch-up result.");
   expect(result.doctor).toEqual({ healthy: true, findings: [], auditWarnings: [] });
-  expect(result.complete).toBeFalse();
-  expect(result.incrementalScan).toEqual({ status: "blocked", reason: "No durable returning-scan cursor exists." });
+  expect(result.complete).toBeTrue();
+  expect(result.incrementalScan).toEqual({ status: "ingested", chunksScanned: 2, incidentsFound: 1 });
   expect(result.daily.report.generatedAt).toBe("2026-07-18T14:00:00.000Z");
   expect(existsSync(result.daily.proposalPath)).toBeTrue();
 });
 
-test("R1 and R2 fail closed instead of rescanning all history", () => {
-  const options = { globalHome: "unused", guards: [] };
-  expect(() => runReturningService("R1", options)).toThrow("since-last-run problem scan is unavailable because no durable returning-scan cursor exists.");
-  expect(() => runReturningService("R2", options)).toThrow("targeted project or tool scan is unavailable because no durable returning-scan cursor exists.");
+test("R1, R2, and R4 invoke the configured bounded returning scan", async () => {
+  const home = mkdtempSync(join(tmpdir(), "vibebloat-returning-scan-"));
+  const options = { globalHome: home, guards: [] };
+  const calls: string[] = [];
+  const configured = {
+    ...options,
+    doctorOptions: { requireProof: false, guards: [], hookConfigs: { claude: "vibebloat", codex: "vibebloat\nplugin_hooks = true" } },
+    dailyOptions: { environment: { VIBEBLOAT_HOME: home, USERPROFILE: home }, cwd: home },
+    incrementalScan: async (gate: "R1" | "R2" | "R4") => {
+      calls.push(gate);
+      return { status: "ingested" as const, chunksScanned: 0, incidentsFound: 0 };
+    },
+  };
+  await expect(runReturningService("R1", configured)).resolves.toMatchObject({ kind: "scan-problem", compareExistingRules: true });
+  await expect(runReturningService("R2", configured)).resolves.toMatchObject({ kind: "discover-project-or-tool", scopedRules: true });
+  await expect(runReturningService("R4", configured)).resolves.toMatchObject({ kind: "catch-up", complete: true });
+  expect(calls).toEqual(["R1", "R2", "R4"]);
+});
+
+test("R1 fails closed when the durable cursor scanner is unavailable", async () => {
+  await expect(runReturningService("R1", { globalHome: "unused", guards: [] }))
+    .rejects.toThrow("Returning scan is unavailable because no durable returning-scan cursor is configured.");
 });
