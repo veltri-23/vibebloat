@@ -16,6 +16,7 @@ import { compileLiveForScope } from "./compiler/live-compile";
 import { scanHistory } from "./ingest/scan";
 import { rankIncidents, type IncidentManifest } from "./ingest/rank";
 import type { HistoryChunk } from "./ingest/types";
+import { detectRunnerDetails, parentProcessCommand, parseRunnerOverride, type RunnerDetectionSource } from "./onboarding/detect-runner";
 import { isGateChoice } from "./onboarding/gates";
 import { OnboardingRunner, type RunnerState } from "./onboarding/runner";
 import { loadOnboardingState, saveOnboardingState } from "./onboarding/state";
@@ -254,13 +255,33 @@ if (mode === "install") {
 if (mode === "init") {
   const home = onboardingHome();
   const stored = loadOnboardingState(home);
+  let runnerSource: RunnerDetectionSource | "saved";
+  let runnerKind: RunnerState["runner"];
+  try {
+    const explicit = parseRunnerOverride(process.argv.slice(3));
+    const signals = {
+      explicit,
+      isTTY: Boolean(process.stdin.isTTY),
+      env: process.env,
+      parentProcess: "",
+    };
+    const preliminary = detectRunnerDetails(signals);
+    const detected = explicit || stored?.runner || preliminary.source === "environment"
+      ? preliminary
+      : detectRunnerDetails({ ...signals, parentProcess: parentProcessCommand() });
+    runnerKind = explicit ?? stored?.runner ?? detected.kind;
+    runnerSource = explicit ? "explicit" : stored?.runner ? "saved" : detected.source;
+  } catch (error) {
+    process.stderr.write(`WHAT failed: onboarding runner selection stopped.\nWHY: ${error instanceof Error ? error.message : "unknown error"}.\nFIX: vibebloat init --human\n`);
+    process.exit(1);
+  }
   const state: RunnerState = stored
-    ? { gate: stored.gate as RunnerState["gate"], answers: stored.answers, scope: stored.scope, cancelled: stored.cancelled }
-    : { gate: "A0", answers: {} };
+    ? { gate: stored.gate as RunnerState["gate"], answers: stored.answers, runner: runnerKind, scope: stored.scope, cancelled: stored.cancelled }
+    : { gate: "A0", answers: {}, runner: runnerKind };
   const runner = new OnboardingRunner(state);
   const answerIndex = process.argv.indexOf("--answer");
   if (answerIndex < 0) {
-    process.stdout.write(`${JSON.stringify({ ...runner.snapshot(), prompt: runner.current() })}\n`);
+    process.stdout.write(`${JSON.stringify({ ...runner.snapshot(), runnerSource, prompt: runner.current() })}\n`);
     process.exit(0);
   }
   const answer = process.argv[answerIndex + 1] ?? "";
@@ -282,7 +303,7 @@ if (mode === "init") {
     process.stderr.write(`WHAT failed: onboarding setup stopped.\nWHY: ${error instanceof Error ? error.message : "unknown error"}\nFIX: vibebloat init --answer Yes\n`);
     process.exit(1);
   }
-  process.stdout.write(`${JSON.stringify({ ...next, prompt: runner.current() })}\n`);
+  process.stdout.write(`${JSON.stringify({ ...next, runnerSource, prompt: runner.current() })}\n`);
   process.exit(0);
 }
 

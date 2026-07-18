@@ -1,4 +1,5 @@
 import { answerAssist, type AssistContext, type AssistResponse } from "./assist";
+import type { RunnerKind } from "./detect-runner";
 import { autoAdvances, canonicalGateChoice, getGate, isGateChoice, nextFirstRunGate, type GateChoice, type GateId, type OnboardingContext } from "./gates";
 import type { GuardScope } from "../guard-home";
 
@@ -10,6 +11,7 @@ export function nextGateBatch<Gate>(orderedGates: Gate[], offset: number, maximu
 export interface RunnerState {
   gate: GateId;
   answers: Record<string, string>;
+  runner?: RunnerKind;
   scope?: GuardScope;
   cancelled?: boolean;
 }
