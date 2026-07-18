@@ -26,3 +26,7 @@ def test_file_write_maps_to_hook_and_blocks():
         decision = asyncio.run(HANDLER.handle("tool:before", {"tool_name": "write_file", "args": {"file_path": ".mcp.json"}}))
 
     assert decision == {"action": "block", "code": "vibebloat_guard", "message": "wrong config"}
+
+
+def test_unrecognized_event_preserves_handler_fallback():
+    assert asyncio.run(HANDLER.handle("agent:step", {})) is None
