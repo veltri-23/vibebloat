@@ -30,6 +30,14 @@ def test_missing_cli_denies_with_gateway_decision():
     assert decision == {"decision": "deny", "message": "VibeBloat CLI unavailable."}
 
 
+def test_cli_runtime_failure_denies_fail_closed():
+    completed = HANDLER.subprocess.CompletedProcess([], 1, "", "runtime crash")
+    with patch.dict(HANDLER.os.environ, {"VIBEBLOAT_CLI": "vibebloat-bin"}, clear=True), patch.object(HANDLER.subprocess, "run", return_value=completed):
+        decision = asyncio.run(HANDLER.handle("command:stash", {"command": "stash", "args": "-u"}))
+
+    assert decision == {"decision": "deny", "message": "runtime crash"}
+
+
 def test_copied_handler_uses_cli_contract_without_source_tree():
     with tempfile.TemporaryDirectory() as directory:
         copied_handler = Path(directory) / "handler.py"

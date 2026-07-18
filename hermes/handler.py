@@ -29,13 +29,18 @@ async def handle(event_type: str, context: dict[str, Any]) -> dict[str, str] | N
     cli = _cli()
     if cli is None:
         return {"decision": "deny", "message": "VibeBloat CLI unavailable."}
-    result = subprocess.run(
-        [cli, "hook"],
-        input=json.dumps(payload, separators=(",", ":")),
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if result.returncode != 2:
+    try:
+        result = subprocess.run(
+            [cli, "hook"],
+            input=json.dumps(payload, separators=(",", ":")),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    except OSError as error:
+        return {"decision": "deny", "message": f"VibeBloat CLI failed: {error}"}
+    if result.returncode == 0:
         return None
-    return {"decision": "deny", "message": result.stderr.strip() or "Blocked by VibeBloat guard."}
+    if result.returncode == 2:
+        return {"decision": "deny", "message": result.stderr.strip() or "Blocked by VibeBloat guard."}
+    return {"decision": "deny", "message": result.stderr.strip() or f"VibeBloat CLI failed with exit code {result.returncode}."}
