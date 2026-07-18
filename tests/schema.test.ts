@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { compileGuard } from "../src/compiler/codex-fill";
 import { loadGuards } from "../src/guard-loader";
 import { gitStashUntrackedGuard, mcpConfigWrongFileGuard } from "../src/guards";
 import { match } from "../src/match";
@@ -54,9 +55,58 @@ describe("guard schema", () => {
     expect(() => parseGuard({ ...validGuard, action: { ...validGuard.action, type: "shell-script", command: "rm -rf /" } })).toThrow();
   });
 
+  test("rejects malformed identifiers and provenance values", () => {
+    for (const id of ["", "two words", "Upper-Case", "under_score", 7]) {
+      expect(() => parseGuard({ ...validGuard, id })).toThrow("id must use lower-case kebab-case");
+    }
+    for (const field of ["incident", "date", "source"] as const) {
+      expect(() => parseGuard({ ...validGuard, provenance: { ...validGuard.provenance, [field]: " " } })).toThrow(`provenance.${field} must be a non-empty string`);
+      expect(() => parseGuard({ ...validGuard, provenance: { ...validGuard.provenance, [field]: { payload: true } } })).toThrow(`provenance.${field} must be a non-empty string`);
+    }
+  });
+
+  test("rejects malformed match fields and argument arrays", () => {
+    expect(() => parseGuard({ ...validGuard, match: { chokepoint: "shell" } })).toThrow("shell match requires a non-empty command");
+    expect(() => parseGuard({ ...validGuard, match: { chokepoint: "file" } })).toThrow("file match requires a non-empty path");
+    expect(() => parseGuard({ ...validGuard, match: { chokepoint: "shell", command: " " } })).toThrow("match.command must be a non-empty string");
+    expect(() => parseGuard({ ...validGuard, match: { chokepoint: "file", path: "" } })).toThrow("match.path must be a non-empty string");
+    expect(() => parseGuard({ ...validGuard, match: { chokepoint: "shell", command: 42 } })).toThrow("match.command must be a non-empty string");
+    expect(() => parseGuard({ ...validGuard, match: { chokepoint: "file", path: { payload: true } } })).toThrow("match.path must be a non-empty string");
+    for (const field of ["argsContains", "argsAnyOf"] as const) {
+      expect(() => parseGuard({ ...validGuard, match: { ...validGuard.match, [field]: "-u" } })).toThrow(`match.${field} must be an array of non-empty strings`);
+      expect(() => parseGuard({ ...validGuard, match: { ...validGuard.match, [field]: ["-u", " "] } })).toThrow(`match.${field} must be an array of non-empty strings`);
+      expect(() => parseGuard({ ...validGuard, match: { ...validGuard.match, [field]: ["-u", { payload: true }] } })).toThrow(`match.${field} must be an array of non-empty strings`);
+    }
+  });
+
+  test("rejects malformed action fields", () => {
+    for (const field of ["message", "override"] as const) {
+      expect(() => parseGuard({ ...validGuard, action: { ...validGuard.action, [field]: " " } })).toThrow(`action.${field} must be a non-empty string`);
+      expect(() => parseGuard({ ...validGuard, action: { ...validGuard.action, [field]: { payload: true } } })).toThrow(`action.${field} must be a non-empty string`);
+    }
+    expect(() => parseGuard({ ...validGuard, action: { type: "quarantine-file", message: "move", override: "allow" } })).toThrow("quarantine-file requires a non-empty quarantinePath");
+    expect(() => parseGuard({ ...validGuard, action: { type: "quarantine-file", message: "move", override: "allow", quarantinePath: [] } })).toThrow("quarantine-file requires a non-empty quarantinePath");
+    expect(() => parseGuard({ ...validGuard, action: { type: "run-check", message: "check", override: "allow" } })).toThrow("run-check requires a non-empty check name");
+    expect(() => parseGuard({ ...validGuard, action: { type: "run-check", message: "check", override: "allow", check: " " } })).toThrow("run-check requires a non-empty check name");
+    expect(() => parseGuard({ ...validGuard, action: { type: "run-check", message: "check", override: "allow", check: { payload: true } } })).toThrow("run-check requires a non-empty check name");
+  });
+
+  test("rejects malformed confidence, tier, and binds", () => {
+    for (const confidence of ["medium", "", 1, null]) {
+      expect(() => parseGuard({ ...validGuard, confidence })).toThrow("confidence must be high or low");
+    }
+    for (const tier of ["remote", "", 1, null]) {
+      expect(() => parseGuard({ ...validGuard, tier })).toThrow("tier must be local or community");
+    }
+    expect(() => parseGuard({ ...validGuard, binds: "codex" })).toThrow("binds must be an array of known agents");
+    expect(() => parseGuard({ ...validGuard, binds: ["codex", { payload: true }] })).toThrow("binds must be an array of known agents");
+    expect(() => parseGuard({ ...validGuard, binds: ["codex", "codex"] })).toThrow("binds must not contain duplicates");
+    expect(parseGuard({ ...validGuard, binds: [] })).toEqual({ ...validGuard, binds: [] });
+  });
+
   test("rejects unknown agent bindings", () => {
-    expect(() => parseGuard({ ...validGuard, binds: ["unknown-agent"] })).toThrow("binds must contain known agents");
-    expect(() => parseGuard({ ...validGuard, binds: null })).toThrow("binds must contain known agents");
+    expect(() => parseGuard({ ...validGuard, binds: ["unknown-agent"] })).toThrow("binds must be an array of known agents");
+    expect(() => parseGuard({ ...validGuard, binds: null })).toThrow("binds must be an array of known agents");
   });
 
   test("loads only validated JSON guards before the hot path", () => {
@@ -68,10 +118,21 @@ describe("guard schema", () => {
 
   test("loads current built-in and community-compatible guard shapes", () => {
     const communityGuard = { ...validGuard, id: "community-stash", tier: "community" };
-    expect([gitStashUntrackedGuard, mcpConfigWrongFileGuard, validGuard, communityGuard].map(parseGuard)).toEqual([
+    const compiledGuard = compileGuard({
+      incident_id: "compiled-stash",
+      class: "A",
+      chokepoint: "shell",
+      command: "git stash",
+      condition: "untracked files present",
+      evidence_refs: ["claude-code:test:1:0"],
+      severity: 5,
+      frequency: 2,
+      recency: "2026-07-18",
+    }, "high");
+    expect([gitStashUntrackedGuard, mcpConfigWrongFileGuard, compiledGuard, communityGuard].map(parseGuard)).toEqual([
       gitStashUntrackedGuard,
       mcpConfigWrongFileGuard,
-      validGuard,
+      compiledGuard,
       communityGuard,
     ]);
   });
