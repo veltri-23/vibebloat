@@ -201,8 +201,18 @@ if (mode === "install") {
   }
   const hermesHooksDirectoryIndex = process.argv.indexOf("--hermes-hooks-dir");
   const hermesHooksDirectory = hermesHooksDirectoryIndex < 0 ? undefined : process.argv[hermesHooksDirectoryIndex + 1];
+  const hermesConfigIndex = process.argv.indexOf("--hermes-config");
+  const hermesConfigPath = hermesConfigIndex < 0 ? undefined : process.argv[hermesConfigIndex + 1];
   if (hermesHooksDirectoryIndex >= 0 && !hermesHooksDirectory) {
     process.stderr.write("WHAT failed: Hermes hooks directory was not supplied.\nWHY: Hermes installation needs an explicit writable hooks path.\nFIX: vibebloat install --yes --hermes-hooks-dir <path>\n");
+    process.exit(1);
+  }
+  if (hermesConfigIndex >= 0 && !hermesConfigPath) {
+    process.stderr.write("WHAT failed: Hermes config path was not supplied.\nWHY: Hermes shell-hook installation needs an explicit config path.\nFIX: vibebloat install --yes --hermes-hooks-dir <path> --hermes-config <path>\n");
+    process.exit(1);
+  }
+  if (hermesConfigPath && !hermesHooksDirectory) {
+    process.stderr.write("WHAT failed: Hermes hooks directory was not supplied.\nWHY: Hermes config must point to an explicitly installed bridge.\nFIX: vibebloat install --yes --hermes-hooks-dir <path> --hermes-config <path>\n");
     process.exit(1);
   }
   try {
@@ -228,7 +238,7 @@ if (mode === "install") {
         },
       } : {}),
     });
-    if (hermesHooksDirectory) installHermesHook({ permitted: true, hooksDirectory: hermesHooksDirectory });
+    if (hermesHooksDirectory) installHermesHook({ permitted: true, hooksDirectory: hermesHooksDirectory, configPath: hermesConfigPath });
     process.stdout.write(fallbackShimDirectory
       ? `Native hooks and fallback git shims installed. Add ${fallbackShimDirectory} first on PATH in each shell, then run: vibebloat doctor\n`
       : "Native hooks installed. Run: vibebloat doctor\n");

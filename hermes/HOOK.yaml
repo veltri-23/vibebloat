@@ -1,9 +1,4 @@
 name: vibebloat
-description: Block VibeBloat-guarded commands and mutating tools before Hermes executes them.
+description: Block VibeBloat-guarded commands before Hermes executes them.
 events:
   - command:*
-  - tool:*
-  - terminal
-  - execute_code
-  - patch
-  - write_file

@@ -1,7 +1,9 @@
+import asyncio
 import json
 import os
 import shutil
 import subprocess
+import sys
 from typing import Any
 
 
@@ -109,3 +111,42 @@ async def handle(event_type: str, context: dict[str, Any]) -> dict[str, str] | N
     if result.returncode == 2:
         return {"decision": "deny", "message": result.stderr.strip() or "Blocked by VibeBloat guard."}
     return {"decision": "deny", "message": result.stderr.strip() or f"VibeBloat CLI failed with exit code {result.returncode}."}
+
+
+def _block(message: str) -> dict[str, str]:
+    return {"decision": "block", "reason": message}
+
+
+async def handle_shell_hook(payload: object) -> dict[str, str] | None:
+    if not isinstance(payload, dict):
+        return _block("VibeBloat hook received an invalid Hermes payload.")
+    if payload.get("hook_event_name") != "pre_tool_call":
+        return None
+    tool_name = payload.get("tool_name")
+    tool_input = payload.get("tool_input")
+    if not isinstance(tool_name, str) or not isinstance(tool_input, dict):
+        return _block("VibeBloat hook received an invalid Hermes tool payload.")
+    decision = await handle(tool_name, {"tool_input": tool_input})
+    if decision is None:
+        return None
+    return _block(decision["message"])
+
+
+def main() -> int:
+    try:
+        payload = json.load(sys.stdin)
+    except (json.JSONDecodeError, OSError) as error:
+        print(json.dumps(_block(f"VibeBloat hook could not read Hermes input: {error}")))
+        return 0
+    try:
+        decision = asyncio.run(handle_shell_hook(payload))
+    except Exception as error:
+        print(json.dumps(_block(f"VibeBloat hook could not evaluate Hermes input: {error}")))
+        return 0
+    if decision is not None:
+        print(json.dumps(decision, separators=(",", ":")))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

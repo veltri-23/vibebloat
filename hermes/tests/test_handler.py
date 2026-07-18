@@ -1,5 +1,8 @@
 import asyncio
+import contextlib
 import importlib.util
+import io
+import json
 import shutil
 import tempfile
 from pathlib import Path
@@ -101,6 +104,45 @@ def test_tool_cli_os_error_denies_fail_closed():
     assert decision == {"decision": "deny", "message": "VibeBloat CLI failed: spawn failed"}
 
 
+def test_shell_hook_protocol_maps_mutating_tool_to_shared_hook_payload():
+    completed = HANDLER.subprocess.CompletedProcess([], 2, "", "blocked by guard")
+    payload = {"hook_event_name": "pre_tool_call", "tool_name": "terminal", "tool_input": {"command": "git stash -u"}}
+    with patch.dict(HANDLER.os.environ, {"VIBEBLOAT_CLI": "vibebloat-bin"}, clear=True), patch.object(HANDLER.subprocess, "run", return_value=completed) as run:
+        decision = asyncio.run(HANDLER.handle_shell_hook(payload))
+
+    assert decision == {"decision": "block", "reason": "blocked by guard"}
+    assert run.call_args.args[0] == ["vibebloat-bin", "hook"]
+    assert run.call_args.kwargs["input"] == '{"tool_name":"Bash","tool_input":{"command":"git stash -u"}}'
+
+
+def test_invalid_shell_hook_payload_blocks_fail_closed():
+    decision = asyncio.run(HANDLER.handle_shell_hook({"hook_event_name": "pre_tool_call", "tool_name": "terminal", "tool_input": None}))
+
+    assert decision == {"decision": "block", "reason": "VibeBloat hook received an invalid Hermes tool payload."}
+
+
+def test_shell_hook_executable_writes_hermes_block_json():
+    async def block(_: object):
+        return {"decision": "block", "reason": "blocked by guard"}
+
+    output = io.StringIO()
+    with patch.object(HANDLER.sys, "stdin", io.StringIO(json.dumps({"hook_event_name": "pre_tool_call"}))), patch.object(HANDLER, "handle_shell_hook", side_effect=block), contextlib.redirect_stdout(output):
+        assert HANDLER.main() == 0
+
+    assert json.loads(output.getvalue()) == {"decision": "block", "reason": "blocked by guard"}
+
+
+def test_shell_hook_executable_blocks_unexpected_runtime_error():
+    async def crash(_: object):
+        raise RuntimeError("guard crash")
+
+    output = io.StringIO()
+    with patch.object(HANDLER.sys, "stdin", io.StringIO(json.dumps({"hook_event_name": "pre_tool_call"}))), patch.object(HANDLER, "handle_shell_hook", side_effect=crash), contextlib.redirect_stdout(output):
+        assert HANDLER.main() == 0
+
+    assert json.loads(output.getvalue()) == {"decision": "block", "reason": "VibeBloat hook could not evaluate Hermes input: guard crash"}
+
+
 def test_copied_handler_uses_cli_contract_without_source_tree():
     with tempfile.TemporaryDirectory() as directory:
         copied_handler = Path(directory) / "handler.py"
@@ -121,7 +163,7 @@ def test_unrecognized_event_preserves_handler_fallback():
     assert asyncio.run(HANDLER.handle("agent:step", {})) is None
 
 
-def test_manifest_declares_command_and_mutating_tool_events():
+def test_manifest_declares_only_supported_hookregistry_events():
     manifest = HOOK_PATH.read_text(encoding="utf-8")
-    for event in ("command:*", "tool:*", "terminal", "execute_code", "patch", "write_file"):
-        assert f"- {event}" in manifest
+    assert "- command:*" in manifest
+    assert "tool:*" not in manifest
