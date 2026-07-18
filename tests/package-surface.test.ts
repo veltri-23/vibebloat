@@ -11,7 +11,9 @@ const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.me
     runtimeExtensions?: string[];
   };
   peerDependencies?: Record<string, string>;
+  peerDependenciesMeta?: Record<string, { optional?: boolean }>;
   scripts?: Record<string, string>;
+  bin?: Record<string, string>;
   private?: boolean;
 };
 const manifest = JSON.parse(readFileSync(new URL("../openclaw.plugin.json", import.meta.url), "utf8")) as {
@@ -25,8 +27,11 @@ test("npm package ships an installable OpenClaw plugin", () => {
   expect(packageJson.engines?.bun).toBe(">=1.3.0");
   expect(packageJson.scripts?.["build:openclaw"]).toBe("bun build src/hooks/openclaw-plugin.ts --outdir dist --target bun");
   expect(packageJson.scripts?.prepack).toBe("bun run build:openclaw");
+  expect(packageJson.scripts?.prepublishOnly).toBe("bun scripts/prepublish.ts && bun test && python -m pytest -q hermes/tests && bun run build");
+  expect(packageJson.bin?.vibebloat).toBe("bin/vibebloat.js");
   expect(packageJson.exports?.["./openclaw-plugin"]).toBe("./dist/openclaw-plugin.js");
   expect(packageJson.peerDependencies?.openclaw).toBe(">=2026.4.0");
+  expect(packageJson.peerDependenciesMeta?.openclaw).toEqual({ optional: true });
   expect(packageJson.openclaw).toEqual({
     extensions: ["./src/hooks/openclaw-plugin.ts"],
     runtimeExtensions: ["./dist/openclaw-plugin.js"],

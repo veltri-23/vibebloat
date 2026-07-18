@@ -19,13 +19,18 @@
     "bun": ">=1.3.0"
   },
   "bin": {
-    "vibebloat": "./bin/vibebloat.js"
+    "vibebloat": "bin/vibebloat.js"
   },
   "exports": {
     "./openclaw-plugin": "./dist/openclaw-plugin.js"
   },
   "peerDependencies": {
     "openclaw": ">=2026.4.0"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
   },
   "openclaw": {
     "extensions": [
@@ -42,6 +47,7 @@
     "build": "bun scripts/build.ts",
     "build:openclaw": "bun build src/hooks/openclaw-plugin.ts --outdir dist --target bun",
     "prepack": "bun run build:openclaw",
+    "prepublishOnly": "bun scripts/prepublish.ts && bun test && python -m pytest -q hermes/tests && bun run build",
     "test": "bun test",
     "eval": "bun src/cli.ts eval",
     "hook": "bun src/cli.ts hook"
