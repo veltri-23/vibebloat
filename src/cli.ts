@@ -16,6 +16,7 @@ import { installHermesHook, preflightHermesHook } from "./install/hermes";
 import type { Shell } from "./install/shim";
 import { compileGuard } from "./compiler/codex-fill";
 import { compileLiveForScope, drainQueuedLiveCompilesForScope } from "./compiler/live-compile";
+import { approveLiveCompileProposal, authorizeHumanLiveCompileApproval, drainQueuedLiveProposalsForScope, processQueuedLiveProposal, reviewLiveCompileProposal } from "./compiler/live-incident";
 import { createCodebaseMemorySemanticAdapter } from "./ingest/codebase-memory-semantic";
 import { createLocalSemanticAdapter } from "./ingest/local-semantic";
 import { scanHistory } from "./ingest/scan";
@@ -676,10 +677,17 @@ if (mode === "scan") {
 if (mode === "compile") {
   const incidentPath = process.argv[3];
   if (incidentPath === "--drain" && process.argv.length === 4) {
-    const scope = guardScope();
-    const result = drainQueuedLiveCompilesForScope(scope);
-    process.stdout.write(`${JSON.stringify({ status: "drained", scope, ...result })}\n`);
-    process.exit(0);
+    try {
+      const scope = guardScope();
+      const result = drainQueuedLiveCompilesForScope(scope);
+      const liveProposals = drainQueuedLiveProposalsForScope(scope);
+      const hasLiveProposals = liveProposals.proposed + liveProposals.queued + liveProposals.failed > 0;
+      process.stdout.write(`${JSON.stringify({ status: "drained", scope, ...result, ...(hasLiveProposals ? { live_proposals: liveProposals } : {}) })}\n`);
+      process.exit(0);
+    } catch {
+      process.stderr.write("WHAT failed: compile queue drain stopped.\nWHY: queued compile storage contains an unsafe or unreadable entry.\nFIX: vibebloat doctor\n");
+      process.exit(1);
+    }
   }
   if (!incidentPath || process.argv.length !== 4) {
     process.stderr.write("WHAT failed: incident manifest was not supplied.\nWHY: compile needs exactly one incident JSON file.\nFIX: vibebloat compile <incident.json>\n");
@@ -710,6 +718,45 @@ if (mode === "compile") {
     process.stderr.write(`WHAT failed: guard compilation stopped.\nWHY: ${error instanceof Error ? error.message : "unknown error"}\nFIX: correct <incident.json>, then run vibebloat compile <incident.json>\n`);
     process.exit(1);
   }
+}
+
+if (mode === "approve-live") {
+  const incidentId = process.argv[3];
+  if (!incidentId || process.argv.length !== 4) {
+    process.stderr.write("WHAT failed: live incident approval was not supplied.\nWHY: approval needs exactly one reviewed incident id.\nFIX: vibebloat approve-live <incident-id>\n");
+    process.exit(1);
+  }
+  try {
+    const scope = guardScope();
+    const review = reviewLiveCompileProposal(incidentId, { scope });
+    const approval = authorizeHumanLiveCompileApproval(incidentId, review.guardSha256, {
+      isTTY: Boolean(process.stdin.isTTY && process.stdout.isTTY),
+      env: process.env,
+      parentProcess: parentProcessCommand(),
+    });
+    process.stdout.write(`${JSON.stringify({ incident_id: review.incidentId, guard: review.guard, guard_sha256: review.guardSha256 }, null, 2)}\n`);
+    if (prompt("Install this reviewed guard? Type yes to approve:")?.trim().toLowerCase() !== "yes") throw new Error("Human approval was not confirmed.");
+    const result = approveLiveCompileProposal(approval, { scope });
+    process.stdout.write(`${JSON.stringify({ ...result, scope, incident_id: incidentId })}\n`);
+    process.exit(0);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "unknown error";
+    const fix = reason === "Live compile proposal is incomplete." ? "vibebloat compile --drain" : "review the proposal, then run vibebloat approve-live <incident-id>";
+    process.stderr.write(`WHAT failed: live guard approval stopped.\nWHY: ${reason}\nFIX: ${fix}\n`);
+    process.exit(1);
+  }
+}
+
+if (mode === "live-compile-worker") {
+  const incidentId = process.argv[3];
+  const scope = process.argv[4];
+  if (!incidentId || (scope !== "repo" && scope !== "machine") || process.argv.length !== 5) process.exit(1);
+  let result = processQueuedLiveProposal(incidentId, { scope });
+  for (let retry = 0; result.status === "queued" && retry < 3; retry += 1) {
+    await Bun.sleep(250 * (2 ** retry));
+    result = processQueuedLiveProposal(incidentId, { scope });
+  }
+  process.exit(result.status === "failed" ? 1 : 0);
 }
 
 if (mode === "git-hook") {
