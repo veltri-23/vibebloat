@@ -54,8 +54,8 @@ export function formatGuardRuntimeFailure(operation: string): string {
 export function hookResponseForVerdict(verdict: Verdict): HookResponse {
   const localWarning = formatAuditWarning(verdict.auditWarnings);
   return verdict.blocked
-    ? { exitCode: 2, stderr: verdict.reason, ...(localWarning ? { localWarning } : {}) }
-    : { exitCode: 0, ...(localWarning ? { localWarning } : {}) };
+    ? { exitCode: 2, stderr: verdict.receipt ?? verdict.reason, ...(localWarning ? { localWarning } : {}) }
+    : { exitCode: 0, ...(verdict.warning ? { stderr: verdict.receipt ?? verdict.warning } : {}), ...(localWarning ? { localWarning } : {}) };
 }
 
 export function runPreToolUse(guards: Guard[], payload: unknown, runtime = new Runtime(), agent?: GuardAgent): HookResponse {

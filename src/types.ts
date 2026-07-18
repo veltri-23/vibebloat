@@ -52,6 +52,7 @@ export interface Verdict {
   warning?: string;
   quarantinedPath?: string;
   actionType?: ActionType;
+  receipt?: string;
   auditWarnings?: LocalWarning[];
 }
 

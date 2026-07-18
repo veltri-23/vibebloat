@@ -6,6 +6,7 @@ import type { FiringMetadata } from "./audit/firings";
 import { runAction } from "./runtime/actions";
 import type { ActionContext } from "./runtime/actions/types";
 import type { LocalWarning } from "./types";
+import { renderGuardReceipt } from "./block-receipt";
 
 export type OverrideConsumer = (guardId: string) => boolean;
 export type EventNormalizer = (event: Event) => Event;
@@ -63,6 +64,7 @@ export class Runtime {
         ...verdict,
         ...outcome,
         actionType: guard.action.type,
+        ...(outcome.reason ? { receipt: renderGuardReceipt(guard, outcome.reason) } : {}),
         ...(auditWarnings.length ? { auditWarnings } : {}),
       };
     }

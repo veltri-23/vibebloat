@@ -48,8 +48,8 @@ test("audit callback failure preserves block receipt and returns a separate thre
   const runtime = new Runtime([], undefined, (event) => event, () => { throw new Error("C:\\private\\Bearer secret"); });
   const response = runPreToolUse([gitStashUntrackedGuard], { tool_input: { command: "git stash -u Bearer secret" } }, runtime, "claude-code");
 
-  expect(response).toEqual({ exitCode: 2, stderr: gitStashUntrackedGuard.action.message, localWarning: auditWarning });
-  expect(response.stderr).not.toContain("Bearer secret");
+  expect(response).toMatchObject({ exitCode: 2, stderr: expect.stringContaining("BLOCKED  guard: git-stash-u  class: A"), localWarning: auditWarning });
+  expect(String(response.stderr ?? "").includes("Bearer secret")).toBeFalse();
   expect(response.localWarning).not.toMatch(/private|Bearer/i);
 });
 
@@ -113,7 +113,8 @@ test("CLI audit write failure never weakens enforcement or leaks its path", () =
   });
 
   expect(result.exitCode).toBe(2);
-  expect(result.stderr.toString()).toBe(`${gitStashUntrackedGuard.action.message}\n${auditWarning}\n`);
+  expect(result.stderr.toString()).toContain("BLOCKED  guard: git-stash-u  class: A\n");
+  expect(result.stderr.toString()).toEndWith(`${auditWarning}\n`);
   expect(result.stderr.toString()).not.toContain(invalidUserHome);
 });
 
