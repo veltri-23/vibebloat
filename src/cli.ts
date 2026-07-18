@@ -33,10 +33,13 @@ import { rankIncidents, type IncidentManifest } from "./ingest/rank";
 import type { HistoryChunk } from "./ingest/types";
 import { serializeModelCommandInput } from "./mine/model-command-input";
 import { detectRunnerDetails, parentProcessCommand, parseRunnerOverride, type RunnerDetectionSource } from "./onboarding/detect-runner";
+import { answerAssist } from "./onboarding/assist";
 import { isGateChoice, type OnboardingContext } from "./onboarding/gates";
 import { OnboardingCoordinator, reviewDecisionForChoice, type GuardReviewDecision, type OnboardingCheckpoint } from "./onboarding/coordinator";
 import { lookupMarkdownAnswer } from "./onboarding/markdown-help";
 import { applyOnboardingPreference, modelCommandEnvironmentName, type ModelRoute } from "./onboarding/preferences";
+import { getReturningGate, recordReturningConversation, returningRoute, type ReturningChoice } from "./onboarding/returning";
+import { runReturningService } from "./onboarding/returning-service";
 import { OnboardingRunner, type RunnerState } from "./onboarding/runner";
 import { loadOnboardingState, saveOnboardingState, type OnboardingState } from "./onboarding/state";
 import { Runtime } from "./runtime";
@@ -57,7 +60,8 @@ const gitHookCommands = {
   "pre-push": "vibebloat git-hook pre-push",
 } as const;
 const guardIdPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const mode = process.argv[2] ?? "init";
+const requestedMode = process.argv[2];
+const mode = requestedMode ?? (loadOnboardingState(onboardingHome())?.gate === "END" ? "onboard" : "init");
 function guardScope(): "repo" | "machine" {
   return loadOnboardingState(onboardingHome())?.scope ?? "machine";
 }
@@ -462,36 +466,116 @@ function createProductionOnboardingCoordinator(
   });
 }
 
-if (mode === "doctor") {
-  try {
-    const homes = agentHomes();
-    const hermesConfig = configText(join(homes.hermesHome, "config.yaml"));
-    const hermesEvidence = hermesHookEvidence(homes.hermesHome, hermesConfig);
-    const installedAgents = verifiedInstalledAgents(hermesEvidence.expected);
-    const directories = guardDirectories();
-    const loadedGuards = runtimeGuards();
-    const fallbackShimDirectory = argumentValue("--fallback-shim-dir");
-    const filesystemGuardHealth = inspectPersistentFsGuard({ directory: resolve(process.cwd()) });
-    const localEvidence = doctorLocalEvidence();
-    const doctorOptions = {
-      guardDirectories: directories,
-      dataHomes: [...new Set([globalGuardHome(), ...guardHomes()])],
-      guards: loadedGuards,
-      installedAtByGuard: readInstalledAtByGuard(loadedGuards, directories),
-      installedAgents,
-      ...localEvidence,
-      ...(fallbackShimDirectory ? { fallbackPathHealthy: fallbackPathIsHealthy(resolve(fallbackShimDirectory)) } : {}),
-      ...(fallbackShimDirectory || filesystemGuardHealth !== "absent" ? { filesystemGuardHealth } : {}),
-      hookConfigs: {
-        claude: configText(homes.claudePath),
-        codex: configText(homes.codexPath),
-        hermes: hermesEvidence.verifiedConfig,
-      },
-    };
-    const hasLocalEvidence = Boolean(fallbackShimDirectory
+function currentDoctorOptions() {
+  const homes = agentHomes();
+  const hermesConfig = configText(join(homes.hermesHome, "config.yaml"));
+  const hermesEvidence = hermesHookEvidence(homes.hermesHome, hermesConfig);
+  const installedAgents = verifiedInstalledAgents(hermesEvidence.expected);
+  const directories = guardDirectories();
+  const loadedGuards = runtimeGuards();
+  const fallbackShimDirectory = argumentValue("--fallback-shim-dir");
+  const filesystemGuardHealth = inspectPersistentFsGuard({ directory: resolve(process.cwd()) });
+  const localEvidence = doctorLocalEvidence();
+  const options = {
+    guardDirectories: directories,
+    dataHomes: [...new Set([globalGuardHome(), ...guardHomes()])],
+    guards: loadedGuards,
+    installedAtByGuard: readInstalledAtByGuard(loadedGuards, directories),
+    installedAgents,
+    ...localEvidence,
+    ...(fallbackShimDirectory ? { fallbackPathHealthy: fallbackPathIsHealthy(resolve(fallbackShimDirectory)) } : {}),
+    ...(fallbackShimDirectory || filesystemGuardHealth !== "absent" ? { filesystemGuardHealth } : {}),
+    hookConfigs: {
+      claude: configText(homes.claudePath),
+      codex: configText(homes.codexPath),
+      hermes: hermesEvidence.verifiedConfig,
+    },
+  };
+  return {
+    options,
+    fallbackShimDirectory,
+    hasLocalEvidence: Boolean(fallbackShimDirectory
       || filesystemGuardHealth !== "absent"
       || localEvidence.sources?.length
-      || localEvidence.semanticIndex);
+      || localEvidence.semanticIndex),
+  };
+}
+
+const returningChoiceByAnswer = new Map<string, ReturningChoice>([
+  ["Something broke or a new problem", "problem"],
+  ["A new project or tool", "project"],
+  ["Clean up or change my rules", "manage"],
+  ["Just checking in / catch me up", "catch-up"],
+]);
+
+function returningPrompt() {
+  const base = getReturningGate("R0");
+  const activeGuards = runtimeGuards().filter((guard) => !disabledGuards().has(guard.id));
+  const firingAudit = readAndPruneFirings(globalGuardHome());
+  const firedRules = new Set(firingAudit.events.map(({ guardId }) => guardId)).size;
+  return {
+    ...base,
+    question: `Welcome back. You've got ${activeGuards.length} rules running and ${firedRules} have kicked in recently. What brings you back today?`,
+  };
+}
+
+if (mode === "onboard") {
+  const home = onboardingHome();
+  const state = loadOnboardingState(home);
+  if (!state || state.gate !== "END") {
+    process.stderr.write("WHAT failed: returning onboarding is unavailable.\nWHY: first-run onboarding is not complete.\nFIX: vibebloat init\n");
+    process.exit(1);
+  }
+  const answerIndex = process.argv.indexOf("--answer");
+  if (answerIndex < 0) {
+    process.stdout.write(`${JSON.stringify({ gate: "R0", prompt: returningPrompt() })}\n`);
+    process.exit(0);
+  }
+  const answer = process.argv[answerIndex + 1] ?? "";
+  let choice = returningChoiceByAnswer.get(answer);
+  if (!choice) {
+    const projectRoot = resolve(import.meta.dir, "..");
+    const source = (name: string) => {
+      const path = join(projectRoot, name);
+      return existsSync(path) ? readFileSync(path, "utf8") : "";
+    };
+    let appliedOption: string | undefined;
+    const assist = answerAssist(answer, {
+      ...returningPrompt(),
+      faq: (message) => lookupMarkdownAnswer(message, source("FAQ.md")),
+      repo: (message) => lookupMarkdownAnswer(message, `${source("README.md")}\n\n${source("ONBOARDING-SPEC.md")}`),
+      reasoning: () => "Choose whether to report a problem, add a project, manage rules, or run a catch-up.",
+      recommendedOption: "Just checking in / catch me up",
+      applyRecommended: (recommended) => { appliedOption = recommended; },
+    });
+    choice = appliedOption ? returningChoiceByAnswer.get(appliedOption) : undefined;
+    if (!choice) {
+      process.stdout.write(`${JSON.stringify({ gate: "R0", prompt: returningPrompt(), assist })}\n`);
+      process.exit(0);
+    }
+  }
+  const gate = returningRoute(choice);
+  try {
+    const { options: doctorOptions } = currentDoctorOptions();
+    const result = runReturningService(gate, {
+      globalHome: globalGuardHome(),
+      guards: runtimeGuards(),
+      disabledGuardIds: disabledGuards(),
+      doctorOptions,
+      dailyOptions: { scope: guardScope() },
+    });
+    saveOnboardingState(home, recordReturningConversation(state, { reason: choice }));
+    process.stdout.write(`${JSON.stringify({ gate, result })}\n`);
+    process.exit(0);
+  } catch (error) {
+    process.stderr.write(`WHAT failed: returning action stopped.\nWHY: ${error instanceof Error ? error.message : "unknown error"}\nFIX: vibebloat doctor\n`);
+    process.exit(1);
+  }
+}
+
+if (mode === "doctor") {
+  try {
+    const { options: doctorOptions, fallbackShimDirectory, hasLocalEvidence } = currentDoctorOptions();
     if (installationState(doctorOptions) === "not-installed" && !hasLocalEvidence) {
       process.stdout.write("VibeBloat doctor: not installed.\n");
       process.exit(0);
@@ -1206,5 +1290,5 @@ if (mode === "hook") {
   process.exit(response.exitCode);
 }
 
-process.stderr.write("WHAT failed: expected allow, compile, eval, hook, git-hook, disable, doctor, init, install, uninstall, update, scan, stats, sync, watch, daily, rules, or email.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
+process.stderr.write("WHAT failed: expected allow, compile, eval, hook, git-hook, disable, doctor, init, onboard, install, uninstall, update, scan, stats, sync, watch, daily, rules, or email.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
 process.exit(1);
