@@ -1098,12 +1098,12 @@ if (mode === "init") {
       process.exit(1);
     }
     if (error instanceof OnboardingEffectUnavailableError) {
-      process.stderr.write(`WHAT failed: onboarding effect was not activated.\nWHY: ${error.message}.\nFIX: vibebloat init --answer ${effectGateFallback[error.gate]}\n`);
+      process.stderr.write(`WHAT failed: onboarding effect was not activated.\nWHY: ${error.message}.\nFIX: vibebloat init --answer ${JSON.stringify(effectGateFallback[error.gate])}\n`);
       process.exit(1);
     }
     const reason = error instanceof Error ? error.message : "unknown error";
     const modelVariable = reason.match(/^(VIBEBLOAT_[A-Z_]+)/)?.[1];
-    process.stderr.write(`WHAT failed: onboarding setup stopped.\nWHY: ${reason}\nFIX: ${modelVariable ? `set ${modelVariable} to a JSON command array, then rerun vibebloat init --answer ${effectiveAnswer}` : "vibebloat init --answer Yes"}\n`);
+    process.stderr.write(`WHAT failed: onboarding setup stopped.\nWHY: ${reason}\nFIX: ${modelVariable ? `set ${modelVariable} to a JSON command array, then rerun vibebloat init --answer ${JSON.stringify(effectiveAnswer)}` : "vibebloat init --answer Yes"}\n`);
     process.exit(1);
   }
   process.stdout.write(`${JSON.stringify({ ...next, ...(state.pendingSourceIds ? { pendingSourceIds: state.pendingSourceIds } : {}), runnerSource, prompt: runner.current(), ...(coordinator.discovery() ? { discovery: coordinator.discovery() } : {}), ...(assistResponse ? { assist: assistResponse } : {}) })}\n`);

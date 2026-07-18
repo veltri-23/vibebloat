@@ -149,7 +149,7 @@ test("init refuses a model route without its adapter command", () => {
     cwd: import.meta.dir + "/..", env, stdout: "pipe", stderr: "pipe",
   });
   expect(result.exitCode).toBe(1);
-  expect(result.stderr.toString()).toBe("WHAT failed: onboarding setup stopped.\nWHY: VIBEBLOAT_LOCAL_MODEL_COMMAND is required for the selected model route\nFIX: set VIBEBLOAT_LOCAL_MODEL_COMMAND to a JSON command array, then rerun vibebloat init --answer Run it locally and free (a bit slower)\n");
+  expect(result.stderr.toString()).toBe('WHAT failed: onboarding setup stopped.\nWHY: VIBEBLOAT_LOCAL_MODEL_COMMAND is required for the selected model route\nFIX: set VIBEBLOAT_LOCAL_MODEL_COMMAND to a JSON command array, then rerun vibebloat init --answer "Run it locally and free (a bit slower)"\n');
   expect(JSON.parse(readFileSync(join(home, "onboarding.json"), "utf8"))).toMatchObject({ gate: "F2" });
 });
 
@@ -272,7 +272,7 @@ test("unverified onboarding effects fail closed without advancing", () => {
     const result = init(home, "--answer", answer);
     expect(result.exitCode).toBe(1);
     expect(result.stderr.toString()).toContain("WHAT failed: onboarding effect was not activated.");
-    expect(result.stderr.toString()).toContain(`FIX: vibebloat init --answer ${fallback}`);
+    expect(result.stderr.toString()).toContain(`FIX: vibebloat init --answer ${JSON.stringify(fallback)}`);
     expect(JSON.parse(readFileSync(join(home, "onboarding.json"), "utf8"))).toMatchObject({ gate });
   }
 });
