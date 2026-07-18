@@ -58,8 +58,18 @@ function createHermesCliWrapper(root: string): string {
   return wrapper;
 }
 
+function blockReceipt(guardId: string, incident: string, why: string): string {
+  return [
+    `BLOCKED  guard: ${guardId}  class: A`,
+    `incident: ${incident}  date: 2026-07-18`,
+    `why: ${why}`,
+    `fix: vibebloat allow ${guardId} --once`,
+  ].join("\n");
+}
+
 test("same learned guard denies Claude Code, Codex, OpenClaw, and Hermes", () => {
   const { root, guardHome } = createLearnedGuardHome();
+  const receipt = blockReceipt("no-publish", "test learned guard", "VibeBloat found no-publish in 1 incident.");
 
   const claude = runCli(guardHome, ["hook"]);
   expect(claude.exitCode).toBe(2);
@@ -68,14 +78,14 @@ test("same learned guard denies Claude Code, Codex, OpenClaw, and Hermes", () =>
   const codex = runCli(guardHome, ["hook", "--agent=codex"]);
   expect(codex.exitCode).toBe(0);
   expect(JSON.parse(codex.stdout.toString())).toMatchObject({
-    hookSpecificOutput: { permissionDecision: "deny", permissionDecisionReason: "VibeBloat found no-publish in 1 incident." },
+    hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: receipt },
   });
 
   expect(guardedBeforeToolCall(
     { toolName: "exec", params: { command: "npm publish" } },
     { USERPROFILE: root, HOME: root, VIBEBLOAT_HOME: guardHome },
     root,
-  )).toMatchObject({ block: true, blockReason: "VibeBloat found no-publish in 1 incident." });
+  )).toMatchObject({ block: true, blockReason: receipt });
 
   const hermesScript = [
     "import asyncio, importlib.util, json, sys",
@@ -97,7 +107,7 @@ test("same learned guard denies Claude Code, Codex, OpenClaw, and Hermes", () =>
     },
   });
   expect(hermes.exitCode).toBe(0);
-  expect(JSON.parse(hermes.stdout.toString())).toEqual({ decision: "deny", message: "VibeBloat found no-publish in 1 incident." });
+  expect(JSON.parse(hermes.stdout.toString())).toEqual({ decision: "deny", message: receipt });
 });
 
 test("Hermes bridge resolves a repository Git alias before blocking a compiled guard", () => {
@@ -146,5 +156,8 @@ test("Hermes bridge resolves a repository Git alias before blocking a compiled g
   });
 
   expect(hermes.exitCode).toBe(0);
-  expect(JSON.parse(hermes.stdout.toString())).toEqual({ decision: "deny", message: "VibeBloat found no-git-reset-hard in 1 incident." });
+  expect(JSON.parse(hermes.stdout.toString())).toEqual({
+    decision: "deny",
+    message: blockReceipt("no-git-reset-hard", "test Hermes alias bridge", "VibeBloat found no-git-reset-hard in 1 incident."),
+  });
 });

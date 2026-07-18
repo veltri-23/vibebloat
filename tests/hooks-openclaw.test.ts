@@ -20,10 +20,12 @@ function compiledGuard(id: string, command: string) {
 }
 
 test("OpenClaw native hook blocks the shared Class A guard", () => {
-  expect(beforeToolCall([gitStashUntrackedGuard], {
+  const result = beforeToolCall([gitStashUntrackedGuard], {
     toolName: "exec",
     params: { command: "git stash -u" },
-  })).toMatchObject({ block: true, blockReason: gitStashUntrackedGuard.action.message });
+  });
+  expect(result).toMatchObject({ block: true });
+  expect(result?.blockReason).toContain(`why: ${gitStashUntrackedGuard.action.message}`);
 });
 
 test("OpenClaw native hook skips guards bound to another agent", () => {
@@ -65,7 +67,7 @@ test("OpenClaw blocks a learned project guard", () => {
     { toolName: "exec", params: { command: "npm publish" } },
     { USERPROFILE: user },
     project,
-  )).toMatchObject({ block: true, blockReason: "no-publish is blocked." });
+  )).toMatchObject({ block: true, blockReason: expect.stringContaining("why: no-publish is blocked.") });
 });
 
 test("OpenClaw resolves repository Git aliases before Class A evaluation", () => {
@@ -80,7 +82,7 @@ test("OpenClaw resolves repository Git aliases before Class A evaluation", () =>
     { toolName: "exec", params: { command: "git st -u" } },
     { HOME: user, USERPROFILE: user },
     project,
-  )).toMatchObject({ block: true, blockReason: gitStashUntrackedGuard.action.message });
+  )).toMatchObject({ block: true, blockReason: expect.stringContaining(`why: ${gitStashUntrackedGuard.action.message}`) });
 });
 
 test("OpenClaw fails closed when compiled guard loading fails", () => {

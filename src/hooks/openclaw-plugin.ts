@@ -61,7 +61,7 @@ export function beforeToolCall(guards: Guard[], event: BeforeToolCallEvent, runt
       },
     };
   }
-  if (verdict.blocked) return { block: true, blockReason: verdict.reason, ...(localWarning ? { localWarning } : {}) };
+  if (verdict.blocked) return { block: true, blockReason: verdict.receipt ?? verdict.reason, ...(localWarning ? { localWarning } : {}) };
   return localWarning ? { localWarning } : undefined;
 }
 

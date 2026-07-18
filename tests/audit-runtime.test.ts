@@ -79,7 +79,10 @@ test("OpenClaw appends through its native transport", () => {
     { toolName: "exec", params: { command: "git stash -u" } },
     { USERPROFILE: openClawUser, HOME: openClawUser },
     root,
-  )).toMatchObject({ block: true, blockReason: gitStashUntrackedGuard.action.message });
+  )).toMatchObject({
+    block: true,
+    blockReason: expect.stringContaining(`why: ${gitStashUntrackedGuard.action.message}`),
+  });
   expect(readAndPruneFirings(join(openClawUser, ".vibebloat")).events.map((event) => event.agent)).toEqual(["openclaw"]);
 });
 
