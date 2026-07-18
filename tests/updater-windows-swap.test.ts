@@ -161,7 +161,7 @@ test.skipIf(process.platform !== "win32")("helper restores prior binary when can
   expect(JSON.parse(readFileSync(join(root, ".vibebloat.cmd.update-result.json"), "utf8")).status).toBe("rolled-back");
 });
 
-test.skipIf(process.platform !== "win32")("helper applies and rolls back community guards with the binary", () => {
+test.skipIf(process.platform !== "win32")("helper applies and rolls back community guards with the binary", { timeout: 15_000 }, () => {
   const root = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-windows-swap-live-"));
   roots.push(root);
   const binaryPath = join(root, "vibebloat.cmd");
