@@ -31,4 +31,5 @@ pre { display:inline-block; max-width:100%; overflow-x:auto; margin:0; padding:1
 .library-empty { padding:16px 0; border-bottom:1px solid var(--line); }
 caption { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
 tbody tr[hidden] { display:none; }
+.legal { max-width:1080px; margin:0 auto; padding:0 24px 32px; text-align:right; }
 @media (max-width:640px) { .library-tools,.filter-groups { align-items:stretch; } .filter-groups,.filter-menu,.clear-filters { width:100%; } .filter-menu summary { width:100%; } .filter-menu fieldset { position:static; width:100%; box-shadow:none; } }

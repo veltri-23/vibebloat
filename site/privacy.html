@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Privacy · VibeBloat</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#privacy">Skip to privacy policy</a>
+    <header><a class="wordmark" href="/">VibeBloat</a><a href="/">Home</a></header>
+    <main id="privacy">
+      <section>
+        <p class="eyebrow">PRIVACY</p>
+        <h1>Local by default.</h1>
+        <p>Effective 2026-07-18.</p>
+        <h2>What stays local</h2>
+        <p>Transcripts, source code, profiles, indexes, local guards, and detailed firing logs stay on your machine. Presidio and Gitleaks run locally before model-assisted scanning. Scrub failure stops the scan.</p>
+        <h2>Optional anonymous events</h2>
+        <p>Nothing is sent without opt-in. Accepted fields are limited to onboarding choices, returning-session action categories, scrubbed incident patterns, guard-fired agents, and doctor-health status.</p>
+        <p>The endpoint rejects transcripts, source-like text, secrets, email addresses, and local paths. VibeBloat stores no account, device ID, IP address, user agent, or raw request header. Vercel and Supabase still process network metadata under their own policies.</p>
+        <p>Anonymous rows have no stable user identifier, so a specific prior row cannot be located. Disable opt-in to stop future events.</p>
+        <h2>Delete local data</h2>
+        <p><code>vibebloat email --forget</code> removes local email capture. <code>vibebloat uninstall --yes</code> removes VibeBloat-owned integrations and local data. <code>--keep-data</code> preserves local guard homes and audit data.</p>
+        <h2>Community contributions</h2>
+        <p>GitHub pull requests use GitHub identity and history. Request removal through the repository issue tracker and link the contribution.</p>
+      </section>
+    </main>
+    <footer>Apache-2.0 · <a href="privacy.html" aria-current="page">Privacy</a></footer>
+  </body>
+</html>
