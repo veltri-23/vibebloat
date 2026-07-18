@@ -3,7 +3,7 @@ import { compileGuard } from "../src/compiler/codex-fill";
 
 test("compiler fills a validated declarative guard from a typed incident", () => {
   expect(compileGuard({
-    incident_id: "git-stash-untracked",
+    incident_id: "git-stash-u",
     class: "A",
     chokepoint: "shell",
     command: "git stash",
@@ -13,7 +13,7 @@ test("compiler fills a validated declarative guard from a typed incident", () =>
     frequency: 2,
     recency: "2026-07-17",
   }, "high")).toMatchObject({
-    id: "git-stash-untracked",
+    id: "git-stash-u",
     action: { type: "block" },
     match: { chokepoint: "shell", command: "git stash" },
   });

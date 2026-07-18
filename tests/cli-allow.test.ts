@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { allowOnce } from "../src/runtime/override";
 
 const tempDirectories: string[] = [];
 afterEach(() => { for (const directory of tempDirectories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
@@ -34,6 +35,14 @@ test("allow persists for the next matching hook only", () => {
   const blocked = invoke(home, "hook", [], { tool_input: { command: "npm publish" } });
   expect(blocked.exitCode).toBe(2);
   expect(blocked.stderr.toString()).toContain("Publish is blocked.");
+});
+
+test("legacy persisted stash override allows the canonical guard once", () => {
+  const home = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-allow-"));
+  tempDirectories.push(home);
+  allowOnce("git-stash-untracked", home);
+  expect(invoke(home, "hook", [], { tool_input: { command: "git stash -u" } }).exitCode).toBe(0);
+  expect(invoke(home, "hook", [], { tool_input: { command: "git stash -u" } }).exitCode).toBe(2);
 });
 
 test("allow rejects a malformed pending override at hook time", () => {

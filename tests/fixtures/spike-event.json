@@ -1,6 +1,6 @@
 {
   "guard": {
-    "id": "git-stash-untracked",
+    "id": "git-stash-u",
     "class": "A",
     "provenance": {
       "incident": "git stash -u deleted operational untracked files",
@@ -15,7 +15,7 @@
     "action": {
       "type": "block",
       "message": "blocked",
-      "override": "vibebloat allow git-stash-untracked --once"
+      "override": "vibebloat allow git-stash-u --once"
     },
     "enabled": true
   },

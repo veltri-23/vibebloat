@@ -2,6 +2,8 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { disabledGuardIds, disableGuard } from "../src/cli/disable";
+import { gitStashUntrackedGuard } from "../src/guards";
+import { Runtime } from "../src/runtime";
 
 const tempDirectories: string[] = [];
 
@@ -12,8 +14,15 @@ afterEach(() => {
 test("disable persists one guard id for future runtime construction", () => {
   const home = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-disable-"));
   tempDirectories.push(home);
-  disableGuard("git-stash-untracked", home);
-  expect(disabledGuardIds(home)).toEqual(new Set(["git-stash-untracked"]));
+  disableGuard("git-stash-u", home);
+  expect(disabledGuardIds(home)).toEqual(new Set(["git-stash-u"]));
+});
+
+test("legacy disabled stash state disables the canonical guard", () => {
+  const home = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-disable-"));
+  tempDirectories.push(home);
+  writeFileSync(join(home, "disabled.json"), JSON.stringify(["git-stash-untracked"]));
+  expect(new Runtime(disabledGuardIds(home)).evaluate([gitStashUntrackedGuard], { chokepoint: "shell", command: "git stash -u" })).toEqual({ fired: false });
 });
 
 test("disable command writes the requested guard id", async () => {

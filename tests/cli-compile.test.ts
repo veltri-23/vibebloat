@@ -30,7 +30,7 @@ function writeIncident(project: string, incident: Record<string, unknown>, name 
 }
 
 const incident = {
-  incident_id: "git-stash-untracked",
+  incident_id: "git-stash-u",
   class: "A",
   chokepoint: "shell",
   command: "git stash -u",
@@ -46,7 +46,7 @@ test("compile proves one incident and writes it to the selected repo guard home"
   temporaryDirectories.push(project);
   writeOnboardingScope(project, "repo");
   const incidentPath = writeIncident(project, incident);
-  const guardPath = join(project, ".vibebloat", "guards", "git-stash-untracked.json");
+  const guardPath = join(project, ".vibebloat", "guards", "git-stash-u.json");
 
   const result = compile(project, incidentPath);
 
@@ -57,7 +57,7 @@ test("compile proves one incident and writes it to the selected repo guard home"
     path: guardPath,
     proof_path: join(project, ".vibebloat", "guards", "proof.json"),
   });
-  expect(JSON.parse(readFileSync(guardPath, "utf8"))).toMatchObject({ id: "git-stash-untracked", action: { type: "block" } });
+  expect(JSON.parse(readFileSync(guardPath, "utf8"))).toMatchObject({ id: "git-stash-u", action: { type: "block" } });
   expect(JSON.parse(readFileSync(join(project, ".vibebloat", "guards", "proof.json"), "utf8"))).toEqual({ status: "pass", cases: ["synthetic event fired"] });
 });
 
@@ -89,5 +89,5 @@ test("compile rejects a non-matchable manifest without writing a guard", () => {
   expect(result.exitCode).toBe(1);
   expect(result.stdout.toString()).toBe("");
   expect(result.stderr.toString()).toBe("WHAT failed: guard compilation stopped.\nWHY: incident file must contain one safe, matchable incident manifest\nFIX: correct <incident.json>, then run vibebloat compile <incident.json>\n");
-  expect(existsSync(join(project, ".vibebloat", "guards", "git-stash-untracked.json"))).toBeFalse();
+  expect(existsSync(join(project, ".vibebloat", "guards", "git-stash-u.json"))).toBeFalse();
 });

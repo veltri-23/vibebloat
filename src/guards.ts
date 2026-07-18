@@ -1,7 +1,20 @@
 import type { Guard } from "./types";
 
+export const gitStashUntrackedGuardId = "git-stash-u";
+export const legacyGitStashUntrackedGuardId = "git-stash-untracked";
+
+export function canonicalGuardId(guardId: string): string {
+  return guardId === legacyGitStashUntrackedGuardId ? gitStashUntrackedGuardId : guardId;
+}
+
+export function compatiblePersistedGuardIds(guardId: string): readonly string[] {
+  return canonicalGuardId(guardId) === gitStashUntrackedGuardId
+    ? [gitStashUntrackedGuardId, legacyGitStashUntrackedGuardId]
+    : [guardId];
+}
+
 export const gitStashUntrackedGuard: Guard = {
-  id: "git-stash-untracked",
+  id: gitStashUntrackedGuardId,
   class: "A",
   provenance: {
     incident: "git stash -u deleted operational untracked files",
@@ -12,7 +25,7 @@ export const gitStashUntrackedGuard: Guard = {
   action: {
     type: "block",
     message: "07-15 this deleted untracked files. Use git stash -u -- <path> or commit first.",
-    override: "vibebloat allow git-stash-untracked --once",
+    override: "vibebloat allow git-stash-u --once",
   },
   enabled: true,
 };

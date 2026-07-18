@@ -5,7 +5,7 @@ import { runDoctor } from "./doctor/checks";
 import { globalGuardHome, guardDirectories, guardHomeForScope, guardHomes, onboardingHome } from "./guard-home";
 import { loadGuards } from "./guard-loader";
 import { forgetEmail } from "./growth/email-capture";
-import { gitStashUntrackedGuard, mcpConfigWrongFileGuard } from "./guards";
+import { canonicalGuardId, gitStashUntrackedGuard, mcpConfigWrongFileGuard } from "./guards";
 import { runPreToolUse } from "./hooks";
 import { closeWatcherOnSignals, watchGuardedWrites } from "./install/fs-guard";
 import { installNativeHooks } from "./install/orchestrator";
@@ -263,8 +263,9 @@ if (mode === "init") {
 
 if (mode === "disable") {
   try {
-    disableGuard(process.argv[3] ?? "", guardHomeForScope(guardScope()));
-    process.stdout.write(`Disabled guard: ${process.argv[3]}\n`);
+    const guardId = canonicalGuardId(process.argv[3] ?? "");
+    disableGuard(guardId, guardHomeForScope(guardScope()));
+    process.stdout.write(`Disabled guard: ${guardId}\n`);
     process.exit(0);
   } catch (error) {
     process.stderr.write(`WHAT failed: could not disable guard.\nWHY: ${error instanceof Error ? error.message : "unknown error"}\nFIX: vibebloat disable <guard-id>\n`);
@@ -273,7 +274,7 @@ if (mode === "disable") {
 }
 
 if (mode === "allow") {
-  const guardId = process.argv[3] ?? "";
+  const guardId = canonicalGuardId(process.argv[3] ?? "");
   if (process.argv[4] !== "--once" || process.argv.length !== 5) {
     process.stderr.write("WHAT failed: allow needs one guard id and --once.\nWHY: persistent overrides are limited to one matching hook invocation.\nFIX: vibebloat allow <guard-id> --once\n");
     process.exit(1);

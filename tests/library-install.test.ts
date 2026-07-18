@@ -13,7 +13,7 @@ test("library refuses guard install without runner proof", () => {
   expect(() => installVerifiedGuard(directory, gitStashUntrackedGuard)).toThrow("proof");
   writeFileSync(join(directory, "proof.json"), JSON.stringify({ status: "pass" }));
   installVerifiedGuard(directory, gitStashUntrackedGuard);
-  expect(JSON.parse(readFileSync(join(directory, "git-stash-untracked.json"), "utf8"))).toMatchObject({ id: "git-stash-untracked" });
+  expect(JSON.parse(readFileSync(join(directory, "git-stash-u.json"), "utf8"))).toMatchObject({ id: "git-stash-u" });
 });
 
 test("library install targets the selected repo guard home", () => {
@@ -25,5 +25,5 @@ test("library install targets the selected repo guard home", () => {
   writeFileSync(join(guards, "proof.json"), JSON.stringify({ status: "pass" }));
 
   installVerifiedGuardForScope("repo", gitStashUntrackedGuard, { USERPROFILE: join(root, "user") } as NodeJS.ProcessEnv, project);
-  expect(JSON.parse(readFileSync(join(guards, "git-stash-untracked.json"), "utf8"))).toMatchObject({ id: "git-stash-untracked" });
+  expect(JSON.parse(readFileSync(join(guards, "git-stash-u.json"), "utf8"))).toMatchObject({ id: "git-stash-u" });
 });

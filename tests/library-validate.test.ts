@@ -8,9 +8,9 @@ const vector = {
 
 function guard(overrides: Record<string, unknown> = {}) {
   return {
-    id: "git-stash-untracked", class: "A", provenance: { incident: "lost untracked files", date: "2026-07-17", source: "test" },
+    id: "git-stash-u", class: "A", provenance: { incident: "lost untracked files", date: "2026-07-17", source: "test" },
     match: { chokepoint: "shell", command: "git stash", argsContains: ["-u"] },
-    action: { type: "block", message: "Scope the stash.", override: "vibebloat allow git-stash-untracked --once" },
+    action: { type: "block", message: "Scope the stash.", override: "vibebloat allow git-stash-u --once" },
     confidence: "high", tier: "community", binds: ["claude-code", "codex"], enabled: true, ...overrides,
   };
 }

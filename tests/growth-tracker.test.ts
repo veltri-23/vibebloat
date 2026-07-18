@@ -9,6 +9,6 @@ afterEach(() => { for (const directory of tempDirectories.splice(0)) rmSync(dire
 test("telemetry stores rule fire metadata without command content", () => {
   const directory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-telemetry-"));
   tempDirectories.push(directory);
-  appendTelemetry(directory, { type: "guard-fired", guardId: "git-stash-untracked", agent: "codex" });
-  expect(readTelemetry(directory)).toEqual([{ type: "guard-fired", guardId: "git-stash-untracked", agent: "codex" }]);
+  appendTelemetry(directory, { type: "guard-fired", guardId: "git-stash-u", agent: "codex" });
+  expect(readTelemetry(directory)).toEqual([{ type: "guard-fired", guardId: "git-stash-u", agent: "codex" }]);
 });

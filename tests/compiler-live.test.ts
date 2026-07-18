@@ -15,7 +15,7 @@ test("live compile writes a guard only after eval proves it fires", () => {
   tempDirectories.push(directory);
 
   expect(compileLive(directory, gitStashUntrackedGuard, { chokepoint: "shell", command: "git stash -u" })).toEqual({ status: "pass" });
-  expect(JSON.parse(readFileSync(join(directory, "git-stash-untracked.json"), "utf8"))).toMatchObject({ id: "git-stash-untracked" });
+  expect(JSON.parse(readFileSync(join(directory, "git-stash-u.json"), "utf8"))).toMatchObject({ id: "git-stash-u" });
   expect(JSON.parse(readFileSync(join(directory, "proof.json"), "utf8"))).toEqual({ status: "pass", cases: ["synthetic event fired"] });
 });
 
@@ -24,7 +24,7 @@ test("live compile refuses to install an unproven guard", () => {
   tempDirectories.push(directory);
 
   expect(compileLive(directory, gitStashUntrackedGuard, { chokepoint: "shell", command: "git status" })).toEqual({ status: "fail" });
-  expect(() => readFileSync(join(directory, "git-stash-untracked.json"), "utf8")).toThrow();
+  expect(() => readFileSync(join(directory, "git-stash-u.json"), "utf8")).toThrow();
 });
 
 test("live compile writes to the selected repo or machine guard home", () => {
@@ -34,7 +34,7 @@ test("live compile writes to the selected repo or machine guard home", () => {
   const project = join(root, "project");
 
   expect(compileLiveForScope("repo", gitStashUntrackedGuard, { chokepoint: "shell", command: "git stash -u" }, environment, project)).toEqual({ status: "pass" });
-  expect(readFileSync(join(project, ".vibebloat", "guards", "git-stash-untracked.json"), "utf8")).toContain("git-stash-untracked");
+  expect(readFileSync(join(project, ".vibebloat", "guards", "git-stash-u.json"), "utf8")).toContain("git-stash-u");
   expect(compileLiveForScope("machine", gitStashUntrackedGuard, { chokepoint: "shell", command: "git stash -u" }, environment, project)).toEqual({ status: "pass" });
-  expect(readFileSync(join(root, "user", ".vibebloat", "guards", "git-stash-untracked.json"), "utf8")).toContain("git-stash-untracked");
+  expect(readFileSync(join(root, "user", ".vibebloat", "guards", "git-stash-u.json"), "utf8")).toContain("git-stash-u");
 });

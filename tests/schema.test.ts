@@ -5,11 +5,11 @@ import { loadGuards } from "../src/guard-loader";
 import { parseGuard } from "../src/schema";
 
 const validGuard = {
-  id: "git-stash-untracked",
+  id: "git-stash-u",
   class: "A",
   provenance: { incident: "test", date: "2026-07-17", source: "test" },
   match: { chokepoint: "shell", command: "git stash", argsContains: ["-u"] },
-  action: { type: "block", message: "stop", override: "vibebloat allow git-stash-untracked --once" },
+  action: { type: "block", message: "stop", override: "vibebloat allow git-stash-u --once" },
   confidence: "high",
   tier: "local",
   enabled: true,
