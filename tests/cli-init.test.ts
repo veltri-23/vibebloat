@@ -225,8 +225,11 @@ test("B1 missing and ignore revisions persist without storing local paths", () =
   temporaryDirectories.push(home);
   const repository = join(home, "repo");
   const cursorHome = join(home, "cursor-home");
+  const customCodexHome = join(home, "custom-codex");
   require("node:fs").mkdirSync(repository);
   require("node:fs").mkdirSync(cursorHome);
+  require("node:fs").mkdirSync(customCodexHome);
+  writeFileSync(join(customCodexHome, "history.jsonl"), '{"session_id":"custom","message":{"role":"user","content":"one"}}\n');
   expect(Bun.spawnSync(["git", "init", "-q"], { cwd: repository }).exitCode).toBe(0);
   writeFileSync(join(home, "onboarding.json"), JSON.stringify({ gate: "F0", scope: "repo", answers: {} }));
   const environment = { CLAUDE_CONFIG_DIR: join(home, "claude"), CODEX_HOME: join(home, "codex"), HERMES_HOME: join(home, "hermes") };
@@ -240,6 +243,17 @@ test("B1 missing and ignore revisions persist without storing local paths", () =
   expect(initAt(repository, home, environment, "--answer", "cursor").exitCode).toBe(0);
   stored = JSON.parse(readFileSync(join(home, "onboarding.json"), "utf8"));
   expect(stored.coordinator.discovery.environments).not.toContainEqual({ id: "cursor", label: "Cursor" });
+
+  expect(initAt(repository, home, environment, "--answer", "You missed one").exitCode).toBe(0);
+  expect(initAt(repository, home, environment, "--answer", `Codex at ${customCodexHome}`).exitCode).toBe(0);
+  stored = JSON.parse(readFileSync(join(home, "onboarding.json"), "utf8"));
+  expect(stored.coordinator.discovery.sources).toContainEqual(expect.objectContaining({ id: "codex", environmentId: "codex", label: "Codex history" }));
+  expect(JSON.stringify(stored)).not.toContain(customCodexHome);
+  expect(JSON.parse(readFileSync(join(home, "custom-agent-homes.json"), "utf8"))).toMatchObject({
+    schemaVersion: 1,
+    owner: "vibebloat",
+    homes: { codex: customCodexHome },
+  });
 });
 
 test("unverified onboarding effects fail closed without advancing", () => {

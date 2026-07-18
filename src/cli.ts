@@ -39,6 +39,7 @@ import { validateOnboardingEffectRequirements, type EffectGateId } from "./onboa
 import { isGateChoice, type OnboardingContext } from "./onboarding/gates";
 import { OnboardingCoordinator, reviewDecisionForChoice, type GuardReviewDecision, type OnboardingCheckpoint } from "./onboarding/coordinator";
 import { lookupMarkdownAnswer } from "./onboarding/markdown-help";
+import { readCustomAgentHomes, saveCustomAgentHome, type CustomAgentHomes } from "./onboarding/custom-agent-homes";
 import { applyOnboardingPreference, modelCommandEnvironmentName, type ModelRoute } from "./onboarding/preferences";
 import { getReturningGate, recordReturningConversation, returningRoute, type ReturningChoice } from "./onboarding/returning";
 import { runReturningService } from "./onboarding/returning-service";
@@ -408,7 +409,7 @@ function environmentId(label: string): string {
   return id;
 }
 
-function addMissingEnvironment(coordinator: OnboardingCoordinator, answer: string): void {
+function addMissingEnvironment(coordinator: OnboardingCoordinator, home: string, answer: string): void {
   const match = /^(.{1,60}?)\s+(?:at|in)\s+(.+)$/.exec(answer.trim());
   if (!match) throw new Error("Missing environment must be supplied as '<name> at <absolute-directory>'.");
   const label = match[1].trim();
@@ -419,7 +420,24 @@ function addMissingEnvironment(coordinator: OnboardingCoordinator, answer: strin
   const id = environmentId(label);
   const environments = new Map(discovery.environments.map((environment) => [environment.id, environment]));
   environments.set(id, { id, label });
-  coordinator.reviseDiscovery({ environments: [...environments.values()], sources: discovery.sources });
+  let sources = discovery.sources;
+  if (id === "claude-code" || id === "codex" || id === "hermes") {
+    saveCustomAgentHome(home, id, path);
+    const customCatalog = discoverLocalHistory({
+      homeDirectory: path,
+      ...(id === "claude-code" ? { claudeHome: path } : {}),
+      ...(id === "codex" ? { codexHome: path } : {}),
+      ...(id === "hermes" ? { hermesHome: path } : {}),
+    });
+    const source = customCatalog.sources.find((candidate) => candidate.id === id);
+    if (source) {
+      sources = [
+        ...sources.filter((candidate) => candidate.id !== id),
+        { id, environmentId: id, label: `${source.label} history`, lastActive: source.lastActivityAt, stale: source.stale },
+      ];
+    }
+  }
+  coordinator.reviseDiscovery({ environments: [...environments.values()], sources });
 }
 
 function ignoreEnvironments(coordinator: OnboardingCoordinator, answer: string): void {
@@ -445,7 +463,7 @@ function onboardingBindingSetup(): void {
   planGitHook(gitHookPaths["pre-push"], gitHookCommands["pre-push"]);
 }
 
-function installVerifiedOnboardingBindings(environmentIds: readonly string[]): void {
+function installVerifiedOnboardingBindings(environmentIds: readonly string[], customHomes: CustomAgentHomes = {}): void {
   const homes = agentHomes();
   const hermesPython = process.env.VIBEBLOAT_HERMES_PYTHON ?? Bun.which("python3") ?? Bun.which("python");
   installOnboardingBindings({
@@ -454,10 +472,10 @@ function installVerifiedOnboardingBindings(environmentIds: readonly string[]): v
     repository: resolve(process.cwd()),
     command: "vibebloat hook",
     gitCommands: gitHookCommands,
-    claudePath: homes.claudePath,
-    codexPath: homes.codexPath,
+    claudePath: customHomes["claude-code"] ? join(customHomes["claude-code"], "settings.json") : homes.claudePath,
+    codexPath: customHomes.codex ? join(customHomes.codex, "config.toml") : homes.codexPath,
     ...(environmentIds.includes("hermes") && hermesPython
-      ? { hermes: { hermesHome: homes.hermesHome, pythonExecutable: hermesPython } }
+      ? { hermes: { hermesHome: customHomes.hermes ?? homes.hermesHome, pythonExecutable: hermesPython } }
       : {}),
   });
 }
@@ -470,18 +488,19 @@ function createProductionOnboardingCoordinator(
 ): OnboardingCoordinator {
   const base = process.env.USERPROFILE ?? process.env.HOME ?? ".";
   const homes = agentHomes();
+  const customHomes = readCustomAgentHomes(home);
   const detectedEnvironments = [
-    { id: "claude-code", label: "Claude Code", present: existsSync(dirname(homes.claudePath)) },
-    { id: "codex", label: "Codex", present: existsSync(dirname(homes.codexPath)) },
-    { id: "hermes", label: "Hermes", present: existsSync(homes.hermesHome) },
+    { id: "claude-code", label: "Claude Code", present: Boolean(customHomes["claude-code"]) || existsSync(dirname(homes.claudePath)) },
+    { id: "codex", label: "Codex", present: Boolean(customHomes.codex) || existsSync(dirname(homes.codexPath)) },
+    { id: "hermes", label: "Hermes", present: Boolean(customHomes.hermes) || existsSync(homes.hermesHome) },
     { id: "openclaw", label: "OpenClaw", present: existsSync(process.env.OPENCLAW_HOME ?? join(base, ".openclaw")) },
   ].filter(({ present }) => present).map(({ id, label }) => ({ id, label }));
   let catalog: LocalHistoryCatalog | undefined;
   const historyCatalog = () => catalog ??= discoverLocalHistory({
     homeDirectory: base,
-    claudeHome: process.env.CLAUDE_CONFIG_DIR,
-    codexHome: process.env.CODEX_HOME,
-    hermesHome: homes.hermesHome,
+    claudeHome: customHomes["claude-code"] ?? process.env.CLAUDE_CONFIG_DIR,
+    codexHome: customHomes.codex ?? process.env.CODEX_HOME,
+    hermesHome: customHomes.hermes ?? homes.hermesHome,
   });
   return new OnboardingCoordinator({
     resume,
@@ -522,7 +541,7 @@ function createProductionOnboardingCoordinator(
       },
       modelPass: async (candidates, semanticContext) => runModelCommand(modelCommandFromEnvironment(modelRoute), candidates, semanticContext),
     },
-    installBindings: (_guards, environmentIds) => installVerifiedOnboardingBindings(environmentIds),
+    installBindings: (_guards, environmentIds) => installVerifiedOnboardingBindings(environmentIds, customHomes),
   });
 }
 
@@ -1012,7 +1031,7 @@ if (mode === "init") {
       await coordinator.permitSetupAndDiscover(true);
     }
     if (validChoice && before.gate === "B1" && next.gate === "D1") coordinator.confirmEnvironments(true);
-    if (validChoice && before.gate === "B1.missing") addMissingEnvironment(coordinator, effectiveAnswer);
+    if (validChoice && before.gate === "B1.missing") addMissingEnvironment(coordinator, home, effectiveAnswer);
     if (validChoice && before.gate === "B1.ignore") ignoreEnvironments(coordinator, effectiveAnswer);
     if (validChoice && before.gate === "D1" && next.gate === "D1") {
       const requested = argumentAssignment("--sources")?.split(",").map((id) => id.trim()).filter(Boolean);
