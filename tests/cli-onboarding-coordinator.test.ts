@@ -36,7 +36,7 @@ test("production onboarding coordinates discovery and fails closed before histor
     CLAUDE_CONFIG_DIR: join(root, ".claude"),
     CODEX_HOME: join(root, ".codex"),
     HERMES_HOME: join(root, ".hermes"),
-    VIBEBLOAT_MODEL_COMMAND: JSON.stringify(["bun", "-e", `Bun.write(${JSON.stringify(modelMarker)}, "ran")`]),
+    VIBEBLOAT_LOCAL_MODEL_COMMAND: JSON.stringify(["bun", "-e", `Bun.write(${JSON.stringify(modelMarker)}, "ran")`]),
   };
   const answers = [
     "Yes",

@@ -86,7 +86,7 @@ function configText(path: string): string {
 
 function modelCommandFromEnvironment(route?: ModelRoute): string[] {
   const preferredName = route ? modelCommandEnvironmentName(route) : undefined;
-  const name = preferredName && process.env[preferredName] ? preferredName : "VIBEBLOAT_MODEL_COMMAND";
+  const name = preferredName ?? "VIBEBLOAT_MODEL_COMMAND";
   const value = process.env[name];
   if (!value && preferredName) throw new Error(`${preferredName} is required for the selected model route`);
   if (!value) throw new Error(`${name} is required`);

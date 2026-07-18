@@ -143,7 +143,7 @@ test("init refuses a model route without its adapter command", () => {
   temporaryDirectories.push(home);
   writeFileSync(join(home, "onboarding.json"), JSON.stringify({ gate: "F2", answers: {} }));
   const env = { ...process.env, VIBEBLOAT_HOME: home };
-  delete env.VIBEBLOAT_MODEL_COMMAND;
+  env.VIBEBLOAT_MODEL_COMMAND = JSON.stringify(["bun", "-e", "process.exit(0)"]);
   delete env.VIBEBLOAT_LOCAL_MODEL_COMMAND;
   const result = Bun.spawnSync(["bun", "src/cli.ts", "init", "--answer", "Run it locally and free (a bit slower)"], {
     cwd: import.meta.dir + "/..", env, stdout: "pipe", stderr: "pipe",
