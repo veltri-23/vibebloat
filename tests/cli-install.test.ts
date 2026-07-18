@@ -108,7 +108,17 @@ test("explicit fallback installs both git shims without mutating parent PATH", (
   expect(result.exitCode).toBe(0);
   expect(existsSync(join(shimDirectory, "git"))).toBeTrue();
   expect(existsSync(join(shimDirectory, "git.cmd"))).toBeTrue();
+  expect(existsSync(join(directory, "repo", ".vibebloat", "receipts", "fs-guard.json"))).toBeTrue();
   expect(process.env.PATH).toBe(originalPath);
+
+  const uninstall = Bun.spawnSync(["bun", cliPath, "uninstall", "--yes", "--fallback-shim-dir", shimDirectory, "--fallback-git", gitExecutable!], {
+    cwd: join(directory, "repo"),
+    env: { ...process.env, PATH: `${shellDirectory};${originalPath}`, VIBEBLOAT_HOME: join(directory, "home"), CLAUDE_CONFIG_DIR: join(directory, "claude"), CODEX_HOME: join(directory, "codex") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(uninstall.exitCode).toBe(0);
+  expect(existsSync(join(directory, "repo", ".vibebloat", "receipts", "fs-guard.json"))).toBeFalse();
 }, 30_000);
 
 test("git-hook mode blocks only a matching synthetic Git event without stdin", () => {

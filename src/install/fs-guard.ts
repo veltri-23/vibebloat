@@ -63,6 +63,10 @@ export interface FsGuardChildLifecycleOptions {
   timeoutMs?: number;
 }
 
+export interface FsGuardStopWatcher {
+  close(): void;
+}
+
 const instanceArgument = "--vibebloat-fs-guard-instance";
 const receiptArgument = "--vibebloat-fs-guard-receipt";
 const instanceIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -255,6 +259,15 @@ function waitForProcessState(
   return state;
 }
 
+function waitForOwnedProcessExit(pid: number, sleep: (milliseconds: number) => void, timeoutMs: number): ProcessIdentityState {
+  const attempts = Math.max(1, Math.ceil(timeoutMs / 25));
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (!processIsAlive(pid)) return "missing";
+    if (attempt + 1 < attempts) sleep(25);
+  }
+  return processIsAlive(pid) ? "owned" : "missing";
+}
+
 export function launchPersistentFsGuard(options: FsGuardLaunchOptions): FsGuardLaunchReceipt {
   const prepared = preflightLaunch(options);
   const probeProcess = options.probeProcess ?? defaultProbeProcess;
@@ -346,7 +359,9 @@ export function stopPersistentFsGuard(options: FsGuardStopOptions): FsGuardStopR
 
     const requestPath = stopRequestPath(receiptPath);
     applyAtomicFilePlans([{ path: requestPath, content: `${JSON.stringify({ schemaVersion: 1, instanceId: receipt.instanceId }, null, 2)}\n`, mode: 0o600 }]);
-    const finalState = waitForProcessState(receipt.pid, receipt.instanceId, "missing", probeProcess, sleep, timeoutMs);
+    const finalState = options.probeProcess
+      ? waitForProcessState(receipt.pid, receipt.instanceId, "missing", probeProcess, sleep, timeoutMs)
+      : waitForOwnedProcessExit(receipt.pid, sleep, timeoutMs);
     if (finalState === "owned" || finalState === "unknown") throw new Error("Filesystem guard did not stop; receipt preserved for recovery.");
     removeOwnedFileAtomically(receiptPath);
     removeOwnedFileAtomically(requestPath);
@@ -408,11 +423,18 @@ export function waitForFsGuardLaunchReceipt(options: FsGuardChildLifecycleOption
   throw new Error("Filesystem guard launch receipt was not created; exiting to avoid an orphan.");
 }
 
-export function watchFsGuardStopRequests(options: FsGuardChildLifecycleOptions, onStop: () => void): FSWatcher {
+export function watchFsGuardStopRequests(options: FsGuardChildLifecycleOptions, onStop: () => void): FsGuardStopWatcher {
   const receipt = waitForFsGuardLaunchReceipt(options);
   const requestPath = stopRequestPath(resolve(options.receiptPath ?? fsGuardReceiptPath(receipt.directory)));
   let stopped = false;
   let watcher: FSWatcher;
+  let poll: ReturnType<typeof setInterval>;
+  const close = () => {
+    if (stopped) return;
+    stopped = true;
+    clearInterval(poll);
+    watcher.close();
+  };
   const inspect = () => {
     if (stopped || !existsSync(requestPath) || lstatSync(requestPath).isSymbolicLink()) return;
     let request: { schemaVersion: 1; instanceId: string };
@@ -422,15 +444,15 @@ export function watchFsGuardStopRequests(options: FsGuardChildLifecycleOptions, 
       return;
     }
     if (request.instanceId !== receipt.instanceId) return;
-    stopped = true;
-    watcher.close();
+    close();
     onStop();
   };
   watcher = watch(dirname(requestPath), { persistent: true }, (_eventType, filename) => {
     if (!filename || filename.toString() === "fs-guard.stop.json") inspect();
   });
+  poll = setInterval(inspect, 50);
   queueMicrotask(inspect);
-  return watcher;
+  return { close };
 }
 
 export function evaluateFsWrite(guards: Guard[], path: string, runtime = new Runtime()): HookResponse {

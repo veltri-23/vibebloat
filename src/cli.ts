@@ -9,7 +9,7 @@ import { forgetEmail } from "./growth/email-capture";
 import { canonicalGuardId, gitStashUntrackedGuard, mcpConfigWrongFileGuard } from "./guards";
 import { formatGuardRuntimeFailure, hookResponseForVerdict, runPreToolUse } from "./hooks";
 import { match } from "./match";
-import { closeWatcherOnSignals, hasUnenforceableFileGuard, watchGuardedWrites } from "./install/fs-guard";
+import { closeWatcherOnSignals, fsGuardReceiptPath, hasUnenforceableFileGuard, launchPersistentFsGuard, stopPersistentFsGuard, waitForFsGuardLaunchReceipt, watchFsGuardStopRequests, watchGuardedWrites } from "./install/fs-guard";
 import { discoverCurrentRepoGitHookPaths, installCurrentRepoGitHooks, planGitHook, type GitHookName } from "./install/git-hooks";
 import { installNativeHooks } from "./install/orchestrator";
 import { installHermesHook, preflightHermesHook } from "./install/hermes";
@@ -88,6 +88,19 @@ function argumentValue(flag: string): string | undefined {
   const value = process.argv[index + 1];
   if (!value || value.startsWith("--")) throw new Error(`${flag} requires a value`);
   return value;
+}
+
+function argumentAssignment(flag: string): string | undefined {
+  const prefix = `${flag}=`;
+  const argument = process.argv.find((value) => value.startsWith(prefix));
+  return argument?.slice(prefix.length);
+}
+
+function fsGuardCommand(repository: string): string[] {
+  const script = process.argv[1] && /\.[cm]?[jt]s$/i.test(process.argv[1]) ? resolve(process.argv[1]) : undefined;
+  return script
+    ? [process.execPath, script, "watch", repository]
+    : [process.execPath, "watch", repository];
 }
 
 function agentHomes(): { claudePath: string; codexPath: string; hermesHome: string } {
@@ -402,8 +415,11 @@ if (mode === "install") {
     });
     if (hermesHome && hermesPython) installHermesHook({ permitted: true, hermesHome, pythonExecutable: hermesPython });
     installCurrentRepoGitHooks(process.cwd(), gitHookCommands);
+    if (fallbackShimDirectory) {
+      launchPersistentFsGuard({ directory: resolve(process.cwd()), command: fsGuardCommand(resolve(process.cwd())) });
+    }
     process.stdout.write(fallbackShimDirectory
-      ? `Native hooks, Git hooks, and fallback git shims installed. Add ${fallbackShimDirectory} first on PATH in each shell, then run: vibebloat doctor\n`
+      ? `Native hooks, Git hooks, fallback git shims, and filesystem guard installed. Run: vibebloat doctor\n`
       : "Native hooks and Git hooks installed. Run: vibebloat doctor\n");
     process.exit(0);
   } catch (error) {
@@ -430,7 +446,10 @@ if (mode === "uninstall") {
     const repository = resolve(process.cwd());
     const gitHookPaths = Object.values(discoverCurrentRepoGitHookPaths(repository));
     const globalHome = process.env.VIBEBLOAT_HOME ?? globalGuardHome();
-    const report = uninstallVibeBloat({
+    const stopReport = stopPersistentFsGuard({ directory: repository });
+    let report;
+    try {
+      report = uninstallVibeBloat({
       permitted: true,
       keepData: process.argv.includes("--keep-data"),
       globalHome,
@@ -449,7 +468,17 @@ if (mode === "uninstall") {
           hermes: configText(join(homes.hermesHome, "config.yaml")),
         },
       }),
-    });
+      });
+    } catch (error) {
+      if (stopReport.stopped) {
+        try {
+          launchPersistentFsGuard({ directory: repository, command: fsGuardCommand(repository) });
+        } catch {
+          throw new Error("WHAT failed: uninstall rollback stopped.\nWHY: filesystem guard could not be restored after uninstall failed.\nFIX: vibebloat install --yes");
+        }
+      }
+      throw error;
+    }
     process.stdout.write(`${JSON.stringify(report)}\n`);
     process.exit(0);
   } catch (error) {
@@ -550,25 +579,41 @@ if (mode === "allow") {
 }
 
 if (mode === "watch") {
-  const directory = process.argv[3];
+  const directory = process.argv[3] ? resolve(process.argv[3]) : undefined;
   if (!directory) {
     process.stderr.write("WHAT failed: watch directory was not supplied.\nWHY: watch needs one directory path.\nFIX: vibebloat watch <directory>\n");
     process.exit(1);
   }
   try {
+    const instanceId = argumentAssignment("--vibebloat-fs-guard-instance");
+    const receiptPath = argumentAssignment("--vibebloat-fs-guard-receipt");
+    const persistent = instanceId !== undefined || receiptPath !== undefined;
+    if (persistent && (!instanceId || !receiptPath || process.argv.length !== 6)) {
+      throw new Error("persistent filesystem watch lifecycle arguments are incomplete");
+    }
+    if (!persistent && process.argv.length !== 4) throw new Error("watch accepts exactly one directory path");
+    if (persistent) waitForFsGuardLaunchReceipt({ directory, instanceId: instanceId!, receiptPath });
     await new Promise<void>((resolve) => {
       const guards = runtimeGuards();
       const watcher = watchGuardedWrites(directory, guards, (path, response) => {
-        process.stderr.write(`WHAT detected: guarded write at ${path}.\nWHY: ${response.stderr ?? "filesystem guard matched after the write."}\nFIX: use a native pre-write guard.\n`);
+        process.stderr.write(`WHAT detected: guarded write.\nWHY: ${response.stderr ?? "filesystem guard matched after the write."}\nFIX: use a native pre-write guard.\n`);
       }, new Runtime(disabledGuards()));
-      closeWatcherOnSignals(watcher, process, resolve);
-      process.stdout.write(hasUnenforceableFileGuard(guards)
-        ? `Watching guarded writes in ${directory}. File guards report after writes; native hooks enforce before writes. Press Ctrl+C to stop.\n`
-        : `Watching guarded writes in ${directory}. Press Ctrl+C to stop.\n`);
+      let lifecycleWatcher: ReturnType<typeof watchFsGuardStopRequests> | undefined;
+      const close = closeWatcherOnSignals(watcher, process, () => {
+        lifecycleWatcher?.close();
+        resolve();
+      });
+      if (persistent) {
+        lifecycleWatcher = watchFsGuardStopRequests({ directory, instanceId: instanceId!, receiptPath }, close);
+      } else {
+        process.stdout.write(hasUnenforceableFileGuard(guards)
+          ? `Watching guarded writes in ${directory}. File guards report after writes; native hooks enforce before writes. Press Ctrl+C to stop.\n`
+          : `Watching guarded writes in ${directory}. Press Ctrl+C to stop.\n`);
+      }
     });
     process.exit(0);
   } catch (error) {
-    process.stderr.write(`WHAT failed: filesystem watch could not start.\nWHY: ${error instanceof Error ? error.message : "unknown error"}\nFIX: vibebloat watch <directory>\n`);
+    process.stderr.write("WHAT failed: filesystem watch could not start.\nWHY: watch path or owned lifecycle handshake failed.\nFIX: vibebloat watch <directory>\n");
     process.exit(1);
   }
 }
