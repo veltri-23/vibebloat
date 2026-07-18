@@ -8,7 +8,7 @@ export function evaluateFsWrite(guards: Guard[], path: string, runtime = new Run
 }
 
 export function watchGuardedWrites(directory: string, guards: Guard[], onBlocked: (path: string, response: HookResponse) => void): FSWatcher {
-  return watch(directory, { persistent: false }, (_eventType, filename) => {
+  return watch(directory, { persistent: true }, (_eventType, filename) => {
     if (!filename) return;
     const response = evaluateFsWrite(guards, filename.toString());
     if (response.exitCode === 2) onBlocked(filename.toString(), response);
