@@ -138,6 +138,21 @@ test("unsafe discovery identifiers never reach saved onboarding state", async ()
   expect(saved).toHaveLength(1);
 });
 
+test("environment confirmation can revise a validated discovery before triage", async () => {
+  const { coordinator } = fixture();
+  coordinator.begin("repo");
+  await coordinator.permitSetupAndDiscover(true);
+  expect(coordinator.reviseDiscovery({
+    environments: [{ id: "codex", label: "Codex" }],
+    sources: [],
+  }).phase).toBe("confirm-environments");
+  expect(coordinator.discovery()).toEqual({ environments: [{ id: "codex", label: "Codex" }], sources: [] });
+  expect(() => coordinator.reviseDiscovery({
+    environments: [{ id: "unsafe/path", label: "unsafe" }],
+    sources: [],
+  })).toThrow("Discovery returned an unsafe identifier");
+});
+
 test("scrub failure pauses before model, review, compile, or binding", async () => {
   let modelCalls = 0;
   let bindingCalls = 0;

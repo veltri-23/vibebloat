@@ -88,8 +88,9 @@ export function autoAdvances(gate: GateId): boolean {
 }
 
 function selected(choice: GateChoice, option: number, ...words: string[]): boolean {
+  if (typeof choice === "number") return choice === option;
   const value = String(choice).trim().toLowerCase();
-  return choice === option || value === String(option + 1) || value === String.fromCharCode(97 + option) || words.some((word) => value === word);
+  return value === String(option + 1) || value === String.fromCharCode(97 + option) || words.some((word) => value === word);
 }
 
 function nextReview(context: OnboardingContext): GateId {

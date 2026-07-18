@@ -380,6 +380,48 @@ function onboardingRunnerContext(
   };
 }
 
+function environmentId(label: string): string {
+  const normalized = label.trim().toLowerCase();
+  if (/claude/.test(normalized)) return "claude-code";
+  if (/codex/.test(normalized)) return "codex";
+  if (/hermes/.test(normalized)) return "hermes";
+  if (/open\s*claw/.test(normalized)) return "openclaw";
+  const id = normalized.replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  if (!id || id.length > 80) throw new Error("Missing environment name is invalid.");
+  return id;
+}
+
+function addMissingEnvironment(coordinator: OnboardingCoordinator, answer: string): void {
+  const match = /^(.{1,60}?)\s+(?:at|in)\s+(.+)$/.exec(answer.trim());
+  if (!match) throw new Error("Missing environment must be supplied as '<name> at <absolute-directory>'.");
+  const label = match[1].trim();
+  const path = match[2].trim().replace(/^['"]|['"]$/g, "");
+  if (!isAbsolute(path) || !existsSync(path) || !statSync(path).isDirectory()) throw new Error("Missing environment path must be an existing absolute directory.");
+  const discovery = coordinator.discovery();
+  if (!discovery) throw new Error("Environment discovery is unavailable.");
+  const id = environmentId(label);
+  const environments = new Map(discovery.environments.map((environment) => [environment.id, environment]));
+  environments.set(id, { id, label });
+  coordinator.reviseDiscovery({ environments: [...environments.values()], sources: discovery.sources });
+}
+
+function ignoreEnvironments(coordinator: OnboardingCoordinator, answer: string): void {
+  const discovery = coordinator.discovery();
+  if (!discovery) throw new Error("Environment discovery is unavailable.");
+  const requested = answer.split(",").map((value) => value.trim().toLowerCase()).filter(Boolean);
+  if (requested.length === 0) throw new Error("At least one discovered environment must be named.");
+  const ignored = new Set<string>();
+  for (const value of requested) {
+    const environment = discovery.environments.find(({ id, label }) => id.toLowerCase() === value || label.toLowerCase() === value);
+    if (!environment) throw new Error(`Ignored environment was not discovered: ${value}`);
+    ignored.add(environment.id);
+  }
+  coordinator.reviseDiscovery({
+    environments: discovery.environments.filter(({ id }) => !ignored.has(id)),
+    sources: discovery.sources.filter(({ environmentId }) => !ignored.has(environmentId)),
+  });
+}
+
 function onboardingBindingSetup(): void {
   const gitHookPaths = discoverCurrentRepoGitHookPaths(process.cwd());
   planGitHook(gitHookPaths["pre-commit"], gitHookCommands["pre-commit"]);
@@ -937,6 +979,8 @@ if (mode === "init") {
       await coordinator.permitSetupAndDiscover(true);
     }
     if (validChoice && before.gate === "B1" && next.gate === "D1") coordinator.confirmEnvironments(true);
+    if (validChoice && before.gate === "B1.missing") addMissingEnvironment(coordinator, effectiveAnswer);
+    if (validChoice && before.gate === "B1.ignore") ignoreEnvironments(coordinator, effectiveAnswer);
     if (validChoice && before.gate === "D1" && next.gate !== "D1") {
       const sources = coordinator.discovery()?.sources ?? [];
       const selected = effectiveAnswer.trim().toLowerCase().includes("everything")

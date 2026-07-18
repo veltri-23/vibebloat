@@ -32,6 +32,12 @@ test("opening consent gate always waits for a human choice", () => {
   expect(runner.advanceAutomaticGates()).toMatchObject({ gate: "A0", answers: {} });
 });
 
+test("runner keeps numeric option indexes distinct from one-based aliases", () => {
+  expect(new OnboardingRunner({ gate: "F0", answers: {} }).choose("Tell me more first").gate).toBe("F0");
+  expect(new OnboardingRunner({ gate: "B1", answers: {} }).choose("You missed one").gate).toBe("B1.missing");
+  expect(new OnboardingRunner({ gate: "B1", answers: {} }).choose("Ignore some of these").gate).toBe("B1.ignore");
+});
+
 test("ASSIST uses FAQ first and applies only the recommended locked choice", () => {
   const runner = new OnboardingRunner({ gate: "A1", answers: {} });
   const response = runner.assist("recommend and apply", {

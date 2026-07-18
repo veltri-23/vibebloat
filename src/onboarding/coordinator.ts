@@ -242,6 +242,16 @@ export class OnboardingCoordinator {
     };
   }
 
+  reviseDiscovery(discovery: OnboardingDiscovery): OnboardingSnapshot {
+    this.#expect("confirm-environments");
+    assertSafeDiscovery(discovery);
+    this.#discovery = {
+      environments: discovery.environments.map((environment) => ({ ...environment })),
+      sources: discovery.sources.map((source) => ({ ...source })),
+    };
+    return this.#save();
+  }
+
   confirmEnvironments(confirmed: boolean): OnboardingSnapshot {
     this.#expect("confirm-environments");
     if (!confirmed) return this.snapshot();

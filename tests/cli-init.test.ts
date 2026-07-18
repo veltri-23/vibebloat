@@ -219,3 +219,25 @@ test("starter pack collision keeps onboarding on its current gate", () => {
   expect(JSON.parse(readFileSync(join(home, "onboarding.json"), "utf8"))).toMatchObject({ gate: "I-zero" });
   expect(existsSync(join(home, "guards", "starter-git-stash-untracked.json"))).toBeFalse();
 });
+
+test("B1 missing and ignore revisions persist without storing local paths", () => {
+  const home = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-init-"));
+  temporaryDirectories.push(home);
+  const repository = join(home, "repo");
+  const cursorHome = join(home, "cursor-home");
+  require("node:fs").mkdirSync(repository);
+  require("node:fs").mkdirSync(cursorHome);
+  expect(Bun.spawnSync(["git", "init", "-q"], { cwd: repository }).exitCode).toBe(0);
+  writeFileSync(join(home, "onboarding.json"), JSON.stringify({ gate: "F0", scope: "repo", answers: {} }));
+  const environment = { CLAUDE_CONFIG_DIR: join(home, "claude"), CODEX_HOME: join(home, "codex"), HERMES_HOME: join(home, "hermes") };
+  expect(initAt(repository, home, environment, "--answer", "Yes").exitCode).toBe(0);
+  expect(initAt(repository, home, environment, "--answer", "You missed one").exitCode).toBe(0);
+  expect(initAt(repository, home, environment, "--answer", `Cursor at ${cursorHome}`).exitCode).toBe(0);
+  let stored = JSON.parse(readFileSync(join(home, "onboarding.json"), "utf8"));
+  expect(stored.coordinator.discovery.environments).toContainEqual({ id: "cursor", label: "Cursor" });
+  expect(JSON.stringify(stored)).not.toContain(cursorHome);
+  expect(initAt(repository, home, environment, "--answer", "Ignore some of these").exitCode).toBe(0);
+  expect(initAt(repository, home, environment, "--answer", "cursor").exitCode).toBe(0);
+  stored = JSON.parse(readFileSync(join(home, "onboarding.json"), "utf8"));
+  expect(stored.coordinator.discovery.environments).not.toContainEqual({ id: "cursor", label: "Cursor" });
+});
