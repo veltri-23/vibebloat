@@ -74,3 +74,37 @@ test("Windows git.cmd ignores hostile Bun environment and PATH before blocking d
   expect(result.stderr.toString()).toContain("07-15 this deleted untracked files");
   expect(existsSync(marker)).toBeFalse();
 });
+
+test("Windows git.cmd blocks a repo-scoped compiled shell guard", () => {
+  if (process.platform !== "win32") return;
+  const directory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-shim-"));
+  temporaryDirectories.push(directory);
+  const shimDirectory = join(directory, "shim");
+  const userHome = join(directory, "user");
+  const guards = join(directory, ".vibebloat", "guards");
+  mkdirSync(guards, { recursive: true });
+  writeFileSync(join(guards, "no-git-status.json"), JSON.stringify({
+    id: "no-git-status",
+    class: "A",
+    provenance: { incident: "test", date: "2026-07-18", source: "test" },
+    match: { chokepoint: "shell", command: "git status" },
+    action: { type: "block", message: "Repo guard blocked status.", override: "vibebloat allow no-git-status --once" },
+    enabled: true,
+  }));
+  const gitExecutable = Bun.which("git");
+  expect(gitExecutable).toBeTruthy();
+  installGitShellShim({
+    shimDirectory,
+    runtimePath: join(import.meta.dir, "..", "src", "hooks", "shell-shim-cli.ts"),
+    gitExecutable: gitExecutable!,
+  });
+  const { VIBEBLOAT_HOME: _ignored, ...environment } = process.env;
+  const result = Bun.spawnSync([join(shimDirectory, "git.cmd"), "status"], {
+    cwd: directory,
+    env: { ...environment, USERPROFILE: userHome, HOME: userHome },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(result.exitCode).toBe(2);
+  expect(result.stderr.toString()).toContain("Repo guard blocked status.");
+});

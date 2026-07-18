@@ -1,5 +1,5 @@
-import { join } from "node:path";
 import { disabledGuardIds } from "../cli/disable";
+import { guardDirectories } from "../guard-home";
 import { loadGuards } from "../guard-loader";
 import { gitStashUntrackedGuard, mcpConfigWrongFileGuard } from "../guards";
 import { Runtime } from "../runtime";
@@ -8,14 +8,11 @@ import { runShellShim } from "./shell-shim";
 
 const builtInGuards: Guard[] = [gitStashUntrackedGuard, mcpConfigWrongFileGuard];
 
-function homeDirectory(): string {
-  return process.env.VIBEBLOAT_HOME ?? join(process.env.USERPROFILE ?? process.env.HOME ?? ".", ".vibebloat");
-}
-
 function runtimeGuards(): Guard[] {
-  const installed = loadGuards(join(homeDirectory(), "guards"));
+  const installed = guardDirectories().flatMap(loadGuards);
   const builtInIds = new Set(builtInGuards.map((guard) => guard.id));
-  const duplicate = installed.find((guard) => builtInIds.has(guard.id));
+  const seenIds = new Set(builtInIds);
+  const duplicate = installed.find((guard) => seenIds.has(guard.id) || !seenIds.add(guard.id));
   if (duplicate) throw new Error(`Installed guard duplicates built-in id: ${duplicate.id}`);
   return [...builtInGuards, ...installed];
 }
