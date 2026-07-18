@@ -5,6 +5,7 @@ export class LocalOnlySink {
   readonly #root: string;
 
   constructor(directory: string) {
+    if (/^(?:\\\\|\/\/)/.test(directory)) throw new Error("Local-only sink cannot use a network path");
     this.#root = resolve(directory);
   }
 

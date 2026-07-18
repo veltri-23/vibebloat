@@ -94,6 +94,10 @@ describe("CRITICAL: scrub failure closes ingestion", () => {
     })).rejects.toThrow("A concrete local-only sink is required");
     expect({ modeled, published }).toEqual({ modeled: 0, published: 0 });
   });
+
+  test("rejects a network path for raw local failure storage", () => {
+    expect(() => createLocalOnlySink("\\\\server\\share")).toThrow("network path");
+  });
 });
 
 describe("command scrubbers", () => {
