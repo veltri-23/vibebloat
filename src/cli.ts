@@ -18,6 +18,7 @@ import { discoverCurrentRepoGitHookPaths, installCurrentRepoGitHooks, planGitHoo
 import { installNativeHooks } from "./install/orchestrator";
 import { installHermesHook, preflightHermesHook } from "./install/hermes";
 import { installOnboardingBindings, readOnboardingBindingReceipt } from "./install/onboarding-bindings";
+import { DailySchedulerTargetUnavailableError, installVerifiedStandaloneDailyScheduler } from "./install/daily-scheduler";
 import { installStarterGuardPack } from "./install/starter-pack";
 import { verifyShellPaths, type Shell } from "./install/shim";
 import { compileGuard } from "./compiler/codex-fill";
@@ -27,6 +28,7 @@ import { runShellShimCommand } from "./hooks/shell-shim-handler";
 import { cliSelfCommand } from "./self-command";
 import { createCodebaseMemorySemanticAdapter } from "./ingest/codebase-memory-semantic";
 import { discoverLocalHistory, type LocalHistoryCatalog } from "./ingest/discovery";
+import { scanIncrementalHistory } from "./ingest/incremental-cursor";
 import { createLocalSemanticAdapter, localSemanticIndexPath } from "./ingest/local-semantic";
 import { scanHistory } from "./ingest/scan";
 import type { UntrustedSemanticContext } from "./ingest/semantic-context";
@@ -35,8 +37,8 @@ import type { HistoryChunk } from "./ingest/types";
 import { serializeModelCommandInput } from "./mine/model-command-input";
 import { detectRunnerDetails, parentProcessCommand, parseRunnerOverride, type RunnerDetectionSource } from "./onboarding/detect-runner";
 import { answerAssist } from "./onboarding/assist";
-import { validateOnboardingEffectRequirements, type EffectGateId } from "./onboarding/effect-requirements";
-import { isGateChoice, type OnboardingContext } from "./onboarding/gates";
+import { validateOnboardingEffectRequirements, type EffectGateId, type OnboardingEffectEvidence } from "./onboarding/effect-requirements";
+import { canonicalGateChoice, isGateChoice, type OnboardingContext } from "./onboarding/gates";
 import { OnboardingCoordinator, reviewDecisionForChoice, type GuardReviewDecision, type OnboardingCheckpoint } from "./onboarding/coordinator";
 import { lookupMarkdownAnswer } from "./onboarding/markdown-help";
 import { readCustomAgentHomes, saveCustomAgentHome, type CustomAgentHomes } from "./onboarding/custom-agent-homes";
@@ -74,7 +76,7 @@ const effectGateFallback: Record<EffectGateId, string> = {
 const effectGates = new Set<EffectGateId>(Object.keys(effectGateFallback) as EffectGateId[]);
 
 class OnboardingEffectUnavailableError extends Error {
-  constructor(readonly gate: EffectGateId, missing: readonly string[]) {
+  constructor(readonly gate: EffectGateId, missing: readonly string[], readonly proof?: string) {
     super(`selected ${gate} effect lacks verified evidence: ${missing.join(", ")}`);
   }
 }
@@ -148,6 +150,20 @@ function agentHomes(): { claudePath: string; codexPath: string; hermesHome: stri
     codexPath: join(process.env.CODEX_HOME ?? join(base, ".codex"), "config.toml"),
     hermesHome: process.env.HERMES_HOME ?? join(base, ".hermes"),
   };
+}
+
+function installOnboardingDailySchedule(scope: GuardScope): void {
+  const userHome = process.env.USERPROFILE ?? process.env.HOME;
+  if (!userHome) throw new DailySchedulerTargetUnavailableError();
+  installVerifiedStandaloneDailyScheduler({
+    home: guardHomeForScope(scope),
+    userHome,
+    selfCommand: cliSelfCommand(),
+  });
+}
+
+function hasVerifiedAgentCronTarget(checkpoint: OnboardingCheckpoint | undefined): boolean {
+  return checkpoint?.discovery.environments.some(({ id }) => id === "hermes" || id === "openclaw") === true;
 }
 
 function gitHookName(value: string | undefined): GitHookName {
@@ -561,6 +577,7 @@ function createProductionOnboardingCoordinator(
       },
       modelPass: async (candidates, semanticContext) => runModelCommand(modelCommandFromEnvironment(modelRoute), candidates, semanticContext),
     },
+    incrementalCursor: { directory: join(home, "returning-scan") },
     installBindings: (_guards, environmentIds) => installVerifiedOnboardingBindings(environmentIds, readCustomAgentHomes(home)),
   });
 }
@@ -1031,9 +1048,36 @@ if (mode === "init") {
   try {
     const validChoice = isGateChoice(before.gate, effectiveAnswer) && !next.cancelled;
     if (validChoice) {
+      const effectEvidence: OnboardingEffectEvidence = {};
+      const selectedEffectChoice = canonicalGateChoice(before.gate, effectiveAnswer);
+      if (before.gate === "O1" && selectedEffectChoice === "Yes") {
+        try {
+          installOnboardingDailySchedule(next.scope ?? state.scope ?? "machine");
+          effectEvidence.dailyScheduleVerified = true;
+        } catch (error) {
+          const proof = error instanceof DailySchedulerTargetUnavailableError
+            ? "O1 requires a verified standalone VibeBloat executable and a verified native scheduler receipt"
+            : "O1 could not verify the standalone executable or native scheduler target";
+          throw new OnboardingEffectUnavailableError("O1", ["dailyScheduleVerified"], proof);
+        }
+      }
+      if (before.gate === "O2" && selectedEffectChoice === "Yes") {
+        if (!hasVerifiedAgentCronTarget(coordinatorCheckpoint)) {
+          throw new OnboardingEffectUnavailableError("O2", ["agentCronVerified"], "O2 requires a verified Hermes or OpenClaw environment");
+        }
+        try {
+          installOnboardingDailySchedule(next.scope ?? state.scope ?? "machine");
+          effectEvidence.agentCronVerified = true;
+        } catch (error) {
+          const proof = error instanceof DailySchedulerTargetUnavailableError
+            ? "O2 requires a verified standalone VibeBloat executable and a verified native scheduler receipt"
+            : "O2 could not verify the standalone executable or native scheduler target";
+          throw new OnboardingEffectUnavailableError("O2", ["agentCronVerified"], proof);
+        }
+      }
       if (effectGates.has(before.gate as EffectGateId)) {
         const gate = before.gate as EffectGateId;
-        const requirement = validateOnboardingEffectRequirements(gate, effectiveAnswer);
+        const requirement = validateOnboardingEffectRequirements(gate, effectiveAnswer, effectEvidence);
         if (!requirement.ok) throw new OnboardingEffectUnavailableError(gate, requirement.missing);
       }
       const preferences = applyOnboardingPreference(state.preferences, before.gate, effectiveAnswer);
@@ -1118,7 +1162,10 @@ if (mode === "init") {
       process.exit(1);
     }
     if (error instanceof OnboardingEffectUnavailableError) {
-      process.stderr.write(`WHAT failed: onboarding effect was not activated.\nWHY: ${error.message}.\nFIX: vibebloat init --answer ${JSON.stringify(effectGateFallback[error.gate])}\n`);
+      const fix = error.proof?.includes("standalone")
+        ? "install a signed VibeBloat release, then rerun vibebloat init"
+        : `vibebloat init --answer ${JSON.stringify(effectGateFallback[error.gate])}`;
+      process.stderr.write(`WHAT failed: onboarding effect was not activated.\nWHY: ${error.proof ?? error.message}.\nFIX: ${fix}\n`);
       process.exit(1);
     }
     const reason = error instanceof Error ? error.message : "unknown error";

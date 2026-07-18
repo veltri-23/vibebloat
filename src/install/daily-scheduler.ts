@@ -32,6 +32,18 @@ export interface DailySchedulerOptions {
   nativeExecutables?: Partial<Record<"launchctl" | "powershell" | "schtasks" | "systemctl", string>>;
 }
 
+export interface VerifiedStandaloneDailySchedulerOptions extends Omit<DailySchedulerOptions, "executable" | "trustedExecutableRoot"> {
+  selfCommand?: readonly string[];
+  standalone?: boolean;
+}
+
+export class DailySchedulerTargetUnavailableError extends Error {
+  constructor() {
+    super("Daily scheduling requires a verified standalone VibeBloat executable; source checkout targets are not schedulable.");
+    this.name = "DailySchedulerTargetUnavailableError";
+  }
+}
+
 export interface DailySchedulerReceipt {
   schemaVersion: 1;
   owner: "vibebloat";
@@ -75,6 +87,8 @@ const owner = "vibebloat" as const;
 const label = "dev.vibebloat.daily";
 const windowsTarget = "\\VibeBloat\\Daily";
 const futureClockSkewMilliseconds = 5 * 60 * 1000;
+
+declare const VIBEBLOAT_STANDALONE: boolean | undefined;
 
 function sha256(value: string | Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
@@ -541,4 +555,21 @@ export function installDailyScheduler(options: DailySchedulerOptions): DailySche
     if (rollbackErrors.length > 0) throw new Error(`Daily scheduler install failed and rollback was incomplete: ${rollbackErrors.join("; ")}`, { cause: error });
     throw error;
   }
+}
+
+/** Schedules only the compiled single-binary CLI, never a Bun/source checkout command. */
+export function installVerifiedStandaloneDailyScheduler(options: VerifiedStandaloneDailySchedulerOptions): DailySchedulerReceipt {
+  const { selfCommand: configuredSelfCommand, standalone: configuredStandalone, ...schedulerOptions } = options;
+  const standalone = configuredStandalone ?? (typeof VIBEBLOAT_STANDALONE !== "undefined" && VIBEBLOAT_STANDALONE);
+  const selfCommand = configuredSelfCommand ?? [process.execPath];
+  if (!standalone || selfCommand.length !== 1 || !isAbsolute(selfCommand[0] ?? "")) {
+    throw new DailySchedulerTargetUnavailableError();
+  }
+
+  const executable = selfCommand[0]!;
+  return installDailyScheduler({
+    ...schedulerOptions,
+    executable,
+    trustedExecutableRoot: dirname(executable),
+  });
 }
