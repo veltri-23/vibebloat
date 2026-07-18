@@ -1,7 +1,8 @@
-import type { HistoryChunk } from "../ingest/types";
+import { isScrubbedCandidates, type ScrubbedCandidates } from "../scrub/scrubbed-candidates";
 
-export type ModelPass<Incident> = (candidates: HistoryChunk[]) => Promise<Incident[]>;
+export type ModelPass<Incident> = (candidates: ScrubbedCandidates["candidates"]) => Promise<Incident[]>;
 
-export async function runModelPass<Incident>(candidates: HistoryChunk[], mine: ModelPass<Incident>): Promise<Incident[]> {
-  return mine(candidates);
+export async function runModelPass<Incident>(scrubbed: ScrubbedCandidates, mine: ModelPass<Incident>): Promise<Incident[]> {
+  if (!isScrubbedCandidates(scrubbed)) throw new Error("Model pass requires scrubbed candidates");
+  return mine(scrubbed.candidates);
 }
