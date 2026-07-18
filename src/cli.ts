@@ -19,16 +19,12 @@ import { OnboardingRunner, type RunnerState } from "./onboarding/runner";
 import { loadOnboardingState, saveOnboardingState } from "./onboarding/state";
 import { Runtime } from "./runtime";
 import { executeCommand } from "./scrub/command";
+import { ControlledScrubbersUnavailableError, resolveControlledScrubberCommands } from "./scrub/controlled-release";
 import { createLocalOnlySink } from "./scrub/local-sink";
 import type { Event, Guard } from "./types";
 
 const guards: Guard[] = [gitStashUntrackedGuard, mcpConfigWrongFileGuard];
 const mode = process.argv[2];
-const scrubberCommands = {
-  VIBEBLOAT_PRESIDIO_COMMAND: ["presidio-wrapper", "--json"],
-  VIBEBLOAT_GITLEAKS_COMMAND: ["gitleaks-wrapper", "--json"],
-} as const;
-
 function guardScope(): "repo" | "machine" {
   return loadOnboardingState(onboardingHome())?.scope ?? "machine";
 }
@@ -50,7 +46,8 @@ function configText(path: string): string {
   return existsSync(path) ? readFileSync(path, "utf8") : "";
 }
 
-function commandFromEnvironment(name: string): string[] {
+function modelCommandFromEnvironment(): string[] {
+  const name = "VIBEBLOAT_MODEL_COMMAND";
   const value = process.env[name];
   if (!value) throw new Error(`${name} is required`);
   let command: unknown;
@@ -62,11 +59,7 @@ function commandFromEnvironment(name: string): string[] {
   if (!Array.isArray(command) || command.length === 0 || command.some((part) => typeof part !== "string" || !part)) {
     throw new Error(`${name} must be a non-empty JSON command array`);
   }
-  const trusted = scrubberCommands[name as keyof typeof scrubberCommands];
-  if (trusted && (command.length !== trusted.length || command.some((part, index) => part !== trusted[index]))) {
-    throw new Error(`${name} must use the installed ${trusted[0]} command`);
-  }
-  return trusted ? [...trusted] : command;
+  return command;
 }
 
 function argumentValue(flag: string): string | undefined {
@@ -285,17 +278,16 @@ if (mode === "scan") {
     process.exit(1);
   }
   try {
-    const presidioCommand = commandFromEnvironment("VIBEBLOAT_PRESIDIO_COMMAND");
-    const gitleaksCommand = commandFromEnvironment("VIBEBLOAT_GITLEAKS_COMMAND");
-    const modelCommand = commandFromEnvironment("VIBEBLOAT_MODEL_COMMAND");
+    const scrubbers = resolveControlledScrubberCommands();
+    const modelCommand = modelCommandFromEnvironment();
     const parsed: unknown = JSON.parse(readFileSync(historyPath, "utf8"));
     if (!Array.isArray(parsed) || !parsed.every(isHistoryChunk)) throw new Error("history file must contain valid history chunks");
 
     let candidateCount = 0;
     let incidents: IncidentManifest[] = [];
     const result = await scanHistory(parsed, {
-      presidioCommand,
-      gitleaksCommand,
+      presidioCommand: scrubbers.presidio,
+      gitleaksCommand: scrubbers.gitleaks,
       localSink: createLocalOnlySink(join(process.env.VIBEBLOAT_HOME ?? globalGuardHome(), "failed-ingest")),
       modelPass: async (candidates) => {
         candidateCount = candidates.length;
@@ -317,7 +309,11 @@ if (mode === "scan") {
     })}\n`);
     process.exit(0);
   } catch (error) {
-    process.stderr.write(`WHAT failed: scan could not run.\nWHY: ${error instanceof Error ? error.message : "unknown error"}\nFIX: set scrubber and model commands, then rerun vibebloat scan <history.json>\n`);
+    if (error instanceof ControlledScrubbersUnavailableError) {
+      process.stderr.write("WHAT failed: scan blocked before history read.\nWHY: Verified package-controlled scrubber assets are unavailable.\nFIX: install a signed VibeBloat release, then rerun vibebloat scan <history.json>\n");
+    } else {
+      process.stderr.write(`WHAT failed: scan could not run.\nWHY: ${error instanceof Error ? error.message : "unknown error"}\nFIX: set model command, then rerun vibebloat scan <history.json>\n`);
+    }
     process.exit(1);
   }
 }

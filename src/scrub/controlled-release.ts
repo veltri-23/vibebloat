@@ -1,0 +1,55 @@
+import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { isAbsolute, relative, resolve } from "node:path";
+import { parseReleaseMetadata, verifySigstore } from "../doctor/sigstore";
+
+export interface ControlledScrubberCommands {
+  presidio: readonly string[];
+  gitleaks: readonly string[];
+}
+
+export class ControlledScrubbersUnavailableError extends Error {
+  constructor() {
+    super("Verified package-controlled scrubber assets are unavailable.");
+  }
+}
+
+function containedAbsolutePath(root: string, value: string): string {
+  const path = resolve(root, value);
+  const pathFromRoot = relative(root, path);
+  if (!isAbsolute(path) || pathFromRoot === "" || pathFromRoot === ".." || pathFromRoot.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) || isAbsolute(pathFromRoot)) {
+    throw new ControlledScrubbersUnavailableError();
+  }
+  return path;
+}
+
+export function resolveControlledScrubberCommands(
+  packageRoot = resolve(import.meta.dir, "..", ".."),
+): ControlledScrubberCommands {
+  try {
+    const metadataPath = resolve(packageRoot, "release", "metadata.json");
+    if (!existsSync(metadataPath)) throw new ControlledScrubbersUnavailableError();
+
+    const metadata = parseReleaseMetadata(readFileSync(metadataPath, "utf8"));
+    const artifact = containedAbsolutePath(packageRoot, metadata.artifact);
+    const signature = containedAbsolutePath(packageRoot, metadata.signature);
+    const publicKey = containedAbsolutePath(packageRoot, metadata.publicKey);
+    if (![artifact, signature, publicKey].every((path) => existsSync(path) && lstatSync(path).isFile())) {
+      throw new ControlledScrubbersUnavailableError();
+    }
+
+    const verification = verifySigstore(
+      { ...metadata, artifact, signature, publicKey },
+      readFileSync(publicKey),
+      (command) => Bun.spawnSync([...command], { stdout: "pipe", stderr: "pipe" }).exitCode ?? 1,
+    );
+    if (!verification.verified) throw new ControlledScrubbersUnavailableError();
+
+    return {
+      presidio: [artifact, "scrub", "presidio", "--json"],
+      gitleaks: [artifact, "scrub", "gitleaks", "--json"],
+    };
+  } catch (error) {
+    if (error instanceof ControlledScrubbersUnavailableError) throw error;
+    throw new ControlledScrubbersUnavailableError();
+  }
+}
