@@ -6,6 +6,7 @@ import type { IncidentManifest } from "../ingest/rank";
 import type { HistoryChunk } from "../ingest/types";
 import { applyAtomicFilePlans } from "../install/atomic-files";
 import { Runtime } from "../runtime";
+import { parseGuard } from "../schema";
 import type { Event, Guard } from "../types";
 import { renderGate, type GateId } from "./gates";
 
@@ -47,6 +48,17 @@ export interface GuardReviewDecision {
   confidence?: "high" | "low";
 }
 
+export function reviewDecisionForChoice(
+  gate: "J1" | "J1-unsure",
+  choice: string,
+  incidentId: string,
+): GuardReviewDecision | undefined {
+  if (gate === "J1-unsure") return choice === "No" ? { incidentId, approved: false } : undefined;
+  if (choice === "Yes, set it up") return { incidentId, approved: true };
+  if (choice === "Skip" || choice === "That wasn't really a mistake") return { incidentId, approved: false };
+  return undefined;
+}
+
 export interface OnboardingSnapshot {
   phase: OnboardingPhase;
   scope?: GuardScope;
@@ -59,15 +71,24 @@ export interface OnboardingSnapshot {
   cancelled: boolean;
 }
 
+export interface OnboardingCheckpoint extends OnboardingSnapshot {
+  discovery?: OnboardingDiscovery;
+  incidents: IncidentManifest[];
+  approved: Array<{ incident: IncidentManifest; confidence: "high" | "low" }>;
+  installed: Guard[];
+}
+
 export interface OnboardingCoordinatorOptions {
   discover(): Promise<OnboardingDiscovery>;
-  verifyScrubbers(): Promise<void> | void;
+  setupBindings?(): Promise<void> | void;
+  verifyScrubbers(): Promise<{ presidio: readonly string[]; gitleaks: readonly string[] } | void> | { presidio: readonly string[]; gitleaks: readonly string[] } | void;
   loadHistory(sourceIds: readonly string[], authorization: { confirmed: true; scrubbersVerified: true }): Promise<HistoryChunk[]>;
   scan: Omit<ScanOptions<IncidentManifest>, "publish">;
   installBindings(guards: readonly Guard[]): Promise<void> | void;
   environment?: NodeJS.ProcessEnv;
   cwd?: string;
-  save?(snapshot: OnboardingSnapshot): void;
+  resume?: OnboardingCheckpoint;
+  save?(checkpoint: OnboardingCheckpoint): void;
 }
 
 const rawSecret = /\bBearer\s+(?!<redacted>)\S+|\b(?:api[_-]?key|authorization|password|secret|token)\s*[:=]\s*(?!<redacted>)\S+|\b(?:gh[pousr]_|github_pat_|sk-|xox[baprs]-|AKIA)[A-Za-z0-9_-]{8,}\b|\b[A-Za-z0-9_~+\/=.-]{32,}\b/i;
@@ -96,6 +117,21 @@ function unique(values: readonly string[]): string[] {
   return [...new Set(values)];
 }
 
+function assertSafeDiscovery(discovery: OnboardingDiscovery): void {
+  const environmentIds = unique(discovery.environments.map(({ id }) => id));
+  const sourceIds = unique(discovery.sources.map(({ id }) => id));
+  if (environmentIds.length !== discovery.environments.length || sourceIds.length !== discovery.sources.length) {
+    throw new Error("Discovery returned duplicate identifiers.");
+  }
+  if ([...environmentIds, ...sourceIds].some((id) => id.length > 80 || !identifier.test(id))) {
+    throw new Error("Discovery returned an unsafe identifier.");
+  }
+  const knownEnvironments = new Set(environmentIds);
+  if (discovery.sources.some(({ environmentId }) => !knownEnvironments.has(environmentId))) {
+    throw new Error("Discovery returned a source for an unknown environment.");
+  }
+}
+
 /** Owns onboarding side effects; OnboardingRunner remains exact conversation owner. */
 export class OnboardingCoordinator {
   #phase: OnboardingPhase = "entry";
@@ -109,7 +145,27 @@ export class OnboardingCoordinator {
   #installed: Guard[] = [];
   #cancelled = false;
 
-  constructor(private readonly options: OnboardingCoordinatorOptions) {}
+  constructor(private readonly options: OnboardingCoordinatorOptions) {
+    if (!options.resume) return;
+    const checkpoint = structuredClone(options.resume);
+    if (checkpoint.discovery) assertSafeDiscovery(checkpoint.discovery);
+    checkpoint.incidents.forEach(assertSafeIncident);
+    checkpoint.approved.forEach(({ incident }) => assertSafeIncident(incident));
+    const incidentIds = new Set(checkpoint.incidents.map(({ incident_id }) => incident_id));
+    if (checkpoint.approved.some(({ incident }) => !incidentIds.has(incident.incident_id))) throw new Error("Checkpoint approval references an unknown incident.");
+    const sourceIds = new Set(checkpoint.discovery?.sources.map(({ id }) => id) ?? []);
+    if (checkpoint.selectedSourceIds.some((id) => !sourceIds.has(id))) throw new Error("Checkpoint selected an unknown history source.");
+    this.#phase = checkpoint.phase;
+    this.#scope = checkpoint.scope;
+    this.#discovery = checkpoint.discovery;
+    this.#environmentConfirmed = checkpoint.environmentConfirmed;
+    this.#consented = checkpoint.consented;
+    this.#selectedSourceIds = [...checkpoint.selectedSourceIds];
+    this.#incidents = checkpoint.incidents;
+    this.#approved = checkpoint.approved;
+    this.#installed = checkpoint.installed.map((guard) => parseGuard(JSON.stringify(guard)));
+    this.#cancelled = checkpoint.cancelled;
+  }
 
   snapshot(): OnboardingSnapshot {
     return {
@@ -122,6 +178,19 @@ export class OnboardingCoordinator {
       approvedIncidentIds: this.#approved.map(({ incident }) => incident.incident_id),
       installedGuardIds: this.#installed.map((guard) => guard.id),
       cancelled: this.#cancelled,
+    };
+  }
+
+  checkpoint(): OnboardingCheckpoint {
+    return {
+      ...this.snapshot(),
+      discovery: this.discovery(),
+      incidents: this.incidents(),
+      approved: this.#approved.map(({ incident, confidence }) => ({
+        incident: { ...incident, evidence_refs: [...incident.evidence_refs] },
+        confidence,
+      })),
+      installed: structuredClone(this.#installed),
     };
   }
 
@@ -139,19 +208,9 @@ export class OnboardingCoordinator {
   async permitSetupAndDiscover(permitted: boolean): Promise<OnboardingDiscovery | undefined> {
     this.#expect("setup-permission");
     if (!permitted) return undefined;
+    await this.options.setupBindings?.();
     const discovery = await this.options.discover();
-    const environmentIds = unique(discovery.environments.map(({ id }) => id));
-    const sourceIds = unique(discovery.sources.map(({ id }) => id));
-    if (environmentIds.length !== discovery.environments.length || sourceIds.length !== discovery.sources.length) {
-      throw new Error("Discovery returned duplicate identifiers.");
-    }
-    if ([...environmentIds, ...sourceIds].some((id) => id.length > 80 || !identifier.test(id))) {
-      throw new Error("Discovery returned an unsafe identifier.");
-    }
-    const knownEnvironments = new Set(environmentIds);
-    if (discovery.sources.some(({ environmentId }) => !knownEnvironments.has(environmentId))) {
-      throw new Error("Discovery returned a source for an unknown environment.");
-    }
+    assertSafeDiscovery(discovery);
     this.#discovery = {
       environments: discovery.environments.map((environment) => ({ ...environment })),
       sources: discovery.sources.map((source) => ({ ...source })),
@@ -202,10 +261,11 @@ export class OnboardingCoordinator {
   }
 
   async scan(): Promise<OnboardingSnapshot> {
-    this.#expect("ready-to-scan");
+    if (this.#phase !== "ready-to-scan" && this.#phase !== "paused") this.#expect("ready-to-scan");
     if (!this.#environmentConfirmed || !this.#consented) throw new Error("Explicit environment confirmation and privacy consent are required before scanning.");
+    let verifiedScrubbers: { presidio: readonly string[]; gitleaks: readonly string[] } | void;
     try {
-      await this.options.verifyScrubbers();
+      verifiedScrubbers = await this.options.verifyScrubbers();
     } catch {
       this.#incidents = [];
       this.#phase = "paused";
@@ -215,6 +275,10 @@ export class OnboardingCoordinator {
     let mined: IncidentManifest[] = [];
     const result = await scanHistory(chunks, {
       ...this.options.scan,
+      ...(verifiedScrubbers ? {
+        presidioCommand: verifiedScrubbers.presidio,
+        gitleaksCommand: verifiedScrubbers.gitleaks,
+      } : {}),
       modelPass: async (candidates, semanticContext) => {
         const incidents = await this.options.scan.modelPass(candidates, semanticContext);
         incidents.forEach(assertSafeIncident);
@@ -298,7 +362,7 @@ export class OnboardingCoordinator {
 
   #save(): OnboardingSnapshot {
     const snapshot = this.snapshot();
-    this.options.save?.(snapshot);
+    this.options.save?.(this.checkpoint());
     return snapshot;
   }
 }

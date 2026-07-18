@@ -67,9 +67,11 @@ export class OnboardingRunner {
   choose(choice: GateChoice): RunnerState {
     if (typeof choice === "string" && choice.trim().toLowerCase() === "cancel") return this.cancel();
     if (!isGateChoice(this.state.gate, choice)) return this.snapshot();
-    const next = nextFirstRunGate(this.state.gate, choice, this.context);
     const gate = this.state.gate;
-    this.state.answers[gate] = canonicalGateChoice(gate, choice);
+    const canonical = canonicalGateChoice(gate, choice);
+    const optionIndex = getGate(gate).options.indexOf(canonical);
+    const next = nextFirstRunGate(gate, optionIndex >= 0 ? optionIndex : choice, this.context);
+    this.state.answers[gate] = canonical;
     if (gate === "A1") this.state.scope = this.state.answers[gate] === "Just this project" ? "repo" : "machine";
     if (next === "CANCELLED") return this.cancel();
     else if (next) this.state.gate = next;

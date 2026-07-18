@@ -20,6 +20,7 @@ import { approveLiveCompileProposal, authorizeHumanLiveCompileApproval, drainQue
 import { runShellShimCommand } from "./hooks/shell-shim-handler";
 import { cliSelfCommand } from "./self-command";
 import { createCodebaseMemorySemanticAdapter } from "./ingest/codebase-memory-semantic";
+import { discoverLocalHistory, type LocalHistoryCatalog } from "./ingest/discovery";
 import { createLocalSemanticAdapter } from "./ingest/local-semantic";
 import { scanHistory } from "./ingest/scan";
 import type { UntrustedSemanticContext } from "./ingest/semantic-context";
@@ -27,9 +28,10 @@ import { rankIncidents, type IncidentManifest } from "./ingest/rank";
 import type { HistoryChunk } from "./ingest/types";
 import { serializeModelCommandInput } from "./mine/model-command-input";
 import { detectRunnerDetails, parentProcessCommand, parseRunnerOverride, type RunnerDetectionSource } from "./onboarding/detect-runner";
-import { isGateChoice } from "./onboarding/gates";
+import { isGateChoice, type OnboardingContext } from "./onboarding/gates";
+import { OnboardingCoordinator, reviewDecisionForChoice, type GuardReviewDecision, type OnboardingCheckpoint } from "./onboarding/coordinator";
 import { OnboardingRunner, type RunnerState } from "./onboarding/runner";
-import { loadOnboardingState, saveOnboardingState } from "./onboarding/state";
+import { loadOnboardingState, saveOnboardingState, type OnboardingState } from "./onboarding/state";
 import { Runtime } from "./runtime";
 import { allowOnce, consumeAllowedOnce } from "./runtime/override";
 import { parseGuard } from "./schema";
@@ -258,6 +260,91 @@ async function runModelCommand(
   const manifests = incidents.map(parseIncidentManifest);
   if (manifests.some((incident) => incident === undefined)) throw new Error("model command returned an unsafe incident manifest");
   return manifests;
+}
+
+function onboardingRunnerContext(
+  checkpoint: OnboardingCheckpoint | undefined,
+  state: Pick<OnboardingState, "gate" | "reviewDecisions">,
+): OnboardingContext {
+  const incidentCount = checkpoint?.incidents.length ?? 0;
+  const reviewed = state.reviewDecisions?.length ?? 0;
+  return {
+    knowledgeToolsDetected: false,
+    hasHermesOrOpenClaw: checkpoint?.discovery?.environments.some(({ id }) => id === "hermes" || id === "openclaw") ?? false,
+    ...(checkpoint?.phase === "review" || checkpoint?.phase === "ready-to-install" || checkpoint?.phase === "ready-to-prove" || checkpoint?.phase === "complete"
+      ? { scanOutcome: incidentCount > 0 ? "found" as const : "zero" as const }
+      : {}),
+    reviewsRemaining: Math.max(1, incidentCount - reviewed + (state.gate === "J3" ? 1 : 0)),
+  };
+}
+
+function onboardingBindingSetup(): void {
+  const homes = agentHomes();
+  const gitHookPaths = discoverCurrentRepoGitHookPaths(process.cwd());
+  planGitHook(gitHookPaths["pre-commit"], gitHookCommands["pre-commit"]);
+  planGitHook(gitHookPaths["pre-push"], gitHookCommands["pre-push"]);
+  installNativeHooks({
+    permitted: true,
+    claudePath: homes.claudePath,
+    codexPath: homes.codexPath,
+    command: "vibebloat hook",
+  });
+  installCurrentRepoGitHooks(process.cwd(), gitHookCommands);
+}
+
+function createProductionOnboardingCoordinator(
+  home: string,
+  resume: OnboardingCheckpoint | undefined,
+  save: (checkpoint: OnboardingCheckpoint) => void,
+): OnboardingCoordinator {
+  const base = process.env.USERPROFILE ?? process.env.HOME ?? ".";
+  const homes = agentHomes();
+  let catalog: LocalHistoryCatalog | undefined;
+  const historyCatalog = () => catalog ??= discoverLocalHistory({
+    homeDirectory: base,
+    claudeHome: process.env.CLAUDE_CONFIG_DIR,
+    codexHome: process.env.CODEX_HOME,
+    hermesHome: homes.hermesHome,
+  });
+  return new OnboardingCoordinator({
+    resume,
+    save,
+    cwd: process.cwd(),
+    environment: process.env,
+    setupBindings: onboardingBindingSetup,
+    discover: async () => {
+      const sources = historyCatalog().sources;
+      return {
+        environments: sources.map(({ id, label }) => ({ id, label })),
+        sources: sources.map((source) => ({
+          id: source.id,
+          environmentId: source.id,
+          label: `${source.label} history`,
+          lastActive: source.lastActivityAt,
+          stale: source.stale,
+        })),
+      };
+    },
+    verifyScrubbers: () => resolveControlledScrubberCommands(),
+    loadHistory: async (sourceIds, authorization) => historyCatalog().loadConfirmed({
+      ...authorization,
+      sourceIds: sourceIds as Array<"claude-code" | "codex" | "hermes">,
+    }),
+    scan: {
+      presidioCommand: [],
+      gitleaksCommand: [],
+      localSink: createLocalOnlySink(join(home, "failed-ingest")),
+      semantic: {
+        repoRoot: resolve(process.cwd()),
+        coordinator: {
+          primary: createCodebaseMemorySemanticAdapter(),
+          local: createLocalSemanticAdapter({ home }),
+        },
+      },
+      modelPass: async (candidates, semanticContext) => runModelCommand(modelCommandFromEnvironment(), candidates, semanticContext),
+    },
+    installBindings: onboardingBindingSetup,
+  });
 }
 
 if (mode === "doctor") {
@@ -516,10 +603,12 @@ if (mode === "init") {
     process.stderr.write(`WHAT failed: onboarding runner selection stopped.\nWHY: ${error instanceof Error ? error.message : "unknown error"}.\nFIX: vibebloat init --human\n`);
     process.exit(1);
   }
-  const state: RunnerState = stored
-    ? { gate: stored.gate as RunnerState["gate"], answers: stored.answers, runner: runnerKind, scope: stored.scope, cancelled: stored.cancelled }
+  const state: OnboardingState = stored
+    ? { ...stored, gate: stored.gate as RunnerState["gate"], answers: stored.answers, runner: runnerKind }
     : { gate: "A0", answers: {}, runner: runnerKind };
-  const runner = new OnboardingRunner(state);
+  let coordinatorCheckpoint = state.coordinator;
+  const coordinator = createProductionOnboardingCoordinator(home, coordinatorCheckpoint, (checkpoint) => { coordinatorCheckpoint = checkpoint; });
+  let runner = new OnboardingRunner(state as RunnerState, onboardingRunnerContext(coordinatorCheckpoint, state));
   const answerIndex = process.argv.indexOf("--answer");
   if (answerIndex < 0) {
     process.stdout.write(`${JSON.stringify({ ...runner.snapshot(), runnerSource, prompt: runner.current() })}\n`);
@@ -529,22 +618,64 @@ if (mode === "init") {
   const before = runner.snapshot();
   let next = runner.choose(answer);
   try {
-    if (before.gate === "F0" && next.gate === "B1") {
-      const base = process.env.USERPROFILE ?? process.env.HOME ?? ".";
-      const gitHookPaths = discoverCurrentRepoGitHookPaths(process.cwd());
-      planGitHook(gitHookPaths["pre-commit"], gitHookCommands["pre-commit"]);
-      planGitHook(gitHookPaths["pre-push"], gitHookCommands["pre-push"]);
-      installNativeHooks({
-        permitted: true,
-        claudePath: join(process.env.CLAUDE_CONFIG_DIR ?? join(base, ".claude"), "settings.json"),
-        codexPath: join(process.env.CODEX_HOME ?? join(base, ".codex"), "config.toml"),
-        command: "vibebloat hook",
-      });
-      installCurrentRepoGitHooks(process.cwd(), gitHookCommands);
+    const validChoice = isGateChoice(before.gate, answer) && !next.cancelled;
+    if (before.gate === "F1" && next.cancelled && coordinator.snapshot().phase === "privacy") coordinator.cancel();
+    if (validChoice && before.gate === "A1" && next.scope) coordinator.begin(next.scope);
+    if (validChoice && before.gate === "F0" && next.gate === "B1") {
+      if (coordinator.snapshot().phase === "entry") coordinator.begin(next.scope ?? before.scope ?? "machine");
+      await coordinator.permitSetupAndDiscover(true);
     }
-    if (isGateChoice(before.gate, answer) && !next.cancelled) next = runner.advanceAutomaticGates();
-    saveOnboardingState(home, next);
+    if (validChoice && before.gate === "B1" && next.gate === "D1") coordinator.confirmEnvironments(true);
+    if (validChoice && before.gate === "D1" && next.gate !== "D1") {
+      const sources = coordinator.discovery()?.sources ?? [];
+      const selected = answer.trim().toLowerCase().includes("everything")
+        ? sources.map(({ id }) => id)
+        : sources.filter(({ stale }) => !stale).map(({ id }) => id);
+      coordinator.selectSources(selected);
+    }
+    if (validChoice && before.gate === "F1") coordinator.consent(true);
+
+    if (validChoice && (before.gate === "J1" || before.gate === "J1-unsure")) {
+      const incidents = coordinator.incidents();
+      const decisions = [...(state.reviewDecisions ?? [])];
+      const incident = incidents[decisions.length];
+      const decision = incident
+        ? reviewDecisionForChoice(before.gate, next.answers[before.gate] ?? "", incident.incident_id)
+        : undefined;
+      if (decision) {
+        decisions.push(decision);
+        state.reviewDecisions = decisions;
+      }
+    }
+
+    if (validChoice && coordinatorCheckpoint && (before.gate === "SCAN" || next.gate === "SCAN")) {
+      const scanState = before.gate === "SCAN" ? before : next;
+      const scan = await coordinator.scan();
+      if (scan.phase === "paused") {
+        saveOnboardingState(home, { ...scanState, coordinator: coordinatorCheckpoint, reviewDecisions: state.reviewDecisions });
+        throw new ControlledScrubbersUnavailableError();
+      }
+      runner = new OnboardingRunner(scanState, onboardingRunnerContext(coordinatorCheckpoint, { ...state, gate: scanState.gate }));
+      next = runner.advanceAutomaticGates();
+    }
+
+    if (validChoice && next.gate === "K") {
+      const decisions: GuardReviewDecision[] = state.reviewDecisions ?? [];
+      coordinator.review(decisions);
+      await coordinator.install();
+      runner = new OnboardingRunner(next, onboardingRunnerContext(coordinatorCheckpoint, { ...state, gate: next.gate }));
+    }
+    if (validChoice && before.gate === "L1") coordinator.prove();
+    if (validChoice && !next.cancelled) {
+      runner = new OnboardingRunner(next, onboardingRunnerContext(coordinatorCheckpoint, { ...state, gate: next.gate }));
+      next = runner.advanceAutomaticGates();
+    }
+    saveOnboardingState(home, { ...next, coordinator: coordinatorCheckpoint, reviewDecisions: state.reviewDecisions });
   } catch (error) {
+    if (error instanceof ControlledScrubbersUnavailableError) {
+      process.stderr.write("WHAT failed: onboarding scan blocked before history read.\nWHY: Verified package-controlled scrubber assets are unavailable.\nFIX: install a signed VibeBloat release, then rerun vibebloat init\n");
+      process.exit(1);
+    }
     process.stderr.write(`WHAT failed: onboarding setup stopped.\nWHY: ${error instanceof Error ? error.message : "unknown error"}\nFIX: vibebloat init --answer Yes\n`);
     process.exit(1);
   }

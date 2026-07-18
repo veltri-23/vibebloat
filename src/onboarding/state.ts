@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { replaceGuardAtomically } from "../compiler/live-compile";
 import type { GuardScope } from "../guard-home";
 import type { RunnerKind } from "./detect-runner";
+import type { GuardReviewDecision, OnboardingCheckpoint } from "./coordinator";
 
 export interface OnboardingState {
   gate: string;
@@ -10,6 +11,8 @@ export interface OnboardingState {
   runner?: RunnerKind;
   scope?: GuardScope;
   cancelled?: boolean;
+  coordinator?: OnboardingCheckpoint;
+  reviewDecisions?: GuardReviewDecision[];
   returningConversations?: ReturningConversation[];
 }
 

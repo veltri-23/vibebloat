@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { OnboardingCoordinator, type OnboardingCoordinatorOptions } from "../../src/onboarding/coordinator";
+import { OnboardingCoordinator, reviewDecisionForChoice, type OnboardingCoordinatorOptions } from "../../src/onboarding/coordinator";
 import { createLocalOnlySink } from "../../src/scrub/local-sink";
 import type { IncidentManifest } from "../../src/ingest/rank";
 import { getGate } from "../../src/onboarding/gates";
@@ -79,7 +79,7 @@ function fixture(overrides: Partial<OnboardingCoordinatorOptions> = {}) {
     cwd: root,
     ...overrides,
   };
-  return { coordinator: new OnboardingCoordinator(options), root, calls };
+  return { coordinator: new OnboardingCoordinator(options), options, root, calls };
 }
 
 async function reachPrivacy(coordinator: OnboardingCoordinator) {
@@ -173,6 +173,49 @@ test("scrubber preflight failure pauses before raw history is read", async () =>
 
   expect(await coordinator.scan()).toMatchObject({ phase: "paused", incidentCount: 0 });
   expect(historyReads).toBe(0);
+});
+
+test("verified scrubber commands replace placeholders after preflight", async () => {
+  const { coordinator } = fixture({
+    verifyScrubbers: () => ({ presidio: presidioRedact, gitleaks: cleanScrubber }),
+    scan: {
+      presidioCommand: failedScrubber,
+      gitleaksCommand: failedScrubber,
+      localSink: createLocalOnlySink(join(tmpdir(), `vibebloat-onboarding-verified-${crypto.randomUUID()}`)),
+      modelPass: async () => [incident],
+    },
+  });
+  await reachPrivacy(coordinator);
+  coordinator.consent(true);
+
+  expect(await coordinator.scan()).toMatchObject({ phase: "review", incidentCount: 1 });
+});
+
+test("checkpoint resumes without rereading history before scan", async () => {
+  const original = fixture();
+  await reachPrivacy(original.coordinator);
+  original.coordinator.consent(true);
+  const resumed = new OnboardingCoordinator({ ...original.options, resume: original.coordinator.checkpoint() });
+
+  expect(resumed.snapshot()).toMatchObject({ phase: "ready-to-scan", consented: true, selectedSourceIds: ["hermes-history"] });
+  expect(await resumed.scan()).toMatchObject({ phase: "review", incidentCount: 1 });
+});
+
+test("tampered checkpoint cannot restore unknown selected history", async () => {
+  const original = fixture();
+  await reachPrivacy(original.coordinator);
+  const checkpoint = original.coordinator.checkpoint();
+  checkpoint.selectedSourceIds = ["missing-history"];
+
+  expect(() => new OnboardingCoordinator({ ...original.options, resume: checkpoint })).toThrow("unknown history source");
+});
+
+test("review choices approve only final decisions", () => {
+  expect(reviewDecisionForChoice("J1-unsure", "Yes", "incident")).toBeUndefined();
+  expect(reviewDecisionForChoice("J1-unsure", "No", "incident")).toEqual({ incidentId: "incident", approved: false });
+  expect(reviewDecisionForChoice("J1", "Change it", "incident")).toBeUndefined();
+  expect(reviewDecisionForChoice("J1", "Yes, set it up", "incident")).toEqual({ incidentId: "incident", approved: true });
+  expect(reviewDecisionForChoice("J1", "Skip", "incident")).toEqual({ incidentId: "incident", approved: false });
 });
 
 test("successful review compiles, proves, and installs only approved guards", async () => {
