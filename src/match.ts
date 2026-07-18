@@ -4,6 +4,7 @@ import type { Event, Guard, Verdict } from "./types";
 
 const parser = new Parser();
 parser.setLanguage(Bash);
+const maxShellCommandBytes = 64 * 1024;
 
 interface ShellCommand {
   binary: string;
@@ -15,15 +16,32 @@ function normalizeBinary(value: string): string {
 }
 
 function normalizeCommand(command: string, variables: Record<string, string> = {}): string {
-  return command.replace(/\$\{([^}]+)\}|\$(\w+)/g, (match, braced, bare) => {
-    const value = variables[braced ?? bare] ?? process.env[braced ?? bare];
-    return value ?? match;
-  });
+  const parts: string[] = [];
+  let bytes = 0;
+  let lastIndex = 0;
+  const append = (value: string): void => {
+    bytes += Buffer.byteLength(value, "utf8");
+    if (bytes > maxShellCommandBytes) throw new Error("Shell command exceeds parser input limit.");
+    parts.push(value);
+  };
+  for (const match of command.matchAll(/\$\{([^}]+)\}|\$(\w+)/g)) {
+    const index = match.index ?? 0;
+    append(command.slice(lastIndex, index));
+    const name = match[1] ?? match[2];
+    append(variables[name] ?? process.env[name] ?? match[0]);
+    lastIndex = index + match[0].length;
+  }
+  append(command.slice(lastIndex));
+  return parts.join("");
 }
 
 function hasCommandKeyword(command: string, binary: string): boolean {
   const expression = new RegExp(`(^|[^A-Za-z0-9_])${binary.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=$|[^A-Za-z0-9_])`);
   return expression.test(command);
+}
+
+function exceedsShellCommandLimit(command: string): boolean {
+  return Buffer.byteLength(command, "utf8") > maxShellCommandBytes;
 }
 
 function hasObviousSyntaxError(command: string): boolean {
@@ -105,7 +123,9 @@ export function match(guard: Guard, event: Event): Verdict {
   if (!event.command || !guard.match.command) return { fired: false };
   try {
     const expected = guard.match.command.split(" ");
+    if (exceedsShellCommandLimit(event.command)) return parseErrorVerdict(guard);
     const normalizedCommand = normalizeCommand(event.command, event.variables);
+    if (exceedsShellCommandLimit(normalizedCommand)) return parseErrorVerdict(guard);
     if (hasObviousSyntaxError(normalizedCommand)) return parseErrorVerdict(guard);
     if (!hasCommandKeyword(normalizedCommand, expected[0])) return { fired: false };
     for (const candidate of shellCommands(normalizedCommand)) {

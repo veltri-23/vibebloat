@@ -58,6 +58,26 @@ describe("Phase 0 matcher", () => {
     expect(match(gitStashUntrackedGuard, { chokepoint: "shell", command: "echo 'unterminated" })).toMatchObject({ fired: true, parseError: true });
   });
 
+  test("bounds oversized shell input before normalization or parsing", () => {
+    const oversized = `git stash -u # ${"x".repeat(64 * 1024)}`;
+    expect(match(gitStashUntrackedGuard, { chokepoint: "shell", command: oversized })).toMatchObject({ fired: true, parseError: true });
+    for (const guardClass of ["B", "C", "D"] as const) {
+      expect(match({ ...gitStashUntrackedGuard, class: guardClass }, { chokepoint: "shell", command: oversized })).toMatchObject({ fired: false, parseError: true });
+    }
+  });
+
+  test("bounds variable expansion before parsing", () => {
+    const event = {
+      chokepoint: "shell" as const,
+      command: `git stash -u ${"$FILL".repeat(128)}`,
+      variables: { FILL: "x".repeat(1024) },
+    };
+    expect(match(gitStashUntrackedGuard, event)).toMatchObject({ fired: true, parseError: true });
+    for (const guardClass of ["B", "C", "D"] as const) {
+      expect(match({ ...gitStashUntrackedGuard, class: guardClass }, event)).toMatchObject({ fired: false, parseError: true });
+    }
+  });
+
   test("allows exactly one override", () => {
     const runtime = new Runtime();
     runtime.allowOnce(gitStashUntrackedGuard.id);
