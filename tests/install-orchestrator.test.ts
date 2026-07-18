@@ -18,21 +18,17 @@ test("installer changes configs only after explicit permission", () => {
   expect(readFileSync(codex, "utf8")).toContain("vibebloat hook --agent=codex");
 });
 
-test("installer wires verified shim and ordered hooks without starting a watcher", () => {
+test("installer wires verified shim without starting a watcher", () => {
   const directory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-install-"));
   tempDirectories.push(directory);
   const claude = join(directory, "claude.json"); const codex = join(directory, "config.toml");
-  const hook = join(directory, "pre-commit");
-  writeFileSync(claude, "{}"); writeFileSync(codex, ""); writeFileSync(hook, "#!/bin/sh\necho existing\n");
+  writeFileSync(claude, "{}"); writeFileSync(codex, "");
 
   expect(installNativeHooks({
     permitted: true, claudePath: claude, codexPath: codex, command: "vibebloat hook",
     fallback: {
       shimDirectory: "C:/tools/vibebloat",
       readPath: (shell) => shell === "pwsh" ? "C:/tools/vibebloat;C:/Windows" : "/c/tools/vibebloat:/usr/bin",
-      gitHookPaths: [hook],
     },
   })).toBeUndefined();
-
-  expect(readFileSync(hook, "utf8")).toBe("#!/bin/sh\n# vibebloat:start\nvibebloat hook\n# vibebloat:end\necho existing\n");
 });

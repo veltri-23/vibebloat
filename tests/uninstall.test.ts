@@ -249,3 +249,14 @@ test("untracked repository data is removed only with explicit permission", () =>
   uninstallVibeBloat({ permitted: true, globalHome: join(root, "global"), repository: root, doctor: () => "not-installed" });
   expect(existsSync(join(root, ".vibebloat"))).toBeFalse();
 });
+
+test("uninstall refuses to orphan a persistent filesystem guard", () => {
+  const root = temporary();
+  const receipt = join(root, ".vibebloat", "receipts", "fs-guard.json");
+  mkdirSync(dirname(receipt), { recursive: true });
+  writeFileSync(receipt, "{}");
+
+  expect(() => uninstallVibeBloat({ permitted: true, globalHome: join(root, "global"), repository: root, doctor: () => "not-installed" }))
+    .toThrow("exact process rollback is unavailable; zero files changed");
+  expect(existsSync(receipt)).toBeTrue();
+});

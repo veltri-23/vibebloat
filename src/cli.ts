@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { createFiringRecorder, readAndPruneFirings, readLastFiredSummaries } from "./audit/firings";
 import { disableGuard, disabledGuardIds } from "./cli/disable";
 import { installationState, readInstalledAtByGuard, runDoctor } from "./doctor/checks";
@@ -7,9 +7,10 @@ import { globalGuardHome, guardDirectories, guardHomeForScope, guardHomes, onboa
 import { loadGuards } from "./guard-loader";
 import { forgetEmail } from "./growth/email-capture";
 import { canonicalGuardId, gitStashUntrackedGuard, mcpConfigWrongFileGuard } from "./guards";
-import { formatGuardRuntimeFailure, runPreToolUse } from "./hooks";
+import { formatGuardRuntimeFailure, hookResponseForVerdict, runPreToolUse } from "./hooks";
 import { match } from "./match";
 import { closeWatcherOnSignals, hasUnenforceableFileGuard, watchGuardedWrites } from "./install/fs-guard";
+import { discoverCurrentRepoGitHookPaths, installCurrentRepoGitHooks, planGitHook, type GitHookName } from "./install/git-hooks";
 import { installNativeHooks } from "./install/orchestrator";
 import { installHermesHook, preflightHermesHook } from "./install/hermes";
 import type { Shell } from "./install/shim";
@@ -30,6 +31,7 @@ import { ControlledScrubbersUnavailableError, resolveControlledScrubberCommands 
 import { createLocalOnlySink } from "./scrub/local-sink";
 import { readLocalStats } from "./stats/local";
 import type { Event, Guard, GuardAgent } from "./types";
+import { uninstallVibeBloat } from "./uninstall";
 
 const guards: Guard[] = [gitStashUntrackedGuard, mcpConfigWrongFileGuard];
 const guardIdPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -77,6 +79,30 @@ function argumentValue(flag: string): string | undefined {
   const value = process.argv[index + 1];
   if (!value || value.startsWith("--")) throw new Error(`${flag} requires a value`);
   return value;
+}
+
+function agentHomes(): { claudePath: string; codexPath: string; hermesHome: string } {
+  const base = process.env.USERPROFILE ?? process.env.HOME ?? ".";
+  return {
+    claudePath: join(process.env.CLAUDE_CONFIG_DIR ?? join(base, ".claude"), "settings.json"),
+    codexPath: join(process.env.CODEX_HOME ?? join(base, ".codex"), "config.toml"),
+    hermesHome: process.env.HERMES_HOME ?? join(base, ".hermes"),
+  };
+}
+
+function gitHookName(value: string | undefined): GitHookName {
+  if (value === "pre-commit" || value === "pre-push") return value;
+  throw new Error("unsupported Git hook event");
+}
+
+function installFailureReason(error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  if (message === "fallback installation requires both --fallback-shim-dir and --fallback-git") return message;
+  if (message === "fallback paths must be absolute") return message;
+  if (message.startsWith("Current directory is not an installable Git repository:")) return "current directory is not an installable Git repository";
+  if (message.includes("Hermes")) return "Hermes hook preflight or installation failed";
+  if (message.includes("PATH verification")) return "fallback PATH verification failed";
+  return "native hook preflight or atomic installation failed";
 }
 
 function hookAgent(): GuardAgent {
@@ -248,9 +274,7 @@ if (mode === "email" && process.argv[3] === "--forget") {
 }
 
 if (mode === "install") {
-  const base = process.env.USERPROFILE ?? process.env.HOME ?? ".";
-  const claudeHome = process.env.CLAUDE_CONFIG_DIR ?? join(base, ".claude");
-  const codexHome = process.env.CODEX_HOME ?? join(base, ".codex");
+  const homes = agentHomes();
   if (process.argv[3] !== "--yes") {
     process.stderr.write("WHAT failed: setup permission was not confirmed.\nWHY: install changes native agent configuration.\nFIX: vibebloat install --yes\n");
     process.exit(1);
@@ -273,6 +297,9 @@ if (mode === "install") {
     process.exit(1);
   }
   try {
+    const gitHookPaths = discoverCurrentRepoGitHookPaths(process.cwd());
+    planGitHook(gitHookPaths["pre-commit"], "vibebloat git-hook pre-commit");
+    planGitHook(gitHookPaths["pre-push"], "vibebloat git-hook pre-push");
     const fallbackShimDirectory = argumentValue("--fallback-shim-dir");
     const fallbackGitExecutable = argumentValue("--fallback-git");
     if (Boolean(fallbackShimDirectory) !== Boolean(fallbackGitExecutable)) {
@@ -284,25 +311,77 @@ if (mode === "install") {
     if (hermesHome && hermesPython) preflightHermesHook({ permitted: true, hermesHome, pythonExecutable: hermesPython });
     installNativeHooks({
       permitted: true,
-      claudePath: join(claudeHome, "settings.json"),
-      codexPath: join(codexHome, "config.toml"),
+      claudePath: homes.claudePath,
+      codexPath: homes.codexPath,
       command: "vibebloat hook",
       ...(fallbackShimDirectory ? {
         fallback: {
           shimDirectory: fallbackShimDirectory,
           gitExecutable: fallbackGitExecutable,
-          gitHookPaths: [],
           readPath: readFallbackShellPath,
         },
       } : {}),
     });
     if (hermesHome && hermesPython) installHermesHook({ permitted: true, hermesHome, pythonExecutable: hermesPython });
+    installCurrentRepoGitHooks(process.cwd(), {
+      "pre-commit": "vibebloat git-hook pre-commit",
+      "pre-push": "vibebloat git-hook pre-push",
+    });
     process.stdout.write(fallbackShimDirectory
-      ? `Native hooks and fallback git shims installed. Add ${fallbackShimDirectory} first on PATH in each shell, then run: vibebloat doctor\n`
-      : "Native hooks installed. Run: vibebloat doctor\n");
+      ? `Native hooks, Git hooks, and fallback git shims installed. Add ${fallbackShimDirectory} first on PATH in each shell, then run: vibebloat doctor\n`
+      : "Native hooks and Git hooks installed. Run: vibebloat doctor\n");
     process.exit(0);
   } catch (error) {
-    process.stderr.write(`WHAT failed: native hook installation stopped.\nWHY: ${error instanceof Error ? error.message : "unknown error"}\nFIX: vibebloat install --yes\n`);
+    process.stderr.write(`WHAT failed: native hook installation stopped.\nWHY: ${installFailureReason(error)}.\nFIX: vibebloat install --yes\n`);
+    process.exit(1);
+  }
+}
+
+if (mode === "uninstall") {
+  if (!process.argv.includes("--yes")) {
+    process.stderr.write("WHAT failed: uninstall permission was not confirmed.\nWHY: uninstall changes native agent configuration and local data.\nFIX: vibebloat uninstall --yes\n");
+    process.exit(1);
+  }
+  try {
+    const fallbackShimDirectory = argumentValue("--fallback-shim-dir");
+    const fallbackGitExecutable = argumentValue("--fallback-git");
+    if (Boolean(fallbackShimDirectory) !== Boolean(fallbackGitExecutable)) {
+      throw new Error("fallback removal needs both paths");
+    }
+    if (fallbackShimDirectory && (!isAbsolute(fallbackShimDirectory) || !isAbsolute(fallbackGitExecutable!))) {
+      throw new Error("fallback removal paths are not absolute");
+    }
+    const homes = agentHomes();
+    const repository = resolve(process.cwd());
+    const gitHookPaths = Object.values(discoverCurrentRepoGitHookPaths(repository));
+    const globalHome = process.env.VIBEBLOAT_HOME ?? globalGuardHome();
+    const report = uninstallVibeBloat({
+      permitted: true,
+      keepData: process.argv.includes("--keep-data"),
+      globalHome,
+      repository,
+      claudePath: homes.claudePath,
+      codexPath: homes.codexPath,
+      hermesHome: homes.hermesHome,
+      gitHookPaths,
+      ...(fallbackShimDirectory ? { shellShim: { directory: fallbackShimDirectory, realGitExecutable: fallbackGitExecutable! } } : {}),
+      doctor: () => installationState({
+        guardDirectories: [],
+        dataHomes: [],
+        hookConfigs: {
+          claude: configText(homes.claudePath),
+          codex: configText(homes.codexPath),
+          hermes: configText(join(homes.hermesHome, "config.yaml")),
+        },
+      }),
+    });
+    process.stdout.write(`${JSON.stringify(report)}\n`);
+    process.exit(0);
+  } catch (error) {
+    const message = error instanceof Error && error.message.startsWith("WHAT failed:")
+      ? error.message
+      : "WHAT failed: uninstall stopped.\nWHY: owned integration preflight or verification failed.\nFIX: vibebloat doctor";
+    process.stderr.write(`${message}\n`);
     process.exit(1);
   }
 }
@@ -501,6 +580,28 @@ if (mode === "compile") {
   }
 }
 
+if (mode === "git-hook") {
+  let response;
+  try {
+    const hook = gitHookName(process.argv[3]);
+    if (process.argv.length !== 4) throw new Error("unexpected Git hook arguments");
+    const event: Event = { chokepoint: "shell", command: hook === "pre-commit" ? "git commit" : "git push" };
+    const verdict = new Runtime(
+      disabledGuards(),
+      (guardId) => consumeAllowedOnce(guardId, guardHomeForScope(guardScope())),
+      undefined,
+      createFiringRecorder(globalGuardHome()),
+    ).evaluate(runtimeGuards(), event);
+    response = hookResponseForVerdict(verdict);
+  } catch {
+    process.stderr.write("WHAT failed: Git hook evaluation stopped.\nWHY: installed guards or Git hook arguments could not be evaluated.\nFIX: vibebloat doctor\n");
+    process.exit(1);
+  }
+  if (response.stderr) process.stderr.write(`${response.stderr}\n`);
+  if (response.localWarning) process.stderr.write(`${response.localWarning}\n`);
+  process.exit(response.exitCode);
+}
+
 const input = await Bun.stdin.text();
 
 if (mode === "eval") {
@@ -542,5 +643,5 @@ if (mode === "hook") {
   process.exit(response.exitCode);
 }
 
-process.stderr.write("WHAT failed: expected allow, compile, eval, hook, disable, doctor, init, install, scan, stats, watch, or email.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
+process.stderr.write("WHAT failed: expected allow, compile, eval, hook, git-hook, disable, doctor, init, install, uninstall, scan, stats, watch, or email.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
 process.exit(1);

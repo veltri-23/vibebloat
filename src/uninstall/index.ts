@@ -373,6 +373,9 @@ function executeUninstall(options: UninstallOptions): UninstallReport {
     ? assertOwnedShims(requireOwnedDirectory("shell shim directory", options.shellShim.directory), requireAbsolute("real git executable", options.shellShim.realGitExecutable))
     : [];
   const repository = options.repository ? requireAbsolute("repository", options.repository) : undefined;
+  if (repository && existsSync(join(repository, ".vibebloat", "receipts", "fs-guard.json"))) {
+    throw failure("a persistent filesystem guard receipt exists and exact process rollback is unavailable; zero files changed.");
+  }
   const tracked = repository && existsSync(join(repository, ".vibebloat")) ? trackedRepositoryPaths(repository) : [];
   const openClawRegistered = options.openClaw?.isRegistered("vibebloat") ?? false;
   const removals: StagedRemoval[] = [];
