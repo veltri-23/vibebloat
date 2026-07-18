@@ -1,0 +1,93 @@
+import { afterEach, expect, test } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
+const temporaryDirectories: string[] = [];
+const root = join(import.meta.dir, "..");
+
+afterEach(() => { for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
+
+function compile(project: string, incidentPath?: string, environment: Record<string, string> = {}) {
+  const { VIBEBLOAT_HOME: _ignored, ...parentEnvironment } = process.env;
+  return Bun.spawnSync(["bun", join(root, "src", "cli.ts"), "compile", ...(incidentPath ? [incidentPath] : [])], {
+    cwd: project,
+    env: { ...parentEnvironment, ...environment },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+}
+
+function writeOnboardingScope(project: string, scope: "repo" | "machine"): void {
+  const home = join(project, ".vibebloat");
+  mkdirSync(home, { recursive: true });
+  writeFileSync(join(home, "onboarding.json"), JSON.stringify({ gate: "J1", answers: {}, scope }));
+}
+
+function writeIncident(project: string, incident: Record<string, unknown>, name = "incident.json"): string {
+  const path = join(project, name);
+  writeFileSync(path, JSON.stringify(incident));
+  return path;
+}
+
+const incident = {
+  incident_id: "git-stash-untracked",
+  class: "A",
+  chokepoint: "shell",
+  command: "git stash -u",
+  condition: "untracked files present",
+  evidence_refs: ["claude-code:one:2:0"],
+  severity: 5,
+  frequency: 2,
+  recency: "2026-07-17",
+};
+
+test("compile proves one incident and writes it to the selected repo guard home", () => {
+  const project = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-compile-"));
+  temporaryDirectories.push(project);
+  writeOnboardingScope(project, "repo");
+  const incidentPath = writeIncident(project, incident);
+  const guardPath = join(project, ".vibebloat", "guards", "git-stash-untracked.json");
+
+  const result = compile(project, incidentPath);
+
+  expect(result.exitCode).toBe(0);
+  expect(JSON.parse(result.stdout.toString())).toEqual({
+    status: "pass",
+    scope: "repo",
+    path: guardPath,
+    proof_path: join(project, ".vibebloat", "guards", "proof.json"),
+  });
+  expect(JSON.parse(readFileSync(guardPath, "utf8"))).toMatchObject({ id: "git-stash-untracked", action: { type: "block" } });
+  expect(JSON.parse(readFileSync(join(project, ".vibebloat", "guards", "proof.json"), "utf8"))).toEqual({ status: "pass", cases: ["synthetic event fired"] });
+});
+
+test("compile honors the selected machine guard home", () => {
+  const rootDirectory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-compile-"));
+  temporaryDirectories.push(rootDirectory);
+  const project = join(rootDirectory, "project");
+  mkdirSync(project);
+  writeOnboardingScope(project, "machine");
+  const incidentPath = writeIncident(project, { ...incident, incident_id: "machine-stash" });
+  const userHome = join(rootDirectory, "user");
+  const guardPath = join(userHome, ".vibebloat", "guards", "machine-stash.json");
+
+  const result = compile(project, incidentPath, { USERPROFILE: userHome, HOME: userHome });
+
+  expect(result.exitCode).toBe(0);
+  expect(JSON.parse(result.stdout.toString())).toMatchObject({ status: "pass", scope: "machine", path: guardPath });
+  expect(existsSync(guardPath)).toBeTrue();
+});
+
+test("compile rejects a non-matchable manifest without writing a guard", () => {
+  const project = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-compile-"));
+  temporaryDirectories.push(project);
+  writeOnboardingScope(project, "repo");
+  const incidentPath = writeIncident(project, { ...incident, command: "" });
+
+  const result = compile(project, incidentPath);
+
+  expect(result.exitCode).toBe(1);
+  expect(result.stdout.toString()).toBe("");
+  expect(result.stderr.toString()).toBe("WHAT failed: guard compilation stopped.\nWHY: incident file must contain one safe, matchable incident manifest\nFIX: correct <incident.json>, then run vibebloat compile <incident.json>\n");
+  expect(existsSync(join(project, ".vibebloat", "guards", "git-stash-untracked.json"))).toBeFalse();
+});

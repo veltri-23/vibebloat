@@ -11,6 +11,8 @@ import { closeWatcherOnSignals, watchGuardedWrites } from "./install/fs-guard";
 import { installNativeHooks } from "./install/orchestrator";
 import { installHermesHook } from "./install/hermes";
 import type { Shell } from "./install/shim";
+import { compileGuard } from "./compiler/codex-fill";
+import { compileLiveForScope } from "./compiler/live-compile";
 import { scanHistory } from "./ingest/scan";
 import { rankIncidents, type IncidentManifest } from "./ingest/rank";
 import type { HistoryChunk } from "./ingest/types";
@@ -118,6 +120,25 @@ function parseIncidentManifest(value: unknown): IncidentManifest | undefined {
     frequency: incident.frequency,
     recency: incident.recency,
   };
+}
+
+type MatchableIncidentManifest = IncidentManifest & (
+  | { chokepoint: "shell"; command: string }
+  | { chokepoint: "file"; path: string }
+);
+
+function isMatchableIncidentManifest(incident: IncidentManifest | undefined): incident is MatchableIncidentManifest {
+  if (!incident
+    || !incident.incident_id.trim()
+    || !incident.condition.trim()
+    || incident.evidence_refs.length === 0
+    || incident.evidence_refs.some((reference) => !reference.trim())
+    || !Number.isFinite(incident.severity) || incident.severity < 0
+    || !Number.isFinite(incident.frequency) || incident.frequency < 0
+    || !incident.recency.trim()) return false;
+  return incident.chokepoint === "shell"
+    ? Boolean(incident.command?.trim())
+    : Boolean(incident.path?.trim());
 }
 
 function hasRawBearerToken(value: unknown): boolean {
@@ -335,6 +356,34 @@ if (mode === "scan") {
   }
 }
 
+if (mode === "compile") {
+  const incidentPath = process.argv[3];
+  if (!incidentPath || process.argv.length !== 4) {
+    process.stderr.write("WHAT failed: incident manifest was not supplied.\nWHY: compile needs exactly one incident JSON file.\nFIX: vibebloat compile <incident.json>\n");
+    process.exit(1);
+  }
+  try {
+    const source: unknown = JSON.parse(readFileSync(incidentPath, "utf8"));
+    const incident = parseIncidentManifest(source);
+    if (!isMatchableIncidentManifest(incident) || hasRawBearerToken(source)) throw new Error("incident file must contain one safe, matchable incident manifest");
+
+    const scope = guardScope();
+    const guard = compileGuard(incident, incident.severity >= 4 ? "high" : "low");
+    const syntheticEvent: Event = incident.chokepoint === "shell"
+      ? { chokepoint: "shell", command: incident.command }
+      : { chokepoint: "file", path: incident.path };
+    const result = compileLiveForScope(scope, guard, syntheticEvent);
+    const directory = join(guardHomeForScope(scope), "guards");
+    if (result.status !== "pass") throw new Error("synthetic proof did not fire");
+
+    process.stdout.write(`${JSON.stringify({ status: result.status, scope, path: join(directory, `${guard.id}.json`), proof_path: join(directory, "proof.json") })}\n`);
+    process.exit(0);
+  } catch (error) {
+    process.stderr.write(`WHAT failed: guard compilation stopped.\nWHY: ${error instanceof Error ? error.message : "unknown error"}\nFIX: correct <incident.json>, then run vibebloat compile <incident.json>\n`);
+    process.exit(1);
+  }
+}
+
 const input = await Bun.stdin.text();
 
 if (mode === "eval") {
@@ -372,5 +421,5 @@ if (mode === "hook") {
   process.exit(response.exitCode);
 }
 
-process.stderr.write("WHAT failed: expected allow, eval, hook, disable, doctor, init, install, scan, watch, or email.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
+process.stderr.write("WHAT failed: expected allow, compile, eval, hook, disable, doctor, init, install, scan, watch, or email.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
 process.exit(1);

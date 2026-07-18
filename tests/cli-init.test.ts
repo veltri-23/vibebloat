@@ -58,7 +58,7 @@ test("unknown mode keeps the three-line error", () => {
   temporaryDirectories.push(home);
   const result = invoke(home, "unknown");
   expect(result.exitCode).toBe(1);
-  expect(result.stderr.toString()).toBe("WHAT failed: expected allow, eval, hook, disable, doctor, init, install, scan, watch, or email.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
+  expect(result.stderr.toString()).toBe("WHAT failed: expected allow, compile, eval, hook, disable, doctor, init, install, scan, watch, or email.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
 });
 
 test("F0 consent installs native hooks before advancing", () => {
