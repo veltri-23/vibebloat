@@ -26,7 +26,7 @@ Removed: <guard-id>, ...
 Apply: vibebloat update --apply
 ```
 
-- Keep all five lines. Use `none` when a list is empty.
+- Keep all six lines. Use `none` when a list is empty.
 - `added` means a community guard ID exists only in the candidate release.
 - `removed` means a currently installed community guard ID is absent from the
   candidate release.
