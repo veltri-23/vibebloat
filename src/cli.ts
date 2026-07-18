@@ -18,6 +18,7 @@ import { isGateChoice } from "./onboarding/gates";
 import { OnboardingRunner, type RunnerState } from "./onboarding/runner";
 import { loadOnboardingState, saveOnboardingState } from "./onboarding/state";
 import { Runtime } from "./runtime";
+import { allowOnce, consumeAllowedOnce } from "./runtime/override";
 import { executeCommand } from "./scrub/command";
 import { ControlledScrubbersUnavailableError, resolveControlledScrubberCommands } from "./scrub/controlled-release";
 import { createLocalOnlySink } from "./scrub/local-sink";
@@ -250,6 +251,22 @@ if (mode === "disable") {
   }
 }
 
+if (mode === "allow") {
+  const guardId = process.argv[3] ?? "";
+  if (process.argv[4] !== "--once" || process.argv.length !== 5) {
+    process.stderr.write("WHAT failed: allow needs one guard id and --once.\nWHY: persistent overrides are limited to one matching hook invocation.\nFIX: vibebloat allow <guard-id> --once\n");
+    process.exit(1);
+  }
+  try {
+    allowOnce(guardId, guardHomeForScope(guardScope()));
+    process.stdout.write(`Allowed once: ${guardId}\n`);
+    process.exit(0);
+  } catch (error) {
+    process.stderr.write(`WHAT failed: could not allow guard once.\nWHY: ${error instanceof Error ? error.message : "unknown error"}\nFIX: vibebloat allow <guard-id> --once\n`);
+    process.exit(1);
+  }
+}
+
 if (mode === "watch") {
   const directory = process.argv[3];
   if (!directory) {
@@ -334,7 +351,10 @@ if (mode === "eval") {
 if (mode === "hook") {
   let response;
   try {
-    response = runPreToolUse(runtimeGuards(), JSON.parse(input), new Runtime(disabledGuards()));
+    response = runPreToolUse(runtimeGuards(), JSON.parse(input), new Runtime(
+      disabledGuards(),
+      (guardId) => consumeAllowedOnce(guardId, guardHomeForScope(guardScope())),
+    ));
   } catch (error) {
     response = { exitCode: 2 as const, stderr: `Guard runtime failed closed: ${error instanceof Error ? error.message : "unknown error"}` };
   }
@@ -352,5 +372,5 @@ if (mode === "hook") {
   process.exit(response.exitCode);
 }
 
-process.stderr.write("WHAT failed: expected eval, hook, disable, doctor, init, install, scan, watch, or email.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
+process.stderr.write("WHAT failed: expected allow, eval, hook, disable, doctor, init, install, scan, watch, or email.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
 process.exit(1);
