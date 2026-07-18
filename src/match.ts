@@ -16,6 +16,8 @@ function normalizeBinary(value: string): string {
 }
 
 function normalizeCommand(command: string, variables: Record<string, string> = {}): string {
+  if (!command.includes("$")) return command;
+
   const parts: string[] = [];
   let bytes = 0;
   let lastIndex = 0;
@@ -36,8 +38,23 @@ function normalizeCommand(command: string, variables: Record<string, string> = {
 }
 
 function hasCommandKeyword(command: string, binary: string): boolean {
-  const expression = new RegExp(`(^|[^A-Za-z0-9_])${binary.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=$|[^A-Za-z0-9_])`);
-  return expression.test(command);
+  let index = command.indexOf(binary);
+  while (index >= 0) {
+    const before = command.charCodeAt(index - 1);
+    const after = command.charCodeAt(index + binary.length);
+    const startsOnBoundary = index === 0 || !isIdentifierCharacter(before);
+    const endsOnBoundary = index + binary.length === command.length || !isIdentifierCharacter(after);
+    if (startsOnBoundary && endsOnBoundary) return true;
+    index = command.indexOf(binary, index + binary.length);
+  }
+  return false;
+}
+
+function isIdentifierCharacter(character: number): boolean {
+  return (character >= 48 && character <= 57)
+    || (character >= 65 && character <= 90)
+    || character === 95
+    || (character >= 97 && character <= 122);
 }
 
 function exceedsShellCommandLimit(command: string): boolean {

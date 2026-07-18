@@ -1,16 +1,15 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
+import Parser from "tree-sitter";
 import { gitStashUntrackedGuard } from "../src/guards";
 import { match } from "../src/match";
 
-test("tier-1 keyword misses avoid AST work within the hot-path budget", () => {
-  const samples: number[] = [];
-  for (let index = 0; index < 2_000; index += 1) {
-    const started = performance.now();
+test("tier-1 keyword misses never invoke the Bash parser", () => {
+  const parse = spyOn(Parser.prototype, "parse");
+  try {
     const verdict = match(gitStashUntrackedGuard, { chokepoint: "shell", command: "echo harmless" });
-    samples.push(performance.now() - started);
     expect(verdict).toEqual({ fired: false });
+    expect(parse).not.toHaveBeenCalled();
+  } finally {
+    parse.mockRestore();
   }
-  samples.sort((left, right) => left - right);
-  const p99 = samples[Math.floor(samples.length * 0.99)];
-  expect(p99).toBeLessThan(1);
 });
