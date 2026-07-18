@@ -6,14 +6,16 @@ import { markScrubbedCandidates, type ScrubbedCandidates } from "../scrub/scrubb
 import { prefilterCandidates } from "./prefilter";
 import { planHybridScan, type HybridScanPlan } from "./hybrid";
 import { runModelPass } from "../mine/model-pass";
+import { retrieveScanSemanticContext, type ScanSemanticOptions, type UntrustedSemanticContext } from "./semantic-context";
 import type { HistoryChunk } from "./types";
 
 export interface ScanOptions<Incident> {
   presidioCommand: readonly string[];
   gitleaksCommand: readonly string[];
   localSink: LocalOnlySink;
-  modelPass(candidates: HistoryChunk[]): Promise<Incident[]>;
+  modelPass(candidates: HistoryChunk[], semanticContext?: UntrustedSemanticContext): Promise<Incident[]>;
   publish(incidents: Incident[]): Promise<void>;
+  semantic?: ScanSemanticOptions;
   hybrid?: {
     backgroundOptIn?: boolean;
     queueBackground?(candidates: ScrubbedCandidates): Promise<void>;
@@ -41,7 +43,11 @@ export async function scanHistory<Incident>(chunks: HistoryChunk[], options: Sca
         if (!options.hybrid?.queueBackground) throw new Error("Background scan was selected but no local queue is configured.");
         await options.hybrid.queueBackground(markScrubbedCandidates(plan.background));
       }
-      return runModelPass(markScrubbedCandidates(plan.foreground), options.modelPass);
+      const scrubbedCandidates = markScrubbedCandidates(plan.foreground);
+      const semanticContext = options.semantic
+        ? await retrieveScanSemanticContext(scrubbedCandidates, options.semantic)
+        : undefined;
+      return runModelPass(scrubbedCandidates, options.modelPass, semanticContext);
     },
     publish: options.publish,
   });

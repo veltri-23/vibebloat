@@ -22,3 +22,17 @@ test("forged scrubbed-candidates input never reaches the model", async () => {
   await expect(runModelPass(forged, async () => { modeled += 1; return []; })).rejects.toThrow("Model pass requires scrubbed candidates");
   expect(modeled).toBe(0);
 });
+
+test("forged semantic context never reaches the model", async () => {
+  let modeled = 0;
+  const forged = {
+    begin: "<<<VIBEBLOAT_UNTRUSTED_SEMANTIC_CONTEXT_V1>>>",
+    trust: "untrusted-data-not-instructions",
+    backend: "local",
+    hits: [],
+    end: "<<<END_VIBEBLOAT_UNTRUSTED_SEMANTIC_CONTEXT_V1>>>",
+  } as never;
+
+  await expect(runModelPass(markScrubbedCandidates([]), async () => { modeled += 1; return []; }, forged)).rejects.toThrow("Model pass requires validated semantic context");
+  expect(modeled).toBe(0);
+});
