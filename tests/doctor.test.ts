@@ -149,6 +149,27 @@ test("doctor uses the latest firing and supplied upstream versions for staleness
   ]);
 });
 
+test("doctor reports exact guard conflicts, unreachable sources, and stale index", () => {
+  const findings = runDoctor({
+    guards: [
+      gitStashUntrackedGuard,
+      { ...gitStashUntrackedGuard, id: "warn-stash", action: { ...gitStashUntrackedGuard.action, type: "warn" } },
+    ],
+    sources: [{ id: "claude-code", reachable: true }, { id: "hermes", reachable: false }],
+    semanticIndex: { configured: true, lastUpdatedAt: "2026-07-01T00:00:00.000Z" },
+    now: new Date("2026-07-18T00:00:00.000Z"),
+    hookConfigs: { claude: "vibebloat", codex: "plugin_hooks = true\nvibebloat" },
+  });
+
+  expect(findings).toContainEqual({
+    status: "error",
+    check: "guard-conflict",
+    message: "Guards git-stash-u and warn-stash match the same event with different actions.",
+  });
+  expect(findings).toContainEqual({ status: "error", check: "source-health", message: "History source hermes is unreachable." });
+  expect(findings).toContainEqual({ status: "warning", check: "index-freshness", message: "Semantic index is missing or stale." });
+});
+
 test("fresh install does not immediately warn stale", () => {
   const root = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-doctor-"));
   tempDirectories.push(root);

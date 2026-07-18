@@ -5,7 +5,7 @@ import { assessGuardStaleness } from "./staleness";
 
 export interface DoctorFinding {
   status: "error" | "warning";
-  check: "proof" | "claude-hook" | "codex-hook" | "guard-bind" | "guard-staleness";
+  check: "proof" | "claude-hook" | "codex-hook" | "guard-bind" | "guard-staleness" | "guard-conflict" | "source-health" | "index-freshness";
   message: string;
 }
 
@@ -24,6 +24,8 @@ export interface DoctorOptions {
   upstreamVersions?: Readonly<Record<string, GuardUpstreamVersions>>;
   now?: Date;
   installedAgents?: readonly GuardAgent[];
+  sources?: readonly { id: string; reachable: boolean }[];
+  semanticIndex?: { configured: boolean; lastUpdatedAt?: string | Date; staleAfterDays?: number };
   hookConfigs: { claude: string; codex: string; hermes?: string; openclaw?: string };
 }
 
@@ -88,6 +90,16 @@ function latestTimestamp(values: readonly (string | Date | undefined)[]): string
   return latest;
 }
 
+function guardMatchKey(guard: Guard): string {
+  return JSON.stringify({
+    chokepoint: guard.match.chokepoint,
+    command: guard.match.command,
+    path: guard.match.path,
+    argsContains: [...(guard.match.argsContains ?? [])].sort(),
+    argsAnyOf: [...(guard.match.argsAnyOf ?? [])].sort(),
+  });
+}
+
 export function readInstalledAtByGuard(
   guards: readonly Guard[],
   guardDirectories: readonly string[],
@@ -142,6 +154,33 @@ export function runDoctor(options: DoctorOptions): DoctorFinding[] {
       check: "guard-bind",
       message: `Guards ${guardIds.join(", ")} require ${agent}, but doctor could not verify its native chokepoint.`,
     });
+  }
+  const matchOwners = new Map<string, Guard>();
+  for (const guard of options.guards ?? []) {
+    if (!guard.enabled) continue;
+    const key = guardMatchKey(guard);
+    const prior = matchOwners.get(key);
+    if (prior && prior.action.type !== guard.action.type) {
+      findings.push({
+        status: "error",
+        check: "guard-conflict",
+        message: `Guards ${prior.id} and ${guard.id} match the same event with different actions.`,
+      });
+    } else if (!prior) {
+      matchOwners.set(key, guard);
+    }
+  }
+  for (const source of options.sources ?? []) {
+    if (!source.reachable) findings.push({ status: "error", check: "source-health", message: `History source ${source.id} is unreachable.` });
+  }
+  if (options.semanticIndex?.configured) {
+    const staleAfterDays = options.semanticIndex.staleAfterDays ?? 7;
+    const lastUpdatedAt = options.semanticIndex.lastUpdatedAt;
+    const updatedMilliseconds = lastUpdatedAt instanceof Date ? lastUpdatedAt.getTime() : lastUpdatedAt ? Date.parse(lastUpdatedAt) : Number.NaN;
+    const ageMilliseconds = (options.now ?? new Date()).getTime() - updatedMilliseconds;
+    if (!Number.isFinite(updatedMilliseconds) || ageMilliseconds >= staleAfterDays * 86_400_000) {
+      findings.push({ status: "warning", check: "index-freshness", message: "Semantic index is missing or stale." });
+    }
   }
   for (const guard of options.guards ?? []) {
     if (!guard.enabled) continue;
