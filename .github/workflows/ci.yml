@@ -35,6 +35,6 @@ jobs:
       - name: Build distributions
         run: bun run build
       - name: Verify npm package surface
-        run: npm pack --dry-run --ignore-scripts
+        run: npm pack --dry-run
       - name: Check patch whitespace
         run: git diff --check
