@@ -399,8 +399,12 @@ if (mode === "compile") {
     const syntheticEvent: Event = incident.chokepoint === "shell"
       ? { chokepoint: "shell", command: incident.command }
       : { chokepoint: "file", path: incident.path };
-    const result = compileLiveForScope(scope, guard, syntheticEvent);
+    const result = compileLiveForScope(scope, guard, syntheticEvent, process.env, process.cwd(), { trigger: "session-end" });
     const directory = join(guardHomeForScope(scope), "guards");
+    if (result.status === "queued") {
+      process.stdout.write(`${JSON.stringify({ status: result.status, scope, warning: result.warning })}\n`);
+      process.exit(0);
+    }
     if (result.status !== "pass") throw new Error("synthetic proof did not fire");
 
     process.stdout.write(`${JSON.stringify({ status: result.status, scope, path: join(directory, `${guard.id}.json`), proof_path: join(directory, "proof.json") })}\n`);

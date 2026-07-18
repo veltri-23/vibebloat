@@ -4,7 +4,13 @@ import { randomUUID } from "node:crypto";
 import { Runtime } from "../runtime";
 import type { Event, Guard } from "../types";
 import { guardHomeForScope, type GuardScope } from "../guard-home";
+import { claimCompileBudget, type CompileTrigger } from "./budget";
 import { writeProof } from "./proof";
+
+export interface LiveCompileOptions {
+  trigger: CompileTrigger;
+  now?: Date;
+}
 
 export function replaceGuardAtomically(path: string, content: string): void {
   const directory = dirname(path);
@@ -37,6 +43,16 @@ export function compileLive(directory: string, guard: Guard, event: Event): { st
   return { status: "pass" };
 }
 
-export function compileLiveForScope(scope: GuardScope, guard: Guard, event: Event, environment: NodeJS.ProcessEnv = process.env, cwd = process.cwd()): { status: "pass" | "fail" } {
-  return compileLive(join(guardHomeForScope(scope, environment, cwd), "guards"), guard, event);
+export function compileLiveForScope(
+  scope: GuardScope,
+  guard: Guard,
+  event: Event,
+  environment: NodeJS.ProcessEnv = process.env,
+  cwd = process.cwd(),
+  options: LiveCompileOptions = { trigger: "session-end" },
+): { status: "pass" | "fail" | "queued"; warning?: string } {
+  const home = guardHomeForScope(scope, environment, cwd);
+  const budget = claimCompileBudget(home, options.trigger, options.now);
+  if (budget.status === "queued") return budget;
+  return compileLive(join(home, "guards"), guard, event);
 }
