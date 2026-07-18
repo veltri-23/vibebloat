@@ -34,6 +34,8 @@ import { serializeModelCommandInput } from "./mine/model-command-input";
 import { detectRunnerDetails, parentProcessCommand, parseRunnerOverride, type RunnerDetectionSource } from "./onboarding/detect-runner";
 import { isGateChoice, type OnboardingContext } from "./onboarding/gates";
 import { OnboardingCoordinator, reviewDecisionForChoice, type GuardReviewDecision, type OnboardingCheckpoint } from "./onboarding/coordinator";
+import { lookupMarkdownAnswer } from "./onboarding/markdown-help";
+import { applyOnboardingPreference, modelCommandEnvironmentName, type ModelRoute } from "./onboarding/preferences";
 import { OnboardingRunner, type RunnerState } from "./onboarding/runner";
 import { loadOnboardingState, saveOnboardingState, type OnboardingState } from "./onboarding/state";
 import { Runtime } from "./runtime";
@@ -76,9 +78,11 @@ function configText(path: string): string {
   return existsSync(path) ? readFileSync(path, "utf8") : "";
 }
 
-function modelCommandFromEnvironment(): string[] {
-  const name = "VIBEBLOAT_MODEL_COMMAND";
+function modelCommandFromEnvironment(route?: ModelRoute): string[] {
+  const preferredName = route ? modelCommandEnvironmentName(route) : undefined;
+  const name = preferredName && process.env[preferredName] ? preferredName : "VIBEBLOAT_MODEL_COMMAND";
   const value = process.env[name];
+  if (!value && preferredName) throw new Error(`${preferredName} is required for the selected model route`);
   if (!value) throw new Error(`${name} is required`);
   let command: unknown;
   try {
@@ -388,6 +392,7 @@ function createProductionOnboardingCoordinator(
   home: string,
   resume: OnboardingCheckpoint | undefined,
   save: (checkpoint: OnboardingCheckpoint) => void,
+  modelRoute?: ModelRoute,
 ): OnboardingCoordinator {
   const base = process.env.USERPROFILE ?? process.env.HOME ?? ".";
   const homes = agentHomes();
@@ -433,7 +438,7 @@ function createProductionOnboardingCoordinator(
           local: createLocalSemanticAdapter({ home }),
         },
       },
-      modelPass: async (candidates, semanticContext) => runModelCommand(modelCommandFromEnvironment(), candidates, semanticContext),
+      modelPass: async (candidates, semanticContext) => runModelCommand(modelCommandFromEnvironment(modelRoute), candidates, semanticContext),
     },
     installBindings: onboardingBindingSetup,
   });
@@ -772,7 +777,7 @@ if (mode === "init") {
     ? { ...stored, gate: stored.gate as RunnerState["gate"], answers: stored.answers, runner: runnerKind }
     : { gate: "A0", answers: {}, runner: runnerKind };
   let coordinatorCheckpoint = state.coordinator;
-  const coordinator = createProductionOnboardingCoordinator(home, coordinatorCheckpoint, (checkpoint) => { coordinatorCheckpoint = checkpoint; });
+  const coordinator = createProductionOnboardingCoordinator(home, coordinatorCheckpoint, (checkpoint) => { coordinatorCheckpoint = checkpoint; }, state.preferences?.modelRoute);
   let runner = new OnboardingRunner(state as RunnerState, onboardingRunnerContext(coordinatorCheckpoint, state));
   const answerIndex = process.argv.indexOf("--answer");
   if (answerIndex < 0) {
@@ -781,9 +786,43 @@ if (mode === "init") {
   }
   const answer = process.argv[answerIndex + 1] ?? "";
   const before = runner.snapshot();
-  let next = runner.choose(answer);
+  const directChoice = answer.trim().toLowerCase() === "cancel" || isGateChoice(before.gate, answer);
+  let assistResponse: ReturnType<OnboardingRunner["assist"]> | undefined;
+  let next: RunnerState;
+  if (directChoice) {
+    next = runner.choose(answer);
+  } else {
+    const projectRoot = resolve(import.meta.dir, "..");
+    const source = (name: string) => {
+      const path = join(projectRoot, name);
+      return existsSync(path) ? readFileSync(path, "utf8") : "";
+    };
+    const recommendedOption = runner.current().options.find((option) => /recommended/i.test(option)) ?? runner.current().options[0];
+    assistResponse = runner.assist(answer, {
+      faq: (message) => lookupMarkdownAnswer(message, source("FAQ.md")),
+      repo: (message) => lookupMarkdownAnswer(message, `${source("README.md")}\n\n${source("ONBOARDING-SPEC.md")}`),
+      reasoning: () => "I can explain these locked options, recommend one, or apply the recommended option without skipping this step.",
+      recommendedOption,
+    });
+    next = runner.snapshot();
+  }
+  if (directChoice && before.gate === "F0" && next.gate === "F0") {
+    assistResponse = runner.assist("what do the helpers change?", {
+      faq: (message) => {
+        const path = join(resolve(import.meta.dir, ".."), "FAQ.md");
+        return existsSync(path) ? lookupMarkdownAnswer(message, readFileSync(path, "utf8")) : undefined;
+      },
+      reasoning: () => "The command helper checks risky shell actions before they run; the Git check protects commits and pushes. Both use owned markers so uninstall can remove only VibeBloat changes.",
+    });
+  }
+  const effectiveAnswer = assistResponse?.appliedOption ?? answer;
   try {
-    const validChoice = isGateChoice(before.gate, answer) && !next.cancelled;
+    const validChoice = isGateChoice(before.gate, effectiveAnswer) && !next.cancelled;
+    if (validChoice) {
+      const preferences = applyOnboardingPreference(state.preferences, before.gate, effectiveAnswer);
+      if (before.gate === "F2" && preferences.modelRoute) modelCommandFromEnvironment(preferences.modelRoute);
+      state.preferences = preferences;
+    }
     if (before.gate === "F1" && next.cancelled && coordinator.snapshot().phase === "privacy") coordinator.cancel();
     if (validChoice && before.gate === "A1" && next.scope) coordinator.begin(next.scope);
     if (validChoice && before.gate === "F0" && next.gate === "B1") {
@@ -793,7 +832,7 @@ if (mode === "init") {
     if (validChoice && before.gate === "B1" && next.gate === "D1") coordinator.confirmEnvironments(true);
     if (validChoice && before.gate === "D1" && next.gate !== "D1") {
       const sources = coordinator.discovery()?.sources ?? [];
-      const selected = answer.trim().toLowerCase().includes("everything")
+      const selected = effectiveAnswer.trim().toLowerCase().includes("everything")
         ? sources.map(({ id }) => id)
         : sources.filter(({ stale }) => !stale).map(({ id }) => id);
       coordinator.selectSources(selected);
@@ -835,16 +874,18 @@ if (mode === "init") {
       runner = new OnboardingRunner(next, onboardingRunnerContext(coordinatorCheckpoint, { ...state, gate: next.gate }));
       next = runner.advanceAutomaticGates();
     }
-    saveOnboardingState(home, { ...next, coordinator: coordinatorCheckpoint, reviewDecisions: state.reviewDecisions });
+    saveOnboardingState(home, { ...next, coordinator: coordinatorCheckpoint, reviewDecisions: state.reviewDecisions, preferences: state.preferences });
   } catch (error) {
     if (error instanceof ControlledScrubbersUnavailableError) {
       process.stderr.write("WHAT failed: onboarding scan blocked before history read.\nWHY: Verified package-controlled scrubber assets are unavailable.\nFIX: install a signed VibeBloat release, then rerun vibebloat init\n");
       process.exit(1);
     }
-    process.stderr.write(`WHAT failed: onboarding setup stopped.\nWHY: ${error instanceof Error ? error.message : "unknown error"}\nFIX: vibebloat init --answer Yes\n`);
+    const reason = error instanceof Error ? error.message : "unknown error";
+    const modelVariable = reason.match(/^(VIBEBLOAT_[A-Z_]+)/)?.[1];
+    process.stderr.write(`WHAT failed: onboarding setup stopped.\nWHY: ${reason}\nFIX: ${modelVariable ? `set ${modelVariable} to a JSON command array, then rerun vibebloat init --answer ${effectiveAnswer}` : "vibebloat init --answer Yes"}\n`);
     process.exit(1);
   }
-  process.stdout.write(`${JSON.stringify({ ...next, runnerSource, prompt: runner.current() })}\n`);
+  process.stdout.write(`${JSON.stringify({ ...next, runnerSource, prompt: runner.current(), ...(assistResponse ? { assist: assistResponse } : {}) })}\n`);
   process.exit(0);
 }
 
@@ -1147,5 +1188,5 @@ if (mode === "hook") {
   process.exit(response.exitCode);
 }
 
-process.stderr.write("WHAT failed: expected allow, compile, eval, hook, git-hook, disable, doctor, init, install, uninstall, scan, stats, sync, watch, daily, rules, or email.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
+process.stderr.write("WHAT failed: expected allow, compile, eval, hook, git-hook, disable, doctor, init, install, uninstall, update, scan, stats, sync, watch, daily, rules, or email.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
 process.exit(1);

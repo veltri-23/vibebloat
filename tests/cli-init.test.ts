@@ -67,7 +67,7 @@ test("unknown mode keeps the three-line error", () => {
   temporaryDirectories.push(home);
   const result = invoke(home, "unknown");
   expect(result.exitCode).toBe(1);
-  expect(result.stderr.toString()).toBe("WHAT failed: expected allow, compile, eval, hook, git-hook, disable, doctor, init, install, uninstall, scan, stats, sync, watch, daily, rules, or email.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
+  expect(result.stderr.toString()).toBe("WHAT failed: expected allow, compile, eval, hook, git-hook, disable, doctor, init, install, uninstall, update, scan, stats, sync, watch, daily, rules, or email.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
 });
 
 test("F0 consent installs native hooks before advancing", () => {
@@ -127,8 +127,30 @@ test("init advances only silent gates after a valid human answer", () => {
   const home = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-init-"));
   temporaryDirectories.push(home);
   writeFileSync(join(home, "onboarding.json"), JSON.stringify({ gate: "F2", answers: {} }));
-  expect(JSON.parse(init(home, "--answer", "Run it locally and free (a bit slower)").stdout.toString())).toMatchObject({ gate: "F4" });
-  expect(JSON.parse(readFileSync(join(home, "onboarding.json"), "utf8"))).toMatchObject({ gate: "F4", answers: { F2: "Run it locally and free (a bit slower)" } });
+  const result = initAt(join(import.meta.dir, ".."), home, {
+    VIBEBLOAT_LOCAL_MODEL_COMMAND: JSON.stringify(["ollama", "run", "local-model"]),
+  }, "--answer", "Run it locally and free (a bit slower)");
+  expect(JSON.parse(result.stdout.toString())).toMatchObject({ gate: "F4" });
+  expect(JSON.parse(readFileSync(join(home, "onboarding.json"), "utf8"))).toMatchObject({
+    gate: "F4",
+    answers: { F2: "Run it locally and free (a bit slower)" },
+    preferences: { modelRoute: "local" },
+  });
+});
+
+test("init refuses a model route without its adapter command", () => {
+  const home = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-init-"));
+  temporaryDirectories.push(home);
+  writeFileSync(join(home, "onboarding.json"), JSON.stringify({ gate: "F2", answers: {} }));
+  const env = { ...process.env, VIBEBLOAT_HOME: home };
+  delete env.VIBEBLOAT_MODEL_COMMAND;
+  delete env.VIBEBLOAT_LOCAL_MODEL_COMMAND;
+  const result = Bun.spawnSync(["bun", "src/cli.ts", "init", "--answer", "Run it locally and free (a bit slower)"], {
+    cwd: import.meta.dir + "/..", env, stdout: "pipe", stderr: "pipe",
+  });
+  expect(result.exitCode).toBe(1);
+  expect(result.stderr.toString()).toBe("WHAT failed: onboarding setup stopped.\nWHY: VIBEBLOAT_LOCAL_MODEL_COMMAND is required for the selected model route\nFIX: set VIBEBLOAT_LOCAL_MODEL_COMMAND to a JSON command array, then rerun vibebloat init --answer Run it locally and free (a bit slower)\n");
+  expect(JSON.parse(readFileSync(join(home, "onboarding.json"), "utf8"))).toMatchObject({ gate: "F2" });
 });
 
 test("init never starts the scan from a silent transition", () => {
@@ -143,4 +165,31 @@ test("init saves a Cancel from every gate without advancing", () => {
   temporaryDirectories.push(home);
   writeFileSync(join(home, "onboarding.json"), JSON.stringify({ gate: "A1", answers: {} }));
   expect(JSON.parse(init(home, "--answer", "cancel").stdout.toString())).toMatchObject({ gate: "A1", cancelled: true });
+});
+
+test("init answers freeform help without advancing or mutating setup", () => {
+  const home = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-init-"));
+  temporaryDirectories.push(home);
+  writeFileSync(join(home, "onboarding.json"), JSON.stringify({ gate: "A1", answers: {} }));
+  const result = init(home, "--answer", "what does this change?");
+  expect(result.exitCode).toBe(0);
+  expect(JSON.parse(result.stdout.toString())).toMatchObject({
+    gate: "A1",
+    prompt: { question: expect.any(String), options: expect.any(Array) },
+    assist: { answer: expect.any(String) },
+  });
+  expect(JSON.parse(readFileSync(join(home, "onboarding.json"), "utf8"))).toMatchObject({ gate: "A1", answers: {} });
+});
+
+test("init can recommend and apply without skipping the gate", () => {
+  const home = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-init-"));
+  temporaryDirectories.push(home);
+  writeFileSync(join(home, "onboarding.json"), JSON.stringify({ gate: "A1", answers: {} }));
+  const result = init(home, "--answer", "recommend and apply");
+  expect(result.exitCode).toBe(0);
+  expect(JSON.parse(result.stdout.toString())).toMatchObject({
+    gate: "F0",
+    scope: "machine",
+    assist: { appliedOption: expect.any(String) },
+  });
 });
