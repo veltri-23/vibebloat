@@ -3,7 +3,7 @@ import { withClaudePreToolUseHook } from "./claude";
 import { withCodexPreToolUseHook } from "./codex";
 import { replaceGuardAtomically } from "../compiler/live-compile";
 import { fileURLToPath } from "node:url";
-import { installGitHook } from "./git-hooks";
+import { installGitHooks } from "./git-hooks";
 import { installGitShellShim } from "./shell-shim";
 import { verifyShellPaths, type Shell } from "./shim";
 
@@ -44,5 +44,5 @@ export function installNativeHooks(options: InstallOptions): void {
     runtimePath: fileURLToPath(new URL("../hooks/shell-shim-cli.ts", import.meta.url)),
     gitExecutable: fallback.gitExecutable,
   });
-  for (const hookPath of fallback.gitHookPaths) installGitHook(hookPath, options.command);
+  installGitHooks(fallback.gitHookPaths.map((hookPath) => ({ path: hookPath, command: options.command })));
 }

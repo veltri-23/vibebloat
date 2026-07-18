@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { installGitShellShim } from "../src/install/shell-shim";
+import { ownedShellShimTarget } from "../src/install/shell-shim-ownership";
 import { shellPathProbe, verifyShellPaths } from "../src/install/shim";
 
 const shimDirectory = "C:/tools/vibebloat";
@@ -41,6 +42,34 @@ test("installer writes interceptable POSIX and Windows git shims", () => {
   expect(windowsShim).toContain(`"${process.execPath.replaceAll("\\", "/")}"`);
   expect(windowsShim).not.toContain("BUN_EXECUTABLE");
   expect(windowsShim).toContain("%*");
+});
+
+test("shell shim refuses host files before changing either target", () => {
+  const directory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-shim-"));
+  temporaryDirectories.push(directory);
+  const posix = join(directory, "git");
+  const windows = join(directory, "git.cmd");
+  writeFileSync(posix, "host git wrapper\n");
+
+  expect(() => installGitShellShim({
+    shimDirectory: directory,
+    runtimePath: join(directory, "runtime.ts"),
+    gitExecutable: join(directory, "real-git.exe"),
+  })).toThrow("unowned");
+  expect(readFileSync(posix, "utf8")).toBe("host git wrapper\n");
+  expect(existsSync(windows)).toBeFalse();
+});
+
+test("owned shell shim can atomically rotate its recorded real Git target", () => {
+  const directory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-shim-"));
+  temporaryDirectories.push(directory);
+  const firstGit = join(directory, "bin-one", "git.exe");
+  const secondGit = join(directory, "bin-two", "git.exe");
+  installGitShellShim({ shimDirectory: directory, runtimePath: join(directory, "runtime.ts"), gitExecutable: firstGit });
+  installGitShellShim({ shimDirectory: directory, runtimePath: join(directory, "runtime.ts"), gitExecutable: secondGit });
+
+  expect(ownedShellShimTarget(readFileSync(join(directory, "git"), "utf8"))).toBe(secondGit);
+  expect(ownedShellShimTarget(readFileSync(join(directory, "git.cmd"), "utf8"), true)).toBe(secondGit);
 });
 
 test("Windows git.cmd ignores hostile Bun environment and PATH before blocking destructive stash", () => {
