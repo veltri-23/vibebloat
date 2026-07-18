@@ -9,6 +9,46 @@ permissions:
   contents: read
 
 jobs:
+  release-artifacts:
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: windows-x64
+            artifact: vibebloat-windows-x64.exe
+            runner: windows-latest
+          - target: macos-x64
+            artifact: vibebloat-macos-x64
+            runner: macos-15-intel
+          - target: macos-arm64
+            artifact: vibebloat-macos-arm64
+            runner: macos-15
+          - target: linux-x64
+            artifact: vibebloat-linux-x64
+            runner: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Install Bun dependencies
+        run: bun install --frozen-lockfile --omit peer
+      - name: Build standalone artifact
+        run: bun scripts/build.ts --target "${{ matrix.target }}"
+        shell: bash
+      - name: Verify standalone artifact
+        run: |
+          test -s "dist/${{ matrix.artifact }}"
+          set +e
+          output=$("./dist/${{ matrix.artifact }}" __distribution_probe__ 2>&1)
+          status=$?
+          set -e
+          test "$status" -eq 1
+          printf '%s\n' "$output" | grep -F "WHAT failed: expected"
+        shell: bash
+
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 15

@@ -59,6 +59,10 @@ bun test
 bun src/cli.ts doctor
 ```
 
+Build host standalone binary with `bun run build`. Build supported Windows x64,
+macOS x64/arm64, and Linux x64 artifacts with `bun run build:release`. Build outputs
+remain unsigned development artifacts until controlled Sigstore release assets exist.
+
 ## Architecture
 
 - Guards are declarative data.

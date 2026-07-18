@@ -45,6 +45,7 @@
   },
   "scripts": {
     "build": "bun scripts/build.ts",
+    "build:release": "bun scripts/build.ts --all",
     "build:openclaw": "bun build src/hooks/openclaw-plugin.ts --outdir dist --target bun",
     "prepack": "bun run build:openclaw",
     "prepublishOnly": "bun scripts/prepublish.ts && bun test && python -m pytest -q hermes/tests && bun run build",

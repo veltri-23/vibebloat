@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { selectReleaseArtifact } from "../src/distribution/release";
 import { installGitShellShim } from "../src/install/shell-shim";
 
 const roots: string[] = [];
@@ -13,7 +14,9 @@ test("standalone executable services fallback shim without source files", () => 
   const project = join(import.meta.dir, "..");
   const build = Bun.spawnSync(["bun", "run", "build"], { cwd: project, stdout: "pipe", stderr: "pipe" });
   expect(build.exitCode).toBe(0);
-  const executable = join(project, "dist", process.platform === "win32" ? "vibebloat.exe" : "vibebloat");
+  const artifact = selectReleaseArtifact(process.platform, process.arch);
+  expect(artifact).toBeTruthy();
+  const executable = join(project, "dist", artifact!.filename);
   expect(existsSync(executable)).toBeTrue();
   const git = Bun.which("git");
   expect(git).toBeTruthy();
