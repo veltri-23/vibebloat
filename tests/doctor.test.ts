@@ -170,7 +170,7 @@ test("doctor reports exact guard conflicts, unreachable sources, and stale index
   expect(findings).toContainEqual({ status: "warning", check: "index-freshness", message: "Semantic index is missing or stale." });
 });
 
-test("fresh install does not immediately warn stale", () => {
+test("fresh install stays healthy in an OpenClaw delegated session", () => {
   const root = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-doctor-"));
   tempDirectories.push(root);
   const user = join(root, "user");
@@ -186,7 +186,7 @@ test("fresh install does not immediately warn stale", () => {
 
   const result = Bun.spawnSync(["bun", "src/cli.ts", "doctor"], {
     cwd: import.meta.dir + "/..",
-    env: { ...process.env, USERPROFILE: user, HOME: user, VIBEBLOAT_HOME: root, CLAUDE_CONFIG_DIR: claude, CODEX_HOME: codex, HERMES_HOME: join(root, "missing-hermes"), OPENCLAW_SESSION: "" },
+    env: { ...process.env, USERPROFILE: user, HOME: user, VIBEBLOAT_HOME: root, CLAUDE_CONFIG_DIR: claude, CODEX_HOME: codex, HERMES_HOME: join(root, "missing-hermes"), OPENCLAW_SESSION: "session" },
     stdout: "pipe",
     stderr: "pipe",
   });

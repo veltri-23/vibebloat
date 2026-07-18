@@ -268,7 +268,6 @@ if (mode === "doctor") {
     const hermesHome = process.env.HERMES_HOME ?? join(base, ".hermes");
     const installedAgents: GuardAgent[] = ["claude-code", "codex"];
     if (existsSync(hermesHome)) installedAgents.push("hermes");
-    if (process.env.OPENCLAW_SESSION) installedAgents.push("openclaw");
     const directories = guardDirectories();
     const loadedGuards = runtimeGuards();
     const doctorOptions = {
@@ -338,7 +337,6 @@ if (mode === "sync") {
         const loadedGuards = [...guards, ...installed];
         const installedAgents: GuardAgent[] = ["claude-code", "codex"];
         if (existsSync(homes.hermesHome)) installedAgents.push("hermes");
-        if (process.env.OPENCLAW_SESSION) installedAgents.push("openclaw");
         return runDoctor({
           guardDirectories: directories,
           dataHomes: [...new Set([globalGuardHome(), ...guardHomes(), repositoryHome])],
