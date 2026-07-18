@@ -34,6 +34,7 @@ import { executeCommand } from "./scrub/command";
 import { ControlledScrubbersUnavailableError, resolveControlledScrubberCommands } from "./scrub/controlled-release";
 import { createLocalOnlySink } from "./scrub/local-sink";
 import { readLocalStats } from "./stats/local";
+import { applyPull, fetchAndPlanPull, GuardSyncError, type GuardSyncDiff } from "./sync";
 import type { Event, Guard, GuardAgent } from "./types";
 import { uninstallVibeBloat } from "./uninstall";
 
@@ -111,6 +112,28 @@ function installFailureReason(error: unknown): string {
   if (message.includes("Hermes")) return "Hermes hook preflight or installation failed";
   if (message.includes("PATH verification")) return "fallback PATH verification failed";
   return "native hook preflight or atomic installation failed";
+}
+
+function syncDiffLines(diff: GuardSyncDiff): string {
+  const list = (values: readonly string[]) => values.length ? values.join(", ") : "none";
+  return [
+    `Added: ${list(diff.added)}`,
+    `Changed: ${list(diff.changed)}`,
+    `Removed: ${list(diff.removed)}`,
+  ].join("\n");
+}
+
+function syncFailure(error: unknown): string {
+  if (!(error instanceof GuardSyncError)) {
+    return "WHAT failed: guard sync stopped.\nWHY: guard reload or health verification failed.\nFIX: vibebloat doctor";
+  }
+  const why = error.what.includes("rollback") || error.what.includes("rolled back")
+    ? "candidate guards failed health verification and the previous state was restored"
+    : error.what.includes("snapshot") || error.what.includes("validation")
+      ? "configured upstream contains an invalid repository guard snapshot"
+      : "Git preflight rejected the configured fast-forward guard update";
+  const fix = error.fix === "vibebloat doctor" ? error.fix : "git status";
+  return `WHAT failed: guard sync stopped.\nWHY: ${why}.\nFIX: ${fix}`;
 }
 
 function hookAgent(): GuardAgent {
@@ -275,6 +298,49 @@ if (mode === "stats") {
     process.exit(0);
   } catch (error) {
     process.stderr.write(`WHAT failed: local stats could not be read.\nWHY: ${error instanceof Error ? error.message : "unknown error"}\nFIX: vibebloat doctor\n`);
+    process.exit(1);
+  }
+}
+
+if (mode === "sync") {
+  if (process.argv.length !== 4 || process.argv[3] !== "--pull") {
+    process.stderr.write("WHAT failed: sync needs --pull.\nWHY: automatic merge, rebase, force, and push are forbidden.\nFIX: vibebloat sync --pull\n");
+    process.exit(1);
+  }
+  try {
+    const plan = fetchAndPlanPull(process.cwd());
+    process.stdout.write(`Guard sync: ${plan.commitsBehind} commit(s) behind.\n${syncDiffLines(plan.diff)}\n`);
+    const result = applyPull(plan, {
+      reload: (directory) => { loadGuards(directory); },
+      doctor: () => {
+        const homes = agentHomes();
+        const repositoryHome = join(plan.repository, ".vibebloat");
+        const directories = [...new Set([...guardDirectories(), join(repositoryHome, "guards")])];
+        const installed = directories.flatMap(loadGuards);
+        const seenIds = new Set(guards.map((guard) => guard.id));
+        if (installed.some((guard) => seenIds.has(guard.id) || !seenIds.add(guard.id))) return false;
+        const loadedGuards = [...guards, ...installed];
+        const installedAgents: GuardAgent[] = ["claude-code", "codex"];
+        if (existsSync(homes.hermesHome)) installedAgents.push("hermes");
+        if (process.env.OPENCLAW_SESSION) installedAgents.push("openclaw");
+        return runDoctor({
+          guardDirectories: directories,
+          dataHomes: [...new Set([globalGuardHome(), ...guardHomes(), repositoryHome])],
+          guards: loadedGuards,
+          installedAtByGuard: readInstalledAtByGuard(loadedGuards, directories),
+          installedAgents,
+          hookConfigs: {
+            claude: configText(homes.claudePath),
+            codex: configText(homes.codexPath),
+            hermes: configText(join(homes.hermesHome, "config.yaml")),
+          },
+        }).every((finding) => finding.status !== "error");
+      },
+    });
+    process.stdout.write(result.applied ? `Synced repository guards at ${result.commit}.\n` : "Repository guards already current.\n");
+    process.exit(0);
+  } catch (error) {
+    process.stderr.write(`${syncFailure(error)}\n`);
     process.exit(1);
   }
 }
@@ -664,5 +730,5 @@ if (mode === "hook") {
   process.exit(response.exitCode);
 }
 
-process.stderr.write("WHAT failed: expected allow, compile, eval, hook, git-hook, disable, doctor, init, install, uninstall, scan, stats, watch, or email.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
+process.stderr.write("WHAT failed: expected allow, compile, eval, hook, git-hook, disable, doctor, init, install, uninstall, scan, stats, sync, watch, or email.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
 process.exit(1);
