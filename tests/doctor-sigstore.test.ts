@@ -39,5 +39,6 @@ test("Sigstore verification reports Cosign failures", () => {
 test("release metadata rejects unsafe paths and unpinned fingerprints", () => {
   expect(() => parseReleaseMetadata("not-json")).toThrow("not valid JSON");
   expect(() => parseReleaseMetadata(JSON.stringify({ ...metadata, artifact: "../vibebloat" }))).toThrow("relative path");
+  expect(() => parseReleaseMetadata(JSON.stringify({ ...metadata, artifact: "C:\\\\temp\\\\vibebloat" }))).toThrow("relative path");
   expect(() => parseReleaseMetadata(JSON.stringify({ ...metadata, publicKeySha256: "A".repeat(64) }))).toThrow("lowercase SHA-256");
 });

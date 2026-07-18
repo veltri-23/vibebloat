@@ -8,5 +8,5 @@ export async function scrubWithPresidio(payload: string, scrub: Scrubber): Promi
 
 /** Runs a Presidio JSON wrapper without placing sensitive payloads in command arguments. */
 export function createPresidioCommandScrubber(command: readonly string[], execute?: CommandExecutor): Scrubber {
-  return createCommandScrubber("Presidio", command, execute);
+  return createCommandScrubber("Presidio", command, execute, true);
 }

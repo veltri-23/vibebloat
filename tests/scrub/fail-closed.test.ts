@@ -63,7 +63,7 @@ describe("CRITICAL: scrub failure closes ingestion", () => {
 });
 
 describe("command scrubbers", () => {
-  test("sends Presidio payload via stdin and accepts only JSON payload output", async () => {
+  test("sends Presidio payload via stdin and accepts only a redacted JSON payload", async () => {
     const scrub = createPresidioCommandScrubber(["presidio-wrapper", "--json"], async (command, input) => {
       expect(command).toEqual(["presidio-wrapper", "--json"]);
       expect(JSON.parse(input)).toEqual({ payload: rawHermesHistory });
@@ -71,6 +71,16 @@ describe("command scrubbers", () => {
     });
 
     await expect(scrub(rawHermesHistory)).resolves.toBe("safe");
+  });
+
+  test("fails closed when Presidio reports findings", async () => {
+    const scrub = createPresidioCommandScrubber(["presidio-wrapper"], async () => ({
+      exitCode: 0,
+      stdout: '{"payload":"safe","findings":[{"entity_type":"SECRET"}]}',
+      stderr: "",
+    }));
+
+    await expect(scrub(rawHermesHistory)).rejects.toThrow("Presidio returned an unsafe result");
   });
 
   test("executes a command directly without a shell", async () => {

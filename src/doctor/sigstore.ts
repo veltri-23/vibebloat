@@ -17,7 +17,7 @@ export interface SigstoreVerification {
 type CommandRunner = (command: readonly string[]) => number;
 
 function releasePath(value: unknown, field: string): string {
-  if (typeof value !== "string" || value.length === 0 || value.startsWith("/") || value.startsWith("\\") || value.split(/[\\/]/).includes("..")) {
+  if (typeof value !== "string" || value.length === 0 || value.startsWith("/") || value.startsWith("\\") || /^[A-Za-z]:/.test(value) || value.split(/[\\/]/).includes("..")) {
     throw new Error(`Release metadata ${field} must be a non-empty relative path.`);
   }
   return value;
