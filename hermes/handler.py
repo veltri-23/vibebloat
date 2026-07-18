@@ -2,44 +2,40 @@ import json
 import os
 import shutil
 import subprocess
-from pathlib import Path
 from typing import Any
 
 
-ROOT = Path(os.environ.get("VIBEBLOAT_ROOT", Path(__file__).resolve().parents[1]))
-CLI = ROOT / "src" / "cli.ts"
-
-
 def _payload(context: dict[str, Any]) -> dict[str, Any] | None:
-    command = context.get("command")
-    args = context.get("args") or context.get("tool_args") or {}
-    if not isinstance(args, dict):
+    command = context.get("raw_command") or context.get("command")
+    args = context.get("raw_args") or context.get("args") or ""
+    if not isinstance(command, str) or not isinstance(args, str):
         return None
-    if not isinstance(command, str):
-        command = args.get("command")
-    if isinstance(command, str):
-        return {"tool_name": "Bash", "tool_input": {"command": command}}
-    path = args.get("file_path") or args.get("path") or context.get("file_path")
-    if isinstance(path, str):
-        return {"tool_name": "Write", "tool_input": {"file_path": path}}
-    return None
+    command = command.lstrip("/").strip()
+    if not command:
+        return None
+    return {"tool_name": "Bash", "tool_input": {"command": f"{command} {args}".strip()}}
+
+
+def _cli() -> str | None:
+    return os.environ.get("VIBEBLOAT_CLI") or shutil.which("vibebloat")
 
 
 async def handle(event_type: str, context: dict[str, Any]) -> dict[str, str] | None:
+    if not event_type.startswith("command:"):
+        return None
     payload = _payload(context)
     if payload is None:
         return None
-    bun = shutil.which("bun")
-    if bun is None or not CLI.is_file():
-        return {"action": "block", "code": "vibebloat_runtime_unavailable", "message": "VibeBloat runtime unavailable."}
+    cli = _cli()
+    if cli is None:
+        return {"decision": "deny", "message": "VibeBloat CLI unavailable."}
     result = subprocess.run(
-        [bun, str(CLI), "hook"],
+        [cli, "hook"],
         input=json.dumps(payload, separators=(",", ":")),
         text=True,
         capture_output=True,
-        cwd=ROOT,
         check=False,
     )
     if result.returncode != 2:
         return None
-    return {"action": "block", "code": "vibebloat_guard", "message": result.stderr.strip()}
+    return {"decision": "deny", "message": result.stderr.strip() or "Blocked by VibeBloat guard."}

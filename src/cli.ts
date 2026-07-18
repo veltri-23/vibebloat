@@ -7,6 +7,7 @@ import { forgetEmail } from "./growth/email-capture";
 import { gitStashUntrackedGuard, mcpConfigWrongFileGuard } from "./guards";
 import { runPreToolUse } from "./hooks";
 import { installNativeHooks } from "./install/orchestrator";
+import { installHermesHook } from "./install/hermes";
 import { isGateChoice } from "./onboarding/gates";
 import { OnboardingRunner, type RunnerState } from "./onboarding/runner";
 import { loadOnboardingState, saveOnboardingState } from "./onboarding/state";
@@ -62,6 +63,12 @@ if (mode === "install") {
     process.stderr.write("WHAT failed: setup permission was not confirmed.\nWHY: install changes native agent configuration.\nFIX: vibebloat install --yes\n");
     process.exit(1);
   }
+  const hermesHooksDirectoryIndex = process.argv.indexOf("--hermes-hooks-dir");
+  const hermesHooksDirectory = hermesHooksDirectoryIndex < 0 ? undefined : process.argv[hermesHooksDirectoryIndex + 1];
+  if (hermesHooksDirectoryIndex >= 0 && !hermesHooksDirectory) {
+    process.stderr.write("WHAT failed: Hermes hooks directory was not supplied.\nWHY: Hermes installation needs an explicit writable hooks path.\nFIX: vibebloat install --yes --hermes-hooks-dir <path>\n");
+    process.exit(1);
+  }
   try {
     installNativeHooks({
       permitted: true,
@@ -69,6 +76,7 @@ if (mode === "install") {
       codexPath: join(codexHome, "config.toml"),
       command: "vibebloat hook",
     });
+    if (hermesHooksDirectory) installHermesHook({ permitted: true, hooksDirectory: hermesHooksDirectory });
     process.stdout.write("Native hooks installed. Run: vibebloat doctor\n");
     process.exit(0);
   } catch (error) {

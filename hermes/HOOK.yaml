@@ -1,5 +1,4 @@
 name: vibebloat
-description: Block VibeBloat-guarded commands before Hermes dispatches them.
+description: Block VibeBloat-guarded slash commands before Hermes dispatches them.
 events:
-  - command:before
-  - tool:before
+  - command:*
