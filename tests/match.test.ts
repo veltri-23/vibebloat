@@ -17,6 +17,15 @@ describe("Phase 0 matcher", () => {
     expect(JSON.parse(new TextDecoder().decode(result.stdout))).toMatchObject({ fired: true });
   });
 
+  test("eval CLI returns a three-line error for malformed input", () => {
+    const result = Bun.spawnSync(["bun", "src/cli.ts", "eval"], {
+      cwd: import.meta.dir + "/..",
+      stdin: new TextEncoder().encode('{"event":{"chokepoint":"shell","command":"git stash -u"}}'),
+    });
+    expect(result.exitCode).toBe(1);
+    expect(new TextDecoder().decode(result.stderr)).toMatch(/^WHAT failed:.*\nWHY:.*\nFIX:.*\n$/);
+  });
+
   test("normalizes an absolute git path", () => {
     expect(match(gitStashUntrackedGuard, { chokepoint: "shell", command: "/usr/bin/git stash -u" })).toMatchObject({ fired: true });
   });

@@ -123,9 +123,14 @@ if (mode === "disable") {
 const input = await Bun.stdin.text();
 
 if (mode === "eval") {
-  const { guard, event } = JSON.parse(input) as { guard: Guard; event: Event };
-  process.stdout.write(`${JSON.stringify(new Runtime(disabledGuardIds()).evaluate([guard], event))}\n`);
-  process.exit(0);
+  try {
+    const { guard, event } = JSON.parse(input) as { guard: Guard; event: Event };
+    process.stdout.write(`${JSON.stringify(new Runtime(disabledGuardIds()).evaluate([guard], event))}\n`);
+    process.exit(0);
+  } catch (error) {
+    process.stderr.write(`WHAT failed: eval input could not be processed.\nWHY: ${error instanceof Error ? error.message : "unknown error"}\nFIX: provide a guard and event JSON object\n`);
+    process.exit(1);
+  }
 }
 
 if (mode === "hook") {
