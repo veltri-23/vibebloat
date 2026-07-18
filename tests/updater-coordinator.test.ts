@@ -79,6 +79,10 @@ function options(value: ReturnType<typeof fixture>, overrides: Record<string, un
   };
 }
 
+function metadataVersion(value: ReturnType<typeof fixture>, version: string): string {
+  return JSON.stringify({ ...JSON.parse(value.metadataText), version });
+}
+
 test("closed manifest rejects unknown fields and non-community guards", () => {
   expect(() => parseCommunityGuardManifest(JSON.stringify({ schemaVersion: 1, guards: [], extra: true }))).toThrow("closed schema");
   expect(() => parseCommunityGuardManifest(JSON.stringify({ schemaVersion: 1, guards: [{ ...guard("local"), tier: "local" }] }))).toThrow("not community tier");
@@ -112,6 +116,54 @@ test("verification failure exposes fixed three-line category and changes nothing
   expect(formatUpdateError(error!)).toBe("WHAT failed: update was not applied.\nWHY: controlled release verification or guard diff validation failed.\nFIX: vibebloat update\n");
   expect(readFileSync(value.binary, "utf8")).toBe("old-binary");
   expect(existsSync(join(value.community, "old-guard.json"))).toBeTrue();
+});
+
+test.each([
+  ["same version", "0.4.0", "0.4.0"],
+  ["older version", "0.3.99", "0.4.0"],
+  ["same precedence with build metadata", "0.4.0+candidate", "0.4.0+installed"],
+  ["older prerelease", "1.0.0-beta.1", "1.0.0-beta.2"],
+  ["prerelease below stable", "1.0.0-rc.1", "1.0.0"],
+])("rejects %s before verification or installed-file writes", (_label, candidateVersion, currentVersion) => {
+  const value = fixture();
+  let verificationCalls = 0;
+  expect(() => coordinateUpdate(options(value, {
+    currentVersion,
+    metadataText: metadataVersion(value, candidateVersion),
+    run: () => ++verificationCalls,
+  }))).toThrow(UpdateCoordinatorError);
+  expect(verificationCalls).toBe(0);
+  expect(readFileSync(value.binary, "utf8")).toBe("old-binary");
+  expect(readdirSync(value.community)).toEqual(["old-guard.json"]);
+});
+
+test.each([
+  ["candidate", "01.0.0", "0.4.0"],
+  ["candidate prerelease", "1.0.0-beta.01", "0.4.0"],
+  ["current", "0.5.0", "not-semver"],
+])("rejects malformed %s version before verification", (_label, candidateVersion, currentVersion) => {
+  const value = fixture();
+  let verificationCalls = 0;
+  expect(() => coordinateUpdate(options(value, {
+    currentVersion,
+    metadataText: metadataVersion(value, candidateVersion),
+    run: () => ++verificationCalls,
+  }))).toThrow(UpdateCoordinatorError);
+  expect(verificationCalls).toBe(0);
+});
+
+test.each([
+  ["1.0.0-beta.11", "1.0.0-beta.2"],
+  ["1.0.0-beta", "1.0.0-alpha"],
+  ["1.0.0", "1.0.0-rc.1"],
+])("accepts newer prerelease precedence %s over %s", (candidateVersion, currentVersion) => {
+  const value = fixture();
+  const result = coordinateUpdate(options(value, {
+    apply: false,
+    currentVersion,
+    metadataText: metadataVersion(value, candidateVersion),
+  }));
+  expect(result.candidateVersion).toBe(candidateVersion);
 });
 
 test("verified artifact bytes cannot change before installed writes", () => {

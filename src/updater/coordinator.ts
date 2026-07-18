@@ -94,6 +94,55 @@ function verificationFailure(currentVersion: string, candidateVersion?: string, 
   return new UpdateCoordinatorError("verification", currentVersion, candidateVersion, { cause });
 }
 
+interface SemanticVersion {
+  core: [string, string, string];
+  prerelease?: string[];
+}
+
+function parseSemanticVersion(value: string): SemanticVersion {
+  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(value);
+  if (!match) throw new Error("Update versions must be valid semantic versions.");
+  const prerelease = match[4]?.split(".");
+  if (prerelease?.some((identifier) => /^\d+$/.test(identifier) && identifier.length > 1 && identifier.startsWith("0"))) {
+    throw new Error("Update versions must be valid semantic versions.");
+  }
+  return { core: [match[1]!, match[2]!, match[3]!], ...(prerelease ? { prerelease } : {}) };
+}
+
+function compareNumericIdentifier(left: string, right: string): number {
+  if (left.length !== right.length) return left.length < right.length ? -1 : 1;
+  return left === right ? 0 : left < right ? -1 : 1;
+}
+
+function compareSemanticVersions(leftValue: string, rightValue: string): number {
+  const left = parseSemanticVersion(leftValue);
+  const right = parseSemanticVersion(rightValue);
+  for (let index = 0; index < left.core.length; index += 1) {
+    const comparison = compareNumericIdentifier(left.core[index]!, right.core[index]!);
+    if (comparison !== 0) return comparison;
+  }
+  if (!left.prerelease || !right.prerelease) return left.prerelease ? -1 : right.prerelease ? 1 : 0;
+  const count = Math.max(left.prerelease.length, right.prerelease.length);
+  for (let index = 0; index < count; index += 1) {
+    const leftIdentifier = left.prerelease[index];
+    const rightIdentifier = right.prerelease[index];
+    if (leftIdentifier === undefined || rightIdentifier === undefined) return leftIdentifier === undefined ? -1 : 1;
+    if (leftIdentifier === rightIdentifier) continue;
+    const leftNumeric = /^\d+$/.test(leftIdentifier);
+    const rightNumeric = /^\d+$/.test(rightIdentifier);
+    if (leftNumeric && rightNumeric) return compareNumericIdentifier(leftIdentifier, rightIdentifier);
+    if (leftNumeric !== rightNumeric) return leftNumeric ? -1 : 1;
+    return leftIdentifier < rightIdentifier ? -1 : 1;
+  }
+  return 0;
+}
+
+function requireVersionUpgrade(currentVersion: string, candidateVersion: string): void {
+  if (compareSemanticVersions(candidateVersion, currentVersion) <= 0) {
+    throw new Error("Controlled release version must be newer than the installed version.");
+  }
+}
+
 function relativeReleasePath(value: unknown, field: string): string {
   if (typeof value !== "string" || value.length === 0 || value.startsWith("/") || value.startsWith("\\")
     || /^[A-Za-z]:/.test(value) || value.split(/[\\/]/).includes("..")) {
@@ -354,6 +403,7 @@ export function coordinateUpdate(options: UpdateCoordinatorOptions): UpdateCoord
   try {
     const metadata = resolvedMetadata(parseControlledMetadata(options.metadataText), options.releaseDirectory);
     candidateVersion = metadata.version;
+    requireVersionUpgrade(options.currentVersion, metadata.version);
     const verified = verifyControlledRelease(metadata, options.pinnedPublicKey, options.run);
     const candidateEnvelope = parseCommunityGuardManifestEnvelope(verified.manifestText);
     const candidateManifest = validateCommunityGuardManifest(candidateEnvelope);
