@@ -11,6 +11,12 @@ function init(home: string, ...args: string[]) {
   });
 }
 
+function invoke(home: string, ...args: string[]) {
+  return Bun.spawnSync(["bun", "src/cli.ts", ...args], {
+    cwd: import.meta.dir + "/..", env: { ...process.env, VIBEBLOAT_HOME: home }, stdout: "pipe", stderr: "pipe",
+  });
+}
+
 test("init renders exact first gate and persists each explicit answer", () => {
   const home = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-init-"));
   temporaryDirectories.push(home);
@@ -31,6 +37,28 @@ test("init does not mutate setup before F0 consent", () => {
   expect(result.exitCode).toBe(0);
   expect(existsSync(join(claudeHome, "settings.json"))).toBeFalse();
   expect(existsSync(join(codexHome, "config.toml"))).toBeFalse();
+});
+
+test("no mode opens the initial onboarding gate without setup mutation", () => {
+  const home = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-init-"));
+  temporaryDirectories.push(home);
+  const claudeHome = join(home, "claude"); const codexHome = join(home, "codex");
+  const result = Bun.spawnSync(["bun", "src/cli.ts"], {
+    cwd: import.meta.dir + "/..", env: { ...process.env, VIBEBLOAT_HOME: home, CLAUDE_CONFIG_DIR: claudeHome, CODEX_HOME: codexHome }, stdout: "pipe", stderr: "pipe",
+  });
+  expect(result.exitCode).toBe(0);
+  expect(JSON.parse(result.stdout.toString())).toMatchObject({ gate: "A0", prompt: { question: expect.stringContaining("VibeBloat") } });
+  expect(existsSync(join(home, "onboarding.json"))).toBeFalse();
+  expect(existsSync(join(claudeHome, "settings.json"))).toBeFalse();
+  expect(existsSync(join(codexHome, "config.toml"))).toBeFalse();
+});
+
+test("unknown mode keeps the three-line error", () => {
+  const home = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-init-"));
+  temporaryDirectories.push(home);
+  const result = invoke(home, "unknown");
+  expect(result.exitCode).toBe(1);
+  expect(result.stderr.toString()).toBe("WHAT failed: expected allow, eval, hook, disable, doctor, init, install, scan, watch, or email.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
 });
 
 test("F0 consent installs native hooks before advancing", () => {

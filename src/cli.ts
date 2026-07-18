@@ -25,7 +25,7 @@ import { createLocalOnlySink } from "./scrub/local-sink";
 import type { Event, Guard } from "./types";
 
 const guards: Guard[] = [gitStashUntrackedGuard, mcpConfigWrongFileGuard];
-const mode = process.argv[2];
+const mode = process.argv[2] ?? "init";
 function guardScope(): "repo" | "machine" {
   return loadOnboardingState(onboardingHome())?.scope ?? "machine";
 }
