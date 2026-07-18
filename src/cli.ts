@@ -5,6 +5,7 @@ import { runDoctor } from "./doctor/checks";
 import { forgetEmail } from "./growth/email-capture";
 import { gitStashUntrackedGuard, mcpConfigWrongFileGuard } from "./guards";
 import { runPreToolUse } from "./hooks";
+import { installNativeHooks } from "./install/orchestrator";
 import { Runtime } from "./runtime";
 import type { Event, Guard } from "./types";
 
@@ -36,6 +37,29 @@ if (mode === "email" && process.argv[3] === "--forget") {
   forgetEmail(home);
   process.stdout.write("Email removed.\n");
   process.exit(0);
+}
+
+if (mode === "install") {
+  const base = process.env.USERPROFILE ?? process.env.HOME ?? ".";
+  const claudeHome = process.env.CLAUDE_CONFIG_DIR ?? join(base, ".claude");
+  const codexHome = process.env.CODEX_HOME ?? join(base, ".codex");
+  if (process.argv[3] !== "--yes") {
+    process.stderr.write("WHAT failed: setup permission was not confirmed.\nWHY: install changes native agent configuration.\nFIX: vibebloat install --yes\n");
+    process.exit(1);
+  }
+  try {
+    installNativeHooks({
+      permitted: true,
+      claudePath: join(claudeHome, "settings.json"),
+      codexPath: join(codexHome, "config.toml"),
+      command: "vibebloat hook",
+    });
+    process.stdout.write("Native hooks installed. Run: vibebloat doctor\n");
+    process.exit(0);
+  } catch (error) {
+    process.stderr.write(`WHAT failed: native hook installation stopped.\nWHY: ${error instanceof Error ? error.message : "unknown error"}\nFIX: vibebloat install --yes\n`);
+    process.exit(1);
+  }
 }
 
 if (mode === "disable") {
@@ -73,5 +97,5 @@ if (mode === "hook") {
   process.exit(response.exitCode);
 }
 
-process.stderr.write("WHAT failed: expected eval, hook, disable, doctor, or email.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
+process.stderr.write("WHAT failed: expected eval, hook, disable, doctor, install, or email.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
 process.exit(1);
