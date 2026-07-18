@@ -220,7 +220,7 @@ test("starter pack collision keeps onboarding on its current gate", () => {
   expect(existsSync(join(home, "guards", "starter-git-stash-untracked.json"))).toBeFalse();
 });
 
-test("B1 missing and ignore revisions persist without storing local paths", () => {
+test("B1 missing rescans supplied history directories without exposing paths in onboarding state", () => {
   const home = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-init-"));
   temporaryDirectories.push(home);
   const repository = join(home, "repo");
@@ -229,6 +229,7 @@ test("B1 missing and ignore revisions persist without storing local paths", () =
   require("node:fs").mkdirSync(repository);
   require("node:fs").mkdirSync(cursorHome);
   require("node:fs").mkdirSync(customCodexHome);
+  writeFileSync(join(cursorHome, "history.jsonl"), '{"session_id":"cursor-custom","message":{"role":"user","content":"one"}}\n');
   writeFileSync(join(customCodexHome, "history.jsonl"), '{"session_id":"custom","message":{"role":"user","content":"one"}}\n');
   expect(Bun.spawnSync(["git", "init", "-q"], { cwd: repository }).exitCode).toBe(0);
   writeFileSync(join(home, "onboarding.json"), JSON.stringify({ gate: "F0", scope: "repo", answers: {} }));
@@ -238,7 +239,13 @@ test("B1 missing and ignore revisions persist without storing local paths", () =
   expect(initAt(repository, home, environment, "--answer", `Cursor at ${cursorHome}`).exitCode).toBe(0);
   let stored = JSON.parse(readFileSync(join(home, "onboarding.json"), "utf8"));
   expect(stored.coordinator.discovery.environments).toContainEqual({ id: "cursor", label: "Cursor" });
+  expect(stored.coordinator.discovery.sources).toContainEqual(expect.objectContaining({ id: "codex", environmentId: "cursor", label: "Codex history" }));
   expect(JSON.stringify(stored)).not.toContain(cursorHome);
+  expect(JSON.parse(readFileSync(join(home, "custom-agent-homes.json"), "utf8"))).toMatchObject({
+    schemaVersion: 1,
+    owner: "vibebloat",
+    homes: { codex: cursorHome },
+  });
   expect(initAt(repository, home, environment, "--answer", "Ignore some of these").exitCode).toBe(0);
   expect(initAt(repository, home, environment, "--answer", "cursor").exitCode).toBe(0);
   stored = JSON.parse(readFileSync(join(home, "onboarding.json"), "utf8"));
@@ -254,6 +261,24 @@ test("B1 missing and ignore revisions persist without storing local paths", () =
     owner: "vibebloat",
     homes: { codex: customCodexHome },
   });
+});
+
+test("B1 missing rejects unbounded custom directory input before it can be rescanned", () => {
+  const home = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-init-"));
+  temporaryDirectories.push(home);
+  const repository = join(home, "repo");
+  require("node:fs").mkdirSync(repository);
+  expect(Bun.spawnSync(["git", "init", "-q"], { cwd: repository }).exitCode).toBe(0);
+  writeFileSync(join(home, "onboarding.json"), JSON.stringify({ gate: "F0", scope: "repo", answers: {} }));
+  const environment = { CLAUDE_CONFIG_DIR: join(home, "claude"), CODEX_HOME: join(home, "codex"), HERMES_HOME: join(home, "hermes") };
+  expect(initAt(repository, home, environment, "--answer", "Yes").exitCode).toBe(0);
+  expect(initAt(repository, home, environment, "--answer", "You missed one").exitCode).toBe(0);
+  const result = initAt(repository, home, environment, "--answer", `Codex at ${"x".repeat(4_097)}`);
+  expect(result.exitCode).toBe(1);
+  expect(result.stderr.toString()).toContain("Missing environment path must be an existing absolute directory.");
+  const stored = JSON.parse(readFileSync(join(home, "onboarding.json"), "utf8"));
+  expect(stored.gate).toBe("B1.missing");
+  expect(JSON.stringify(stored)).not.toContain("x".repeat(128));
 });
 
 test("unverified onboarding effects fail closed without advancing", () => {

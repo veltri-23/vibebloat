@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import packageMetadata from "../package.json";
@@ -409,34 +409,52 @@ function environmentId(label: string): string {
   return id;
 }
 
+function verifiedMissingEnvironmentDirectory(path: string): string {
+  if (!isAbsolute(path) || path.length > 4_096 || !existsSync(path)) {
+    throw new Error("Missing environment path must be an existing absolute directory.");
+  }
+  const initial = lstatSync(path);
+  if (!initial.isDirectory() || initial.isSymbolicLink()) {
+    throw new Error("Missing environment path must be an existing absolute directory.");
+  }
+  const canonical = realpathSync(path);
+  const canonicalStat = lstatSync(canonical);
+  if (!canonicalStat.isDirectory() || canonicalStat.isSymbolicLink()) {
+    throw new Error("Missing environment path must be an existing absolute directory.");
+  }
+  return canonical;
+}
+
 function addMissingEnvironment(coordinator: OnboardingCoordinator, home: string, answer: string): void {
   const match = /^(.{1,60}?)\s+(?:at|in)\s+(.+)$/.exec(answer.trim());
   if (!match) throw new Error("Missing environment must be supplied as '<name> at <absolute-directory>'.");
   const label = match[1].trim();
-  const path = match[2].trim().replace(/^['"]|['"]$/g, "");
-  if (!isAbsolute(path) || !existsSync(path) || !statSync(path).isDirectory()) throw new Error("Missing environment path must be an existing absolute directory.");
+  const path = verifiedMissingEnvironmentDirectory(match[2].trim().replace(/^['"]|['"]$/g, ""));
   const discovery = coordinator.discovery();
   if (!discovery) throw new Error("Environment discovery is unavailable.");
   const id = environmentId(label);
   const environments = new Map(discovery.environments.map((environment) => [environment.id, environment]));
   environments.set(id, { id, label });
-  let sources = discovery.sources;
-  if (id === "claude-code" || id === "codex" || id === "hermes") {
-    saveCustomAgentHome(home, id, path);
-    const customCatalog = discoverLocalHistory({
-      homeDirectory: path,
-      ...(id === "claude-code" ? { claudeHome: path } : {}),
-      ...(id === "codex" ? { codexHome: path } : {}),
-      ...(id === "hermes" ? { hermesHome: path } : {}),
-    });
-    const source = customCatalog.sources.find((candidate) => candidate.id === id);
-    if (source) {
-      sources = [
-        ...sources.filter((candidate) => candidate.id !== id),
-        { id, environmentId: id, label: `${source.label} history`, lastActive: source.lastActivityAt, stale: source.stale },
-      ];
-    }
+  const customCatalog = discoverLocalHistory({
+    homeDirectory: path,
+    claudeHome: path,
+    codexHome: path,
+    hermesHome: path,
+  });
+  const discoveredSources = customCatalog.sources;
+  for (const source of discoveredSources) {
+    saveCustomAgentHome(home, source.id, path);
   }
+  const sources = [
+    ...discovery.sources.filter((candidate) => !discoveredSources.some((source) => source.id === candidate.id)),
+    ...discoveredSources.map((source) => ({
+      id: source.id,
+      environmentId: id,
+      label: `${source.label} history`,
+      lastActive: source.lastActivityAt,
+      stale: source.stale,
+    })),
+  ];
   coordinator.reviseDiscovery({ environments: [...environments.values()], sources });
 }
 
@@ -495,13 +513,15 @@ function createProductionOnboardingCoordinator(
     { id: "hermes", label: "Hermes", present: Boolean(customHomes.hermes) || existsSync(homes.hermesHome) },
     { id: "openclaw", label: "OpenClaw", present: existsSync(process.env.OPENCLAW_HOME ?? join(base, ".openclaw")) },
   ].filter(({ present }) => present).map(({ id, label }) => ({ id, label }));
-  let catalog: LocalHistoryCatalog | undefined;
-  const historyCatalog = () => catalog ??= discoverLocalHistory({
-    homeDirectory: base,
-    claudeHome: customHomes["claude-code"] ?? process.env.CLAUDE_CONFIG_DIR,
-    codexHome: customHomes.codex ?? process.env.CODEX_HOME,
-    hermesHome: customHomes.hermes ?? homes.hermesHome,
-  });
+  const historyCatalog = (): LocalHistoryCatalog => {
+    const currentCustomHomes = readCustomAgentHomes(home);
+    return discoverLocalHistory({
+      homeDirectory: base,
+      claudeHome: currentCustomHomes["claude-code"] ?? process.env.CLAUDE_CONFIG_DIR,
+      codexHome: currentCustomHomes.codex ?? process.env.CODEX_HOME,
+      hermesHome: currentCustomHomes.hermes ?? homes.hermesHome,
+    });
+  };
   return new OnboardingCoordinator({
     resume,
     save,
@@ -541,7 +561,7 @@ function createProductionOnboardingCoordinator(
       },
       modelPass: async (candidates, semanticContext) => runModelCommand(modelCommandFromEnvironment(modelRoute), candidates, semanticContext),
     },
-    installBindings: (_guards, environmentIds) => installVerifiedOnboardingBindings(environmentIds, customHomes),
+    installBindings: (_guards, environmentIds) => installVerifiedOnboardingBindings(environmentIds, readCustomAgentHomes(home)),
   });
 }
 
