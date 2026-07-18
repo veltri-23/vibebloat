@@ -17,6 +17,6 @@ test("publish lifecycle stops spike metadata with a three-line repair", () => {
   expect(result.stderr.trim().split("\n")).toEqual([
     "WHAT failed: npm publish preflight.",
     "WHY: Package is private.",
-    "FIX: npm pkg set private=false version=0.1.0",
+    "FIX: npm pkg set private=false --json",
   ]);
 });
