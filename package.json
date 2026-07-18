@@ -8,7 +8,7 @@
     "vibebloat": "./bin/vibebloat.js"
   },
   "scripts": {
-    "build": "bun build --compile ./src/cli.ts --outfile dist/vibebloat",
+    "build": "bun scripts/build.ts",
     "test": "bun test",
     "eval": "bun src/cli.ts eval",
     "hook": "bun src/cli.ts hook"
