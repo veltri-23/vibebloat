@@ -1,4 +1,4 @@
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Event, Guard } from "../types";
@@ -38,10 +38,19 @@ const limits: Record<CompileTrigger, number> = {
   "session-end": 50,
 };
 
-export const compileBudgetLockTtlMs = 30_000;
 const lockRetries = 25;
 const lockRetryMs = 10;
 const sleepCell = new Int32Array(new SharedArrayBuffer(4));
+
+interface Ownership {
+  pid: number;
+  token: string;
+}
+
+interface BudgetLock {
+  path: string;
+  owner: Ownership;
+}
 
 function budgetPath(directory: string): string {
   return join(directory, "compile-budget.json");
@@ -101,36 +110,85 @@ function queueWarning(trigger: CompileTrigger, reason: string): CompileBudgetCla
   return { status: "queued", warning: `Live compile queued locally: ${reason}. Retry after the next UTC day (${limits[trigger]} ${trigger} compile limit per UTC day).` };
 }
 
-function stale(path: string, now: number): boolean {
+function parseOwnership(source: string): Ownership | undefined {
   try {
-    return now - statSync(path).mtimeMs > compileBudgetLockTtlMs;
+    const value: unknown = JSON.parse(source);
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const owner = value as Partial<Ownership>;
+    return Number.isInteger(owner.pid) && owner.pid > 0 && typeof owner.token === "string" && owner.token.length > 0
+      ? { pid: owner.pid, token: owner.token }
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function lockOwner(path: string): Ownership | undefined {
+  try {
+    return parseOwnership(readFileSync(path, "utf8"));
   } catch (error) {
-    if (isCode(error, "ENOENT")) return false;
+    if (isCode(error, "ENOENT")) return undefined;
     throw error;
   }
 }
 
-function acquireLock(directory: string): { descriptor: number; path: string } | undefined {
+function processIsAlive(pid: number): boolean {
+  if (pid === process.pid) return true;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return !isCode(error, "ESRCH");
+  }
+}
+
+function reclaimDeadLock(path: string, owner: Ownership): boolean {
+  const tombstone = `${path}.${randomUUID()}.reap`;
+  try {
+    renameSync(path, tombstone);
+  } catch (error) {
+    if (isCode(error, "ENOENT")) return true;
+    throw error;
+  }
+  const movedOwner = lockOwner(tombstone);
+  if (movedOwner?.token === owner.token && !processIsAlive(movedOwner.pid)) {
+    rmSync(tombstone, { force: true });
+    return true;
+  }
+  try {
+    linkSync(tombstone, path);
+  } catch (error) {
+    if (!isCode(error, "EEXIST")) throw error;
+  } finally {
+    rmSync(tombstone, { force: true });
+  }
+  return false;
+}
+
+function acquireLock(directory: string): BudgetLock | undefined {
   const path = lockPath(directory);
   mkdirSync(directory, { recursive: true });
   for (let attempt = 0; attempt < lockRetries; attempt += 1) {
+    const owner = { pid: process.pid, token: randomUUID() };
+    const candidate = join(directory, `.compile-budget.${owner.pid}.${owner.token}.candidate`);
+    writeFileSync(candidate, JSON.stringify(owner), "utf8");
     try {
-      return { descriptor: openSync(path, "wx"), path };
+      linkSync(candidate, path);
+      return { path, owner };
     } catch (error) {
       if (!isCode(error, "EEXIST")) throw error;
-      if (stale(path, Date.now())) {
-        rmSync(path, { force: true });
-        continue;
-      }
+      const owner = lockOwner(path);
+      if (owner && !processIsAlive(owner.pid) && reclaimDeadLock(path, owner)) continue;
       Atomics.wait(sleepCell, 0, 0, lockRetryMs);
+    } finally {
+      rmSync(candidate, { force: true });
     }
   }
   return undefined;
 }
 
-function releaseLock(lock: { descriptor: number; path: string }): void {
-  closeSync(lock.descriptor);
-  rmSync(lock.path, { force: true });
+function releaseLock(lock: BudgetLock): void {
+  if (lockOwner(lock.path)?.token === lock.owner.token) rmSync(lock.path, { force: true });
 }
 
 export function claimCompileBudget(directory: string, trigger: CompileTrigger, now = new Date()): CompileBudgetClaim {
@@ -156,8 +214,8 @@ function queuedJobPath(directory: string, id: string): string {
   return join(queueDirectory(directory), `${id}.json`);
 }
 
-function processingJobPath(path: string): string {
-  return path.replace(/\.json$/, ".processing");
+function processingJobPath(path: string, owner: Ownership): string {
+  return path.replace(/\.json$/, `.${owner.pid}.${owner.token}.processing`);
 }
 
 function parseQueuedJob(path: string): QueuedCompileJob {
@@ -170,14 +228,15 @@ function parseQueuedJob(path: string): QueuedCompileJob {
   return job as QueuedCompileJob;
 }
 
-function restoreStaleProcessingJobs(directory: string): void {
+function restoreOrphanedProcessingJobs(directory: string): void {
   const queue = queueDirectory(directory);
   if (!existsSync(queue)) return;
   for (const file of readdirSync(queue).filter((entry) => entry.endsWith(".processing"))) {
+    const match = /^(.*)\.(\d+)\.([a-f0-9-]+)\.processing$/.exec(file);
+    if (!match || processIsAlive(Number(match[2]))) continue;
     const processing = join(queue, file);
-    if (!stale(processing, Date.now())) continue;
     try {
-      renameSync(processing, processing.replace(/\.processing$/, ".json"));
+      renameSync(processing, join(queue, `${match[1]}.json`));
     } catch (error) {
       if (isCode(error, "ENOENT") || isCode(error, "EEXIST")) continue;
       throw error;
@@ -204,17 +263,16 @@ export function drainQueuedCompileJobs(
   directory: string,
   process: (job: QueuedCompileJob) => "completed" | "queued" | "failed",
 ): QueueDrainResult {
-  restoreStaleProcessingJobs(directory);
+  restoreOrphanedProcessingJobs(directory);
   const queue = queueDirectory(directory);
   if (!existsSync(queue)) return { completed: 0, queued: 0, failed: 0 };
   const result: QueueDrainResult = { completed: 0, queued: 0, failed: 0 };
   for (const file of readdirSync(queue).filter((entry) => entry.endsWith(".json")).sort()) {
     const path = join(queue, file);
-    const processing = processingJobPath(path);
+    const owner = { pid: process.pid, token: randomUUID() };
+    const processing = processingJobPath(path, owner);
     try {
       renameSync(path, processing);
-      const claimedAt = new Date();
-      utimesSync(processing, claimedAt, claimedAt);
     } catch (error) {
       if (isCode(error, "ENOENT") || isCode(error, "EEXIST")) continue;
       throw error;

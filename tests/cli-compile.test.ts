@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { compileGuard } from "../src/compiler/codex-fill";
 
 const temporaryDirectories: string[] = [];
 const root = join(import.meta.dir, "..");
@@ -10,6 +11,16 @@ afterEach(() => { for (const directory of temporaryDirectories.splice(0)) rmSync
 function compile(project: string, incidentPath?: string, environment: Record<string, string> = {}) {
   const { VIBEBLOAT_HOME: _ignored, ...parentEnvironment } = process.env;
   return Bun.spawnSync(["bun", join(root, "src", "cli.ts"), "compile", ...(incidentPath ? [incidentPath] : [])], {
+    cwd: project,
+    env: { ...parentEnvironment, ...environment },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+}
+
+function drain(project: string, environment: Record<string, string> = {}) {
+  const { VIBEBLOAT_HOME: _ignored, ...parentEnvironment } = process.env;
+  return Bun.spawnSync(["bun", join(root, "src", "cli.ts"), "compile", "--drain"], {
     cwd: project,
     env: { ...parentEnvironment, ...environment },
     stdout: "pipe",
@@ -114,6 +125,28 @@ test("compile receipt stays outside the runtime guard set", () => {
 
   expect(result.exitCode).toBe(2);
   expect(result.stderr.toString()).toBe("VibeBloat found no-publish in 2 incidents.\n");
+});
+
+test("compile --drain executes a persisted local compile job", () => {
+  const project = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-compile-"));
+  temporaryDirectories.push(project);
+  writeOnboardingScope(project, "repo");
+  const queue = join(project, ".vibebloat", "compile-queue");
+  mkdirSync(queue, { recursive: true });
+  writeFileSync(join(queue, "queued-job.json"), JSON.stringify({
+    id: "queued-job",
+    queuedAt: "2026-07-18T12:00:00.000Z",
+    trigger: "session-end",
+    guard: compileGuard({ ...incident, incident_id: "queued-stash" }, "high"),
+    event: { chokepoint: "shell", command: "git stash -u" },
+  }));
+
+  const result = drain(project);
+
+  expect(result.exitCode).toBe(0);
+  expect(JSON.parse(result.stdout.toString())).toEqual({ status: "drained", scope: "repo", completed: 1, queued: 0, failed: 0 });
+  expect(existsSync(join(project, ".vibebloat", "guards", "queued-stash.json"))).toBeTrue();
+  expect(existsSync(join(queue, "queued-job.json"))).toBeFalse();
 });
 
 test("compile rejects unsafe and reserved ids before any guard write", () => {

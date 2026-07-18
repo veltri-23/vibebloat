@@ -12,7 +12,7 @@ import { installNativeHooks } from "./install/orchestrator";
 import { installHermesHook, preflightHermesHook } from "./install/hermes";
 import type { Shell } from "./install/shim";
 import { compileGuard } from "./compiler/codex-fill";
-import { compileLiveForScope } from "./compiler/live-compile";
+import { compileLiveForScope, drainQueuedLiveCompilesForScope } from "./compiler/live-compile";
 import { scanHistory } from "./ingest/scan";
 import { rankIncidents, type IncidentManifest } from "./ingest/rank";
 import type { HistoryChunk } from "./ingest/types";
@@ -265,12 +265,13 @@ if (mode === "init") {
       env: process.env,
       parentProcess: "",
     };
+    const savedRunner = stored?.runner === "agent" || stored?.runner === "human" ? stored.runner : undefined;
     const preliminary = detectRunnerDetails(signals);
-    const detected = explicit || stored?.runner || preliminary.source === "environment"
+    const detected = explicit || savedRunner || preliminary.source === "environment"
       ? preliminary
       : detectRunnerDetails({ ...signals, parentProcess: parentProcessCommand() });
-    runnerKind = explicit ?? stored?.runner ?? detected.kind;
-    runnerSource = explicit ? "explicit" : stored?.runner ? "saved" : detected.source;
+    runnerKind = explicit ?? savedRunner ?? detected.kind;
+    runnerSource = explicit ? "explicit" : savedRunner ? "saved" : detected.source;
   } catch (error) {
     process.stderr.write(`WHAT failed: onboarding runner selection stopped.\nWHY: ${error instanceof Error ? error.message : "unknown error"}.\nFIX: vibebloat init --human\n`);
     process.exit(1);
@@ -405,6 +406,12 @@ if (mode === "scan") {
 
 if (mode === "compile") {
   const incidentPath = process.argv[3];
+  if (incidentPath === "--drain" && process.argv.length === 4) {
+    const scope = guardScope();
+    const result = drainQueuedLiveCompilesForScope(scope);
+    process.stdout.write(`${JSON.stringify({ status: "drained", scope, ...result })}\n`);
+    process.exit(0);
+  }
   if (!incidentPath || process.argv.length !== 4) {
     process.stderr.write("WHAT failed: incident manifest was not supplied.\nWHY: compile needs exactly one incident JSON file.\nFIX: vibebloat compile <incident.json>\n");
     process.exit(1);

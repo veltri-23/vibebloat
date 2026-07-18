@@ -1,8 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { claimCompileBudget, compileBudgetLockTtlMs, drainQueuedCompileJobs, enqueueCompileJob, queuedCompileJobs } from "../../src/compiler/budget";
+import { claimCompileBudget, drainQueuedCompileJobs, enqueueCompileJob, queuedCompileJobs } from "../../src/compiler/budget";
 import { compileLiveForScope, drainQueuedLiveCompilesForScope } from "../../src/compiler/live-compile";
 import { gitStashUntrackedGuard } from "../../src/guards";
 
@@ -76,13 +76,27 @@ test("a fresh lock queues a durable compile job without writing a guard", () => 
 test("a stale compile lock is reclaimed instead of permanently queueing work", () => {
   const home = directory();
   const lock = join(home, "compile-budget.lock");
-  writeFileSync(lock, "stale");
-  const expired = new Date(Date.now() - compileBudgetLockTtlMs - 1_000);
-  utimesSync(lock, expired, expired);
+  writeFileSync(lock, JSON.stringify({ pid: 999_999_999, token: "stale-owner" }));
 
   expect(claimCompileBudget(home, "mid-session", new Date("2026-07-18T12:00:00.000Z"))).toEqual({ status: "allowed" });
   expect(existsSync(lock)).toBeFalse();
   expect(existsSync(join(home, "compile-budget.json"))).toBeTrue();
+});
+
+test("an incomplete lock candidate never blocks a compile claim", () => {
+  const home = directory();
+  writeFileSync(join(home, ".compile-budget.999999999.deadbeef.candidate"), "");
+
+  expect(claimCompileBudget(home, "mid-session", new Date("2026-07-18T12:00:00.000Z"))).toEqual({ status: "allowed" });
+});
+
+test("a live lock owner is never reclaimed during a long pause", () => {
+  const home = directory();
+  const lock = join(home, "compile-budget.lock");
+  writeFileSync(lock, JSON.stringify({ pid: process.pid, token: "live-owner" }));
+
+  expect(claimCompileBudget(home, "mid-session")).toMatchObject({ status: "queued", warning: expect.stringContaining("another compile claim") });
+  expect(existsSync(lock)).toBeTrue();
 });
 
 test("cross-process claims never exceed the mid-session limit", async () => {
@@ -177,17 +191,13 @@ test("failed queued work is retained until a guard write succeeds", () => {
   expect(existsSync(join(home, "guards", "git-stash-u.json"))).toBeFalse();
 });
 
-test("an active drain refreshes a stale job lease before another drain can reclaim it", () => {
+test("an active drain cannot be reclaimed while its owning process is alive", () => {
   const home = directory();
   const job = enqueueCompileJob(home, {
     guard: gitStashUntrackedGuard,
     event: { chokepoint: "shell", command: "git stash -u" },
     trigger: "mid-session",
   });
-  const queuedPath = join(home, "compile-queue", `${job.id}.json`);
-  const expired = new Date(Date.now() - compileBudgetLockTtlMs - 1_000);
-  utimesSync(queuedPath, expired, expired);
-
   expect(drainQueuedCompileJobs(home, () => {
     expect(drainQueuedCompileJobs(home, () => "completed")).toEqual({ completed: 0, queued: 0, failed: 0 });
     return "failed";
@@ -203,10 +213,8 @@ test("a stale processing lease is recovered after an interrupted drain", () => {
     trigger: "mid-session",
   });
   const queuedPath = join(home, "compile-queue", `${job.id}.json`);
-  const processingPath = queuedPath.replace(/\.json$/, ".processing");
+  const processingPath = queuedPath.replace(/\.json$/, ".999999999.deadbeef.processing");
   renameSync(queuedPath, processingPath);
-  const expired = new Date(Date.now() - compileBudgetLockTtlMs - 1_000);
-  utimesSync(processingPath, expired, expired);
 
   expect(drainQueuedCompileJobs(home, () => "completed")).toEqual({ completed: 1, queued: 0, failed: 0 });
   expect(queuedCompileJobs(home)).toEqual([]);

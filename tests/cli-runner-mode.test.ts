@@ -76,3 +76,11 @@ test("init flags override detected and saved runner modes", () => {
   expect(invalid.exitCode).toBe(1);
   expect(new TextDecoder().decode(invalid.stderr)).toBe("WHAT failed: onboarding runner selection stopped.\nWHY: choose either --agent or --human, not both.\nFIX: vibebloat init --human\n");
 });
+
+test("init ignores an invalid saved runner mode and redetects safely", () => {
+  const home = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-runner-"));
+  temporaryDirectories.push(home);
+  writeFileSync(join(home, "onboarding.json"), JSON.stringify({ gate: "A0", answers: {}, runner: "invalid" }));
+
+  expect(readOutput(init(home))).toMatchObject({ runner: "agent", runnerSource: "non-interactive" });
+});
