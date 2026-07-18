@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createRollback, rollback } from "../src/updater/rollback";
 
@@ -15,4 +15,5 @@ test("rollback restores prior binary content", () => {
   writeFileSync(binary, "new");
   rollback(binary, backup);
   expect(readFileSync(binary, "utf8")).toBe("old");
+  expect(readdirSync(directory).some((path) => path.endsWith(".rollback-restore"))).toBeFalse();
 });

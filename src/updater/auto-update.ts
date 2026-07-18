@@ -1,5 +1,6 @@
-import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { chmodSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { dirname, join } from "node:path";
 import { fingerprintPublicKey, parseReleaseMetadata, verifySigstore, type ReleaseMetadata } from "../doctor/sigstore";
 import { createRollback, rollback } from "./rollback";
 
@@ -23,10 +24,41 @@ export function applyUpdate(
 
   const binary = readFileSync(metadata.artifact);
   const backup = createRollback(binaryPath);
-  writeFileSync(binaryPath, binary);
-  if (doctor()) return;
-  rollback(binaryPath, backup);
-  throw new Error("Update rolled back because doctor failed.");
+  replaceBinaryAtomically(binaryPath, binary);
+  if (doctorPassed(doctor)) {
+    rmSync(backup, { force: true });
+    return;
+  }
+
+  try {
+    rollback(binaryPath, backup);
+  } catch {
+    throw new Error("Update rollback failed after candidate doctor failed. Rollback backup preserved.");
+  }
+  if (!doctorPassed(doctor)) {
+    throw new Error("Update rollback health check failed. Rollback backup preserved.");
+  }
+  throw new Error("Update rolled back because candidate doctor failed. Rollback backup preserved.");
+}
+
+function doctorPassed(doctor: () => boolean): boolean {
+  try {
+    return doctor();
+  } catch {
+    return false;
+  }
+}
+
+function replaceBinaryAtomically(binaryPath: string, binary: Uint8Array): void {
+  const temporaryPath = join(dirname(binaryPath), `.${randomUUID()}.update`);
+  const mode = statSync(binaryPath).mode;
+  try {
+    writeFileSync(temporaryPath, binary, { mode });
+    chmodSync(temporaryPath, mode);
+    renameSync(temporaryPath, binaryPath);
+  } finally {
+    rmSync(temporaryPath, { force: true });
+  }
 }
 
 function resolveReleasePaths(metadata: ReleaseMetadata, releaseDirectory: string): ReleaseMetadata {

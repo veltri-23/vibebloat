@@ -142,10 +142,11 @@ recovery. Never report the candidate as installed or healthy.
 ## Current Implementation Boundary
 
 `src/updater/auto-update.ts` currently verifies release metadata and the pinned
-key through Cosign, backs up the binary, writes the candidate binary, runs a
-doctor callback, and restores the prior binary when doctor fails.
+key through Cosign before writes, backs up the binary, atomically replaces it,
+runs candidate doctor, deletes the backup only on success, and atomically restores
+and rechecks the prior binary when candidate doctor fails.
 
 Update CLI commands, release discovery, candidate guard manifests, community
-guard diffs, local update receipts, restored-install doctor verification, and
-three-line updater errors are not wired yet. This specification defines their
-required behavior without claiming that release infrastructure exists.
+guard diffs, local update receipts, community-guard rollback, and three-line
+updater errors are not wired yet. This specification defines their required
+behavior without claiming that release infrastructure exists.
