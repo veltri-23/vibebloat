@@ -10,6 +10,9 @@ const records = [
 test("library search covers descriptions and command patterns", () => {
   expect(filterGuardRecords(records, { query: "untracked stash" }).map((record) => record.id)).toEqual(["git-stash-u"]);
   expect(filterGuardRecords(records, { query: ".mcp.json" }).map((record) => record.id)).toEqual(["mcp-config-wrong-file"]);
+  expect(filterGuardRecords(records, { query: "class A git-stash-u" }).map((record) => record.id)).toEqual(["git-stash-u"]);
+  expect(filterGuardRecords(records, { query: "confidence low" }).map((record) => record.id)).toEqual(["env-review"]);
+  expect(filterGuardRecords(records, { query: "OpenClaw" }).map((record) => record.id)).toEqual(["env-review"]);
 });
 
 test("library filters use AND across groups and OR within groups", () => {
@@ -23,8 +26,22 @@ test("library filters use AND across groups and OR within groups", () => {
 test("library controls expose keyboard and live-region accessibility", async () => {
   const html = await Bun.file(new URL("../site/index.html", import.meta.url)).text();
   expect(html).toContain('class="skip-link" href="#main-content"');
-  expect(html).toContain('<main id="main-content">');
+  expect(html).toContain('<main id="main-content" tabindex="-1">');
   expect(html).toContain('label for="library-search"');
   expect(html).toContain('role="status" aria-live="polite"');
   expect(html).toContain('type="checkbox" name="agent"');
+  expect(html).toContain("Development source checkout:");
+  expect(html).not.toContain("npx vibebloat");
+});
+
+test("site remains a secret-free static Vercel baseline", async () => {
+  const html = await Bun.file(new URL("../site/index.html", import.meta.url)).text();
+  const script = await Bun.file(new URL("../site/library-filter.js", import.meta.url)).text();
+  const styles = await Bun.file(new URL("../site/styles.css", import.meta.url)).text();
+  const vercel = JSON.parse(await Bun.file(new URL("../vercel.json", import.meta.url)).text());
+
+  expect(vercel).toEqual({ outputDirectory: "site" });
+  expect(`${html}\n${script}`).not.toContain("process.env");
+  expect(styles.toLowerCase()).not.toMatch(/purple|violet|indigo|gradient/);
+  expect(html).toContain('<table role="grid">');
 });

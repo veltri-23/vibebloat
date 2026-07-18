@@ -17,7 +17,7 @@ export function filterGuardRecords(records, criteria = {}) {
   const agents = selectedSet(criteria.agents);
 
   return records.filter((record) => {
-    const text = normalized(`${record.id} ${record.description} ${record.pattern}`);
+    const text = normalized(`${record.id} ${record.description} ${record.pattern} class ${record.class} confidence ${record.confidence} agent ${record.agents.join(" ")}`);
     return terms.every((term) => text.includes(term))
       && matchesSelection(classes, [record.class])
       && matchesSelection(confidences, [record.confidence])
@@ -49,17 +49,28 @@ export function initializeLibrarySearch(root = document) {
   }));
 
   const update = () => {
-    const matches = new Set(filterGuardRecords(records, {
-      query: search.value,
+    const criteria = {
+      query: search.value.trim(),
       classes: selectedValues(section, "class"),
       confidences: selectedValues(section, "confidence"),
       agents: selectedValues(section, "agent"),
-    }));
+    };
+    const matches = new Set(filterGuardRecords(records, criteria));
     for (const record of records) record.row.hidden = !matches.has(record);
     empty.hidden = matches.size !== 0;
-    status.textContent = matches.size === 0
-      ? "No guards match current search and filters."
-      : `Showing ${matches.size} of ${records.length} guards.`;
+    if (matches.size === 0) {
+      const activeCriteria = [
+        criteria.query && `search "${criteria.query}"`,
+        criteria.classes.length && `class ${criteria.classes.join(" or ")}`,
+        criteria.confidences.length && `confidence ${criteria.confidences.join(" or ")}`,
+        criteria.agents.length && `agent ${criteria.agents.join(" or ")}`,
+      ].filter(Boolean).join("; ");
+      const message = `No guards match ${activeCriteria}. Use Clear filters to show every guard.`;
+      status.textContent = message;
+      empty.textContent = message;
+    } else {
+      status.textContent = `Showing ${matches.size} of ${records.length} guards.`;
+    }
   };
 
   search.addEventListener("input", update);

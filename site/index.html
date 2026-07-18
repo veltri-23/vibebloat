@@ -12,7 +12,7 @@
   <body>
     <a class="skip-link" href="#main-content">Skip to content</a>
     <header><a class="wordmark" href="#main-content">vibebloat</a><a href="#library">Guard library</a></header>
-    <main id="main-content">
+    <main id="main-content" tabindex="-1">
       <section class="hero" aria-labelledby="hero-title">
         <p class="eyebrow">AGENT SAFETY, LOCAL FIRST</p>
         <h1 id="hero-title">Your agent's memory taxes every prompt.</h1>
@@ -77,7 +77,7 @@
           </table>
         </div>
       </section>
-      <section id="install" aria-labelledby="install-title"><h2 id="install-title">Run locally. Keep control.</h2><pre><code>npx vibebloat</code></pre></section>
+      <section id="install" aria-labelledby="install-title"><h2 id="install-title">Run locally. Keep control.</h2><p>Development source checkout:</p><pre><code>bun install &amp;&amp; bun src/cli.ts doctor</code></pre></section>
     </main>
     <footer>Apache-2.0 · Local rules, human approval.</footer>
     <script type="module" src="library-filter.js"></script>
