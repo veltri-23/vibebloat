@@ -10,8 +10,9 @@
     <link rel="stylesheet" href="styles.css">
   </head>
   <body>
-    <header><a class="wordmark" href="#top">vibebloat</a><a href="#library">Guard library</a></header>
-    <main id="top">
+    <a class="skip-link" href="#main-content">Skip to content</a>
+    <header><a class="wordmark" href="#main-content">vibebloat</a><a href="#library">Guard library</a></header>
+    <main id="main-content">
       <section class="hero" aria-labelledby="hero-title">
         <p class="eyebrow">AGENT SAFETY, LOCAL FIRST</p>
         <h1 id="hero-title">Your agent's memory taxes every prompt.</h1>
@@ -26,10 +27,59 @@
       <section id="library" aria-labelledby="library-title">
         <p class="eyebrow">CURATED LIBRARY</p>
         <h2 id="library-title">Rules stay readable.</h2>
-        <div class="table-wrap"><table role="grid"><thead><tr><th>Rule</th><th>Class</th><th>Confidence</th><th>Binds</th></tr></thead><tbody><tr><td>git-stash-u</td><td>A</td><td>high</td><td>Claude Code, Codex, Hermes, OpenClaw</td></tr><tr><td>mcp-config-wrong-file</td><td>B</td><td>high</td><td>Claude Code, Codex</td></tr></tbody></table></div>
+        <div class="library-tools">
+          <div class="search-control">
+            <label for="library-search">Search descriptions and command patterns</label>
+            <input id="library-search" type="search" autocomplete="off" placeholder="Try git stash or MCP config">
+          </div>
+          <div class="filter-groups" aria-label="Filter guards">
+            <details class="filter-menu">
+              <summary>Class</summary>
+              <fieldset>
+                <legend>Filter by class</legend>
+                <label><input type="checkbox" name="class" value="A"> Class A</label>
+                <label><input type="checkbox" name="class" value="B"> Class B</label>
+                <label><input type="checkbox" name="class" value="C"> Class C</label>
+                <label><input type="checkbox" name="class" value="D"> Class D</label>
+              </fieldset>
+            </details>
+            <details class="filter-menu">
+              <summary>Confidence</summary>
+              <fieldset>
+                <legend>Filter by confidence</legend>
+                <label><input type="checkbox" name="confidence" value="high"> High</label>
+                <label><input type="checkbox" name="confidence" value="low"> Low</label>
+              </fieldset>
+            </details>
+            <details class="filter-menu">
+              <summary>Bound agent</summary>
+              <fieldset>
+                <legend>Filter by bound agent</legend>
+                <label><input type="checkbox" name="agent" value="claude-code"> Claude Code</label>
+                <label><input type="checkbox" name="agent" value="codex"> Codex</label>
+                <label><input type="checkbox" name="agent" value="hermes"> Hermes</label>
+                <label><input type="checkbox" name="agent" value="openclaw"> OpenClaw</label>
+              </fieldset>
+            </details>
+          </div>
+          <button class="clear-filters" id="clear-library-filters" type="button">Clear filters</button>
+        </div>
+        <p class="library-status" id="library-status" role="status" aria-live="polite" aria-atomic="true">Showing 2 of 2 guards.</p>
+        <p class="library-empty" id="library-empty" hidden>No guards match current search and filters.</p>
+        <div class="table-wrap">
+          <table role="grid">
+            <caption>Curated community guards</caption>
+            <thead><tr><th>Rule</th><th>Description</th><th>Pattern</th><th>Class</th><th>Confidence</th><th>Binds</th></tr></thead>
+            <tbody>
+              <tr data-guard-row data-id="git-stash-u" data-description="Blocks broad stashes that can remove untracked work." data-pattern="git stash -u" data-class="A" data-confidence="high" data-agents="claude-code,codex,hermes,openclaw"><td>git-stash-u</td><td>Blocks broad stashes that can remove untracked work.</td><td><code>git stash -u</code></td><td>A</td><td>high</td><td>Claude Code, Codex, Hermes, OpenClaw</td></tr>
+              <tr data-guard-row data-id="mcp-config-wrong-file" data-description="Warns when MCP configuration is written to the wrong file." data-pattern=".mcp.json" data-class="B" data-confidence="high" data-agents="claude-code,codex"><td>mcp-config-wrong-file</td><td>Warns when MCP configuration is written to the wrong file.</td><td><code>.mcp.json</code></td><td>B</td><td>high</td><td>Claude Code, Codex</td></tr>
+            </tbody>
+          </table>
+        </div>
       </section>
       <section id="install" aria-labelledby="install-title"><h2 id="install-title">Run locally. Keep control.</h2><pre><code>npx vibebloat</code></pre></section>
     </main>
     <footer>Apache-2.0 · Local rules, human approval.</footer>
+    <script type="module" src="library-filter.js"></script>
   </body>
 </html>
