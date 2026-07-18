@@ -20,12 +20,17 @@ function metadata() {
   });
 }
 
+function writeRelease(directory: string, key = publicKey): void {
+  writeFileSync(join(directory, "candidate.exe"), "new");
+  writeFileSync(join(directory, "vibebloat.pub"), key);
+}
+
 test("failed post-update doctor restores prior verified binary", () => {
   const directory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-update-"));
   tempDirectories.push(directory);
   const binary = join(directory, "vibebloat.exe");
   writeFileSync(binary, "old");
-  writeFileSync(join(directory, "candidate.exe"), "new");
+  writeRelease(directory);
   expect(() => applyUpdate(binary, directory, metadata(), publicKey, () => 0, () => false)).toThrow("doctor");
   expect(readFileSync(binary, "utf8")).toBe("old");
 });
@@ -35,8 +40,21 @@ test("verification failure prevents any binary write", () => {
   tempDirectories.push(directory);
   const binary = join(directory, "vibebloat.exe");
   writeFileSync(binary, "old");
-  writeFileSync(join(directory, "candidate.exe"), "new");
+  writeRelease(directory);
 
   expect(() => applyUpdate(binary, directory, metadata(), publicKey, () => 1, () => true)).toThrow("Update rejected");
+  expect(readFileSync(binary, "utf8")).toBe("old");
+});
+
+test("release key file must match pinned key bytes before Cosign runs", () => {
+  const directory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-update-"));
+  tempDirectories.push(directory);
+  const binary = join(directory, "vibebloat.exe");
+  writeFileSync(binary, "old");
+  writeRelease(directory, "attacker-controlled key");
+  let invoked = false;
+
+  expect(() => applyUpdate(binary, directory, metadata(), publicKey, () => { invoked = true; return 0; }, () => true)).toThrow("does not match the pinned key");
+  expect(invoked).toBeFalse();
   expect(readFileSync(binary, "utf8")).toBe("old");
 });

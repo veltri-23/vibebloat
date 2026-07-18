@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseReleaseMetadata, verifySigstore, type ReleaseMetadata } from "../doctor/sigstore";
+import { fingerprintPublicKey, parseReleaseMetadata, verifySigstore, type ReleaseMetadata } from "../doctor/sigstore";
 import { createRollback, rollback } from "./rollback";
 
 type CommandRunner = (command: readonly string[]) => number;
@@ -14,7 +14,11 @@ export function applyUpdate(
   doctor: () => boolean,
 ): void {
   const metadata = resolveReleasePaths(parseReleaseMetadata(metadataText), releaseDirectory);
-  const verification = verifySigstore(metadata, publicKey, run);
+  const releasePublicKey = readFileSync(metadata.publicKey);
+  if (fingerprintPublicKey(releasePublicKey) !== fingerprintPublicKey(publicKey)) {
+    throw new Error("Update rejected: release public key does not match the pinned key.");
+  }
+  const verification = verifySigstore(metadata, releasePublicKey, run);
   if (!verification.verified) throw new Error(`Update rejected: ${verification.message}`);
 
   const binary = readFileSync(metadata.artifact);
