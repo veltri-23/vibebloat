@@ -1,4 +1,5 @@
-import { existsSync, lstatSync, readFileSync, realpathSync, statSync, watch, type FSWatcher } from "node:fs";
+import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, watch, type FSWatcher } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { runFileGuard, type HookResponse } from "../hooks";
 import { Runtime } from "../runtime";
@@ -17,6 +18,7 @@ export interface FsGuardLaunchReceipt {
   pid: number;
   directory: string;
   command: string[];
+  instanceId: string;
   launchedAt: string;
 }
 
@@ -31,9 +33,39 @@ export interface FsGuardLaunchOptions {
   receiptPath?: string;
   command: readonly string[];
   spawn?: (command: readonly string[], cwd: string) => DetachedFsGuardProcess;
-  isProcessAlive?: (pid: number) => boolean;
+  probeProcess?: (pid: number, instanceId: string) => ProcessIdentityState;
+  sleep?: (milliseconds: number) => void;
+  instanceId?: string;
   now?: Date;
 }
+
+export interface FsGuardStopOptions {
+  directory: string;
+  receiptPath?: string;
+  probeProcess?: (pid: number, instanceId: string) => ProcessIdentityState;
+  sleep?: (milliseconds: number) => void;
+  timeoutMs?: number;
+}
+
+export type ProcessIdentityState = "owned" | "missing" | "foreign" | "unknown";
+
+export interface FsGuardStopReport {
+  stopped: boolean;
+  staleReceipt: boolean;
+}
+
+export interface FsGuardChildLifecycleOptions {
+  directory: string;
+  instanceId: string;
+  pid?: number;
+  receiptPath?: string;
+  sleep?: (milliseconds: number) => void;
+  timeoutMs?: number;
+}
+
+const instanceArgument = "--vibebloat-fs-guard-instance";
+const receiptArgument = "--vibebloat-fs-guard-receipt";
+const instanceIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function defaultSpawn(command: readonly string[], cwd: string): DetachedFsGuardProcess {
   return Bun.spawn([...command], {
@@ -45,13 +77,46 @@ function defaultSpawn(command: readonly string[], cwd: string): DetachedFsGuardP
   }) as DetachedFsGuardProcess;
 }
 
-function defaultIsProcessAlive(pid: number): boolean {
+function processIsAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
   } catch {
     return false;
   }
+}
+
+function defaultSleep(milliseconds: number): void {
+  Bun.sleepSync(milliseconds);
+}
+
+function commandLineForProcess(pid: number): string | undefined {
+  if (!processIsAlive(pid)) return undefined;
+  if (process.platform === "linux") {
+    try {
+      return readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").filter(Boolean).join("\n");
+    } catch {
+      return undefined;
+    }
+  }
+  if (process.platform === "win32") {
+    const shell = Bun.which("powershell.exe") ?? Bun.which("pwsh.exe");
+    if (!shell) return undefined;
+    const script = `$p=Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}'; if ($null -eq $p) { exit 3 }; [Console]::Out.Write($p.CommandLine)`;
+    const result = Bun.spawnSync([shell, "-NoProfile", "-NonInteractive", "-Command", script], { stdout: "pipe", stderr: "ignore" });
+    return result.exitCode === 0 ? result.stdout.toString() : undefined;
+  }
+  const ps = Bun.which("ps");
+  if (!ps) return undefined;
+  const result = Bun.spawnSync([ps, "-ww", "-p", String(pid), "-o", "command="], { stdout: "pipe", stderr: "ignore" });
+  return result.exitCode === 0 ? result.stdout.toString() : undefined;
+}
+
+function defaultProbeProcess(pid: number, instanceId: string): ProcessIdentityState {
+  if (!processIsAlive(pid)) return "missing";
+  const commandLine = commandLineForProcess(pid);
+  if (!commandLine) return "unknown";
+  return commandLine.includes(`${instanceArgument}=${instanceId}`) ? "owned" : "foreign";
 }
 
 function parseReceipt(source: string): FsGuardLaunchReceipt {
@@ -64,13 +129,14 @@ function parseReceipt(source: string): FsGuardLaunchReceipt {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Filesystem guard receipt is malformed; refusing to overwrite it.");
   const receipt = parsed as Record<string, unknown>;
   const keys = Object.keys(receipt).sort().join(",");
-  if (keys !== "command,directory,kind,launchedAt,owner,pid,schemaVersion"
+  if (keys !== "command,directory,instanceId,kind,launchedAt,owner,pid,schemaVersion"
     || receipt.schemaVersion !== 1
     || receipt.owner !== "vibebloat"
     || receipt.kind !== "fs-guard"
     || !Number.isSafeInteger(receipt.pid) || (receipt.pid as number) <= 0
     || typeof receipt.directory !== "string" || !isAbsolute(receipt.directory)
     || !Array.isArray(receipt.command) || receipt.command.length < 3 || receipt.command.some((part) => typeof part !== "string" || !part)
+    || typeof receipt.instanceId !== "string" || !instanceIdPattern.test(receipt.instanceId)
     || typeof receipt.launchedAt !== "string" || Number.isNaN(Date.parse(receipt.launchedAt))) {
     throw new Error("Filesystem guard receipt is not VibeBloat-owned; refusing to overwrite it.");
   }
@@ -79,6 +145,10 @@ function parseReceipt(source: string): FsGuardLaunchReceipt {
 
 export function fsGuardReceiptPath(repository: string): string {
   return join(resolve(repository), ".vibebloat", "receipts", "fs-guard.json");
+}
+
+export function fsGuardStopRequestPath(repository: string): string {
+  return join(resolve(repository), ".vibebloat", "receipts", "fs-guard.stop.json");
 }
 
 function assertNoSymlinkedReceiptParent(ownedRoot: string, receiptPath: string): void {
@@ -119,45 +189,248 @@ function preflightLaunch(options: FsGuardLaunchOptions): { directory: string; re
   return { directory, receiptPath, command, launchedAt: launchedAt.toISOString() };
 }
 
+function lifecycleCommand(command: readonly string[], receiptPath: string, instanceId: string): string[] {
+  if (command.some((part) => part === instanceArgument || part.startsWith(`${instanceArgument}=`)
+    || part === receiptArgument || part.startsWith(`${receiptArgument}=`))) {
+    throw new Error("Filesystem guard launch command cannot set reserved lifecycle arguments.");
+  }
+  return [...command, `${instanceArgument}=${instanceId}`, `${receiptArgument}=${receiptPath}`];
+}
+
+function baseCommand(command: readonly string[]): string[] {
+  return command.filter((part) => !part.startsWith(`${instanceArgument}=`) && !part.startsWith(`${receiptArgument}=`));
+}
+
+function stopRequestPath(receiptPath: string): string {
+  return join(dirname(receiptPath), "fs-guard.stop.json");
+}
+
+function lifecycleLockPath(receiptPath: string): string {
+  return join(dirname(receiptPath), "fs-guard.lifecycle.lock");
+}
+
+function withLifecycleLock<T>(receiptPath: string, action: () => T): T {
+  const parent = dirname(receiptPath);
+  mkdirSync(parent, { recursive: true });
+  const ownedRoot = dirname(parent);
+  assertNoSymlinkedReceiptParent(ownedRoot, receiptPath);
+  const lockPath = lifecycleLockPath(receiptPath);
+  let descriptor: number;
+  try {
+    descriptor = openSync(lockPath, "wx", 0o600);
+  } catch {
+    throw new Error("Filesystem guard lifecycle is already changing; retry after it finishes.");
+  }
+  try {
+    return action();
+  } finally {
+    closeSync(descriptor);
+    rmSync(lockPath, { force: true });
+  }
+}
+
+function removeOwnedFileAtomically(path: string): void {
+  if (!existsSync(path)) return;
+  if (lstatSync(path).isSymbolicLink()) throw new Error("Filesystem guard lifecycle file cannot be a symbolic link.");
+  const removedPath = `${path}.removed-${process.pid}-${randomUUID()}`;
+  renameSync(path, removedPath);
+  rmSync(removedPath);
+  if (existsSync(path) || existsSync(removedPath)) throw new Error("Filesystem guard lifecycle cleanup could not be verified.");
+}
+
+function waitForProcessState(
+  pid: number,
+  instanceId: string,
+  wanted: ProcessIdentityState,
+  probeProcess: (pid: number, instanceId: string) => ProcessIdentityState,
+  sleep: (milliseconds: number) => void,
+  timeoutMs: number,
+): ProcessIdentityState {
+  const attempts = Math.max(1, Math.ceil(timeoutMs / 25));
+  let state = probeProcess(pid, instanceId);
+  for (let attempt = 1; state !== wanted && attempt < attempts; attempt += 1) {
+    sleep(25);
+    state = probeProcess(pid, instanceId);
+  }
+  return state;
+}
+
 export function launchPersistentFsGuard(options: FsGuardLaunchOptions): FsGuardLaunchReceipt {
   const prepared = preflightLaunch(options);
-  const isProcessAlive = options.isProcessAlive ?? defaultIsProcessAlive;
-  if (existsSync(prepared.receiptPath)) {
-    if (lstatSync(prepared.receiptPath).isSymbolicLink()) throw new Error("Filesystem guard receipt cannot be a symbolic link.");
-    const existing = parseReceipt(readFileSync(prepared.receiptPath, "utf8"));
-    if (isProcessAlive(existing.pid)) {
-      if (existing.directory === prepared.directory && JSON.stringify(existing.command) === JSON.stringify(prepared.command)) return existing;
-      throw new Error("A different VibeBloat filesystem guard is still running; refusing to orphan it.");
+  const probeProcess = options.probeProcess ?? defaultProbeProcess;
+  const sleep = options.sleep ?? defaultSleep;
+  return withLifecycleLock(prepared.receiptPath, () => {
+    if (existsSync(prepared.receiptPath)) {
+      if (lstatSync(prepared.receiptPath).isSymbolicLink()) throw new Error("Filesystem guard receipt cannot be a symbolic link.");
+      const existing = parseReceipt(readFileSync(prepared.receiptPath, "utf8"));
+      const state = probeProcess(existing.pid, existing.instanceId);
+      if (state === "owned") {
+        if (existing.directory === prepared.directory && JSON.stringify(baseCommand(existing.command)) === JSON.stringify(prepared.command)) return existing;
+        throw new Error("A different VibeBloat filesystem guard is still running; refusing to orphan it.");
+      }
+      if (state === "foreign") throw new Error("Filesystem guard receipt PID belongs to another process; refusing to replace it.");
+      if (state === "unknown") throw new Error("Filesystem guard process identity could not be verified; refusing to replace it.");
+      removeOwnedFileAtomically(prepared.receiptPath);
     }
-  }
+    removeOwnedFileAtomically(stopRequestPath(prepared.receiptPath));
 
-  const child = (options.spawn ?? defaultSpawn)(prepared.command, prepared.directory);
-  if (!Number.isSafeInteger(child.pid) || child.pid <= 0) {
-    child.kill();
-    throw new Error("Filesystem guard did not return a valid process id.");
+    const instanceId = options.instanceId ?? randomUUID();
+    if (!instanceIdPattern.test(instanceId)) throw new Error("Filesystem guard instance identity is invalid.");
+    const command = lifecycleCommand(prepared.command, prepared.receiptPath, instanceId);
+    const child = (options.spawn ?? defaultSpawn)(command, prepared.directory);
+    if (!Number.isSafeInteger(child.pid) || child.pid <= 0) {
+      child.kill();
+      throw new Error("Filesystem guard did not return a valid process id.");
+    }
+    const receipt: FsGuardLaunchReceipt = {
+      schemaVersion: 1,
+      owner: "vibebloat",
+      kind: "fs-guard",
+      pid: child.pid,
+      directory: prepared.directory,
+      command,
+      instanceId,
+      launchedAt: prepared.launchedAt,
+    };
+    try {
+      applyAtomicFilePlans([{ path: prepared.receiptPath, content: `${JSON.stringify(receipt, null, 2)}\n`, mode: 0o600 }]);
+      if (waitForProcessState(child.pid, instanceId, "owned", probeProcess, sleep, 500) !== "owned") {
+        throw new Error("Filesystem guard process identity could not be verified.");
+      }
+      child.unref();
+    } catch (error) {
+      try {
+        child.kill();
+      } catch {}
+      const state = probeProcess(child.pid, instanceId);
+      if (state === "owned" || state === "unknown") {
+        throw new Error("Filesystem guard launch failed and the child could not be stopped; receipt preserved for recovery.", { cause: error });
+      }
+      removeOwnedFileAtomically(prepared.receiptPath);
+      throw error;
+    }
+    return receipt;
+  });
+}
+
+export function stopPersistentFsGuard(options: FsGuardStopOptions): FsGuardStopReport {
+  if (!isAbsolute(options.directory) || !existsSync(options.directory) || !statSync(options.directory).isDirectory()) {
+    throw new Error("Filesystem guard directory must be an existing absolute directory.");
   }
+  const directory = realpathSync(options.directory);
+  const receiptPath = resolve(options.receiptPath ?? fsGuardReceiptPath(directory));
+  const ownedRoot = join(directory, ".vibebloat");
+  const receiptRelative = relative(ownedRoot, receiptPath);
+  if (!receiptRelative || receiptRelative.startsWith("..") || isAbsolute(receiptRelative)) {
+    throw new Error("Filesystem guard receipt must stay inside the repository .vibebloat directory.");
+  }
+  assertNoSymlinkedReceiptParent(ownedRoot, receiptPath);
+  if (!existsSync(receiptPath)) return { stopped: false, staleReceipt: false };
+  const probeProcess = options.probeProcess ?? defaultProbeProcess;
+  const sleep = options.sleep ?? defaultSleep;
+  const timeoutMs = options.timeoutMs ?? 2_000;
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 0 || timeoutMs > 30_000) throw new Error("Filesystem guard stop timeout is invalid.");
+
+  return withLifecycleLock(receiptPath, () => {
+    if (lstatSync(receiptPath).isSymbolicLink()) throw new Error("Filesystem guard receipt cannot be a symbolic link.");
+    const receipt = parseReceipt(readFileSync(receiptPath, "utf8"));
+    if (receipt.directory !== directory) throw new Error("Filesystem guard receipt belongs to another repository.");
+    const state = probeProcess(receipt.pid, receipt.instanceId);
+    if (state === "foreign") throw new Error("Filesystem guard receipt PID belongs to another process; refusing to stop it.");
+    if (state === "unknown") throw new Error("Filesystem guard process identity could not be verified; refusing to stop it.");
+    if (state === "missing") {
+      removeOwnedFileAtomically(receiptPath);
+      removeOwnedFileAtomically(stopRequestPath(receiptPath));
+      return { stopped: false, staleReceipt: true };
+    }
+
+    const requestPath = stopRequestPath(receiptPath);
+    applyAtomicFilePlans([{ path: requestPath, content: `${JSON.stringify({ schemaVersion: 1, instanceId: receipt.instanceId }, null, 2)}\n`, mode: 0o600 }]);
+    const finalState = waitForProcessState(receipt.pid, receipt.instanceId, "missing", probeProcess, sleep, timeoutMs);
+    if (finalState === "owned" || finalState === "unknown") throw new Error("Filesystem guard did not stop; receipt preserved for recovery.");
+    removeOwnedFileAtomically(receiptPath);
+    removeOwnedFileAtomically(requestPath);
+    return { stopped: true, staleReceipt: false };
+  });
+}
+
+function parseStopRequest(source: string): { schemaVersion: 1; instanceId: string } {
+  let parsed: unknown;
   try {
-    child.unref();
-  } catch (error) {
-    child.kill();
-    throw error;
+    parsed = JSON.parse(source);
+  } catch {
+    throw new Error("Filesystem guard stop request is malformed.");
   }
-  const receipt: FsGuardLaunchReceipt = {
-    schemaVersion: 1,
-    owner: "vibebloat",
-    kind: "fs-guard",
-    pid: child.pid,
-    directory: prepared.directory,
-    command: prepared.command,
-    launchedAt: prepared.launchedAt,
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Filesystem guard stop request is malformed.");
+  const request = parsed as Record<string, unknown>;
+  if (Object.keys(request).sort().join(",") !== "instanceId,schemaVersion"
+    || request.schemaVersion !== 1
+    || typeof request.instanceId !== "string"
+    || !instanceIdPattern.test(request.instanceId)) {
+    throw new Error("Filesystem guard stop request is malformed.");
+  }
+  return request as unknown as { schemaVersion: 1; instanceId: string };
+}
+
+export function waitForFsGuardLaunchReceipt(options: FsGuardChildLifecycleOptions): FsGuardLaunchReceipt {
+  if (!isAbsolute(options.directory) || !existsSync(options.directory) || !statSync(options.directory).isDirectory()) {
+    throw new Error("Filesystem guard directory must be an existing absolute directory.");
+  }
+  if (!instanceIdPattern.test(options.instanceId)) throw new Error("Filesystem guard instance identity is invalid.");
+  const directory = realpathSync(options.directory);
+  const receiptPath = resolve(options.receiptPath ?? fsGuardReceiptPath(directory));
+  const ownedRoot = join(directory, ".vibebloat");
+  const receiptRelative = relative(ownedRoot, receiptPath);
+  if (!receiptRelative || receiptRelative.startsWith("..") || isAbsolute(receiptRelative)) {
+    throw new Error("Filesystem guard receipt must stay inside the repository .vibebloat directory.");
+  }
+  assertNoSymlinkedReceiptParent(ownedRoot, receiptPath);
+  const pid = options.pid ?? process.pid;
+  const sleep = options.sleep ?? defaultSleep;
+  const timeoutMs = options.timeoutMs ?? 2_000;
+  if (!Number.isSafeInteger(pid) || pid <= 0 || !Number.isFinite(timeoutMs) || timeoutMs < 0 || timeoutMs > 30_000) {
+    throw new Error("Filesystem guard child lifecycle options are invalid.");
+  }
+  const attempts = Math.max(1, Math.ceil(timeoutMs / 25));
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (existsSync(receiptPath)) {
+      if (lstatSync(receiptPath).isSymbolicLink()) throw new Error("Filesystem guard receipt cannot be a symbolic link.");
+      const receipt = parseReceipt(readFileSync(receiptPath, "utf8"));
+      if (receipt.pid !== pid || receipt.instanceId !== options.instanceId || receipt.directory !== directory
+        || !receipt.command.includes(`${instanceArgument}=${options.instanceId}`)
+        || !receipt.command.includes(`${receiptArgument}=${receiptPath}`)) {
+        throw new Error("Filesystem guard launch receipt does not match this process.");
+      }
+      return receipt;
+    }
+    if (attempt + 1 < attempts) sleep(25);
+  }
+  throw new Error("Filesystem guard launch receipt was not created; exiting to avoid an orphan.");
+}
+
+export function watchFsGuardStopRequests(options: FsGuardChildLifecycleOptions, onStop: () => void): FSWatcher {
+  const receipt = waitForFsGuardLaunchReceipt(options);
+  const requestPath = stopRequestPath(resolve(options.receiptPath ?? fsGuardReceiptPath(receipt.directory)));
+  let stopped = false;
+  let watcher: FSWatcher;
+  const inspect = () => {
+    if (stopped || !existsSync(requestPath) || lstatSync(requestPath).isSymbolicLink()) return;
+    let request: { schemaVersion: 1; instanceId: string };
+    try {
+      request = parseStopRequest(readFileSync(requestPath, "utf8"));
+    } catch {
+      return;
+    }
+    if (request.instanceId !== receipt.instanceId) return;
+    stopped = true;
+    watcher.close();
+    onStop();
   };
-  try {
-    applyAtomicFilePlans([{ path: prepared.receiptPath, content: `${JSON.stringify(receipt, null, 2)}\n`, mode: 0o600 }]);
-  } catch (error) {
-    child.kill();
-    throw error;
-  }
-  return receipt;
+  watcher = watch(dirname(requestPath), { persistent: true }, (_eventType, filename) => {
+    if (!filename || filename.toString() === "fs-guard.stop.json") inspect();
+  });
+  queueMicrotask(inspect);
+  return watcher;
 }
 
 export function evaluateFsWrite(guards: Guard[], path: string, runtime = new Runtime()): HookResponse {

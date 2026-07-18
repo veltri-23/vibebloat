@@ -9,9 +9,11 @@ const shimDirectory = "C:/tools/vibebloat";
 const temporaryDirectories: string[] = [];
 afterEach(() => { for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
 
-test("PATH probe is defined for bash, zsh, fish, and pwsh", () => {
+test("PATH probe reads a fresh shell PATH without injecting the shim", () => {
   for (const shell of ["bash", "zsh", "fish", "pwsh"] as const) {
-    expect(shellPathProbe(shell, shimDirectory)).toContain(shell === "pwsh" ? shimDirectory : "/c/tools/vibebloat");
+    const probe = shellPathProbe(shell);
+    expect(probe).not.toContain(shimDirectory);
+    expect(probe).not.toMatch(/(?:set\s+-gx|\$env:PATH\s*=|PATH=)/);
   }
 });
 

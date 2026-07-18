@@ -1,8 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { mcpConfigWrongFileGuard } from "../src/guards";
-import { closeWatcherOnSignals, evaluateFsWrite, fsGuardReceiptPath, hasUnenforceableFileGuard, launchPersistentFsGuard, watchGuardedWrites } from "../src/install/fs-guard";
+import { closeWatcherOnSignals, evaluateFsWrite, fsGuardReceiptPath, fsGuardStopRequestPath, hasUnenforceableFileGuard, launchPersistentFsGuard, stopPersistentFsGuard, waitForFsGuardLaunchReceipt, watchFsGuardStopRequests, watchGuardedWrites } from "../src/install/fs-guard";
 
 const temporaryDirectories: string[] = [];
 
@@ -64,16 +64,20 @@ test("persistent filesystem guard launch writes an owned receipt and is idempote
   const command = [process.execPath, join(import.meta.dir, "..", "src", "cli.ts"), "watch", directory];
   let spawns = 0;
   let unrefs = 0;
-  const spawn = () => {
+  let spawnedCommand: readonly string[] = [];
+  const spawn = (childCommand: readonly string[]) => {
     spawns += 1;
+    spawnedCommand = childCommand;
     return { pid: 4242, unref: () => { unrefs += 1; }, kill: () => {} };
   };
 
-  const first = launchPersistentFsGuard({ directory, command, spawn, isProcessAlive: () => true, now: new Date("2026-07-18T12:00:00Z") });
-  const second = launchPersistentFsGuard({ directory, command, spawn, isProcessAlive: () => true });
+  const first = launchPersistentFsGuard({ directory, command, spawn, probeProcess: () => "owned", now: new Date("2026-07-18T12:00:00Z") });
+  const second = launchPersistentFsGuard({ directory, command, spawn, probeProcess: () => "owned" });
 
   expect(second).toEqual(first);
   expect({ spawns, unrefs }).toEqual({ spawns: 1, unrefs: 1 });
+  expect(spawnedCommand).toContain(`--vibebloat-fs-guard-instance=${first.instanceId}`);
+  expect(spawnedCommand).toContain(`--vibebloat-fs-guard-receipt=${fsGuardReceiptPath(directory)}`);
   expect(JSON.parse(readFileSync(fsGuardReceiptPath(directory), "utf8"))).toEqual(first);
 });
 
@@ -82,17 +86,15 @@ test("persistent filesystem guard replaces a stale owned receipt", () => {
   temporaryDirectories.push(directory);
   const receiptPath = fsGuardReceiptPath(directory);
   const command = [process.execPath, join(import.meta.dir, "..", "src", "cli.ts"), "watch", directory];
-  let killed = false;
-  launchPersistentFsGuard({ directory, command, spawn: () => ({ pid: 41, unref: () => {}, kill: () => {} }), isProcessAlive: () => false });
+  launchPersistentFsGuard({ directory, command, spawn: () => ({ pid: 41, unref: () => {}, kill: () => {} }), probeProcess: () => "owned" });
   const receipt = launchPersistentFsGuard({
     directory,
     command,
-    spawn: () => ({ pid: 42, unref: () => {}, kill: () => { killed = true; } }),
-    isProcessAlive: () => false,
+    spawn: () => ({ pid: 42, unref: () => {}, kill: () => {} }),
+    probeProcess: (pid) => pid === 41 ? "missing" : "owned",
   });
   expect(receipt.pid).toBe(42);
   expect(JSON.parse(readFileSync(receiptPath, "utf8")).pid).toBe(42);
-  expect(killed).toBeFalse();
 });
 
 test("persistent filesystem guard refuses malformed or external receipts before spawning", () => {
@@ -126,4 +128,96 @@ test("persistent filesystem guard rejects symlinked receipt parents and invalid 
   const clockCommand = [process.execPath, join(import.meta.dir, "..", "src", "cli.ts"), "watch", clockDirectory];
   expect(() => launchPersistentFsGuard({ directory: clockDirectory, command: clockCommand, spawn, now: new Date("invalid") })).toThrow("clock is invalid");
   expect(spawns).toBe(0);
+});
+
+test("persistent filesystem guard refuses a live foreign PID before spawning", () => {
+  const directory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-fs-foreign-"));
+  temporaryDirectories.push(directory);
+  const command = [process.execPath, join(import.meta.dir, "..", "src", "cli.ts"), "watch", directory];
+  launchPersistentFsGuard({ directory, command, spawn: () => ({ pid: 51, unref: () => {}, kill: () => {} }), probeProcess: () => "owned" });
+  let spawns = 0;
+
+  expect(() => launchPersistentFsGuard({
+    directory,
+    command,
+    spawn: () => { spawns += 1; return { pid: 52, unref: () => {}, kill: () => {} }; },
+    probeProcess: () => "foreign",
+  })).toThrow("belongs to another process");
+  expect(spawns).toBe(0);
+});
+
+test("cooperative filesystem guard stop writes an identity-bound request then verifies cleanup", () => {
+  const directory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-fs-stop-"));
+  temporaryDirectories.push(directory);
+  const command = [process.execPath, join(import.meta.dir, "..", "src", "cli.ts"), "watch", directory];
+  const receipt = launchPersistentFsGuard({ directory, command, spawn: () => ({ pid: 61, unref: () => {}, kill: () => {} }), probeProcess: () => "owned" });
+  let state: "owned" | "missing" = "owned";
+
+  const report = stopPersistentFsGuard({
+    directory,
+    probeProcess: () => state,
+    sleep: () => {
+      expect(JSON.parse(readFileSync(fsGuardStopRequestPath(directory), "utf8"))).toEqual({ schemaVersion: 1, instanceId: receipt.instanceId });
+      state = "missing";
+    },
+  });
+
+  expect(report).toEqual({ stopped: true, staleReceipt: false });
+  expect(existsSync(fsGuardReceiptPath(directory))).toBeFalse();
+  expect(existsSync(fsGuardStopRequestPath(directory))).toBeFalse();
+});
+
+test("filesystem guard stop never signals a foreign process or removes recovery evidence", () => {
+  const directory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-fs-stop-foreign-"));
+  temporaryDirectories.push(directory);
+  const command = [process.execPath, join(import.meta.dir, "..", "src", "cli.ts"), "watch", directory];
+  launchPersistentFsGuard({ directory, command, spawn: () => ({ pid: 71, unref: () => {}, kill: () => {} }), probeProcess: () => "owned" });
+
+  expect(() => stopPersistentFsGuard({ directory, probeProcess: () => "foreign" })).toThrow("belongs to another process");
+  expect(existsSync(fsGuardReceiptPath(directory))).toBeTrue();
+  expect(existsSync(fsGuardStopRequestPath(directory))).toBeFalse();
+});
+
+test("filesystem guard stop preserves recovery evidence when process identity becomes unknown", () => {
+  const directory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-fs-stop-unknown-"));
+  temporaryDirectories.push(directory);
+  const command = [process.execPath, join(import.meta.dir, "..", "src", "cli.ts"), "watch", directory];
+  launchPersistentFsGuard({ directory, command, spawn: () => ({ pid: 72, unref: () => {}, kill: () => {} }), probeProcess: () => "owned" });
+  let probes = 0;
+
+  expect(() => stopPersistentFsGuard({
+    directory,
+    timeoutMs: 0,
+    probeProcess: () => ++probes === 1 ? "owned" : "unknown",
+  })).toThrow("receipt preserved");
+  expect(existsSync(fsGuardReceiptPath(directory))).toBeTrue();
+  expect(existsSync(fsGuardStopRequestPath(directory))).toBeTrue();
+});
+
+test("filesystem guard child refuses to run without its exact launch receipt", () => {
+  const directory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-fs-orphan-"));
+  temporaryDirectories.push(directory);
+
+  expect(() => waitForFsGuardLaunchReceipt({
+    directory,
+    instanceId: "11111111-1111-4111-8111-111111111111",
+    pid: 81,
+    timeoutMs: 0,
+  })).toThrow("exiting to avoid an orphan");
+});
+
+test("filesystem guard child accepts only matching stop requests", async () => {
+  const directory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-fs-child-"));
+  temporaryDirectories.push(directory);
+  const command = [process.execPath, join(import.meta.dir, "..", "src", "cli.ts"), "watch", directory];
+  const receipt = launchPersistentFsGuard({ directory, command, spawn: () => ({ pid: 91, unref: () => {}, kill: () => {} }), probeProcess: () => "owned" });
+  let stopped = false;
+  const watcher = watchFsGuardStopRequests({ directory, instanceId: receipt.instanceId, pid: receipt.pid }, () => { stopped = true; });
+  writeFileSync(fsGuardStopRequestPath(directory), JSON.stringify({ schemaVersion: 1, instanceId: "22222222-2222-4222-8222-222222222222" }));
+  await Bun.sleep(40);
+  expect(stopped).toBeFalse();
+  writeFileSync(fsGuardStopRequestPath(directory), JSON.stringify({ schemaVersion: 1, instanceId: receipt.instanceId }));
+  for (let attempt = 0; attempt < 20 && !stopped; attempt += 1) await Bun.sleep(10);
+  watcher.close();
+  expect(stopped).toBeTrue();
 });

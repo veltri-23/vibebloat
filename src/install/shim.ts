@@ -6,16 +6,15 @@ function directoryForShell(shell: Shell, shimDirectory: string): string {
   return drivePath ? `/${drivePath[1].toLowerCase()}/${drivePath[2].replace(/\\/g, "/")}` : shimDirectory;
 }
 
-export function shellPathProbe(shell: Shell, shimDirectory: string): string {
-  const directory = directoryForShell(shell, shimDirectory);
+export function shellPathProbe(shell: Shell): string {
   switch (shell) {
     case "bash":
     case "zsh":
-      return `PATH='${directory}':$PATH; printf '%s' "$PATH"`;
+      return `printf '%s' "$PATH"`;
     case "fish":
-      return `set -gx PATH '${directory}' $PATH; string join ':' $PATH`;
+      return `string join ':' $PATH`;
     case "pwsh":
-      return `$env:PATH = '${directory};' + $env:PATH; [Console]::Out.Write($env:PATH)`;
+      return `[Console]::Out.Write($env:PATH)`;
   }
 }
 
@@ -34,7 +33,7 @@ function sameDirectory(left: string, right: string): boolean {
 
 export function verifyShellPaths(shimDirectory: string, readPath: (shell: Shell, probe: string) => string): void {
   for (const shell of ["bash", "zsh", "fish", "pwsh"] as const) {
-    const path = readPath(shell, shellPathProbe(shell, shimDirectory));
+    const path = readPath(shell, shellPathProbe(shell));
     const firstEntry = path.split(delimiterFor(shell))[0];
     if (!firstEntry || !sameDirectory(firstEntry, directoryForShell(shell, shimDirectory))) {
       throw new Error(`VibeBloat shim is not first on ${shell} PATH.`);
