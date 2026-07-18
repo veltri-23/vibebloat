@@ -1,9 +1,10 @@
 import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { appendFiring, readAndPruneFirings } from "../src/audit/firings";
 import { installationState, runDoctor } from "../src/doctor/checks";
 import { gitStashUntrackedGuard } from "../src/guards";
+import { localSemanticIndexPath } from "../src/ingest/local-semantic";
 
 const tempDirectories: string[] = [];
 
@@ -170,6 +171,79 @@ test("doctor reports exact guard conflicts, unreachable sources, and stale index
   expect(findings).toContainEqual({ status: "warning", check: "index-freshness", message: "Semantic index is missing or stale." });
 });
 
+test("doctor checks fallback PATH and persistent watcher only when evidence is supplied", () => {
+  const findings = runDoctor({
+    requireProof: false,
+    fallbackPathHealthy: false,
+    filesystemGuardHealth: "absent",
+    hookConfigs: { claude: "vibebloat", codex: "plugin_hooks = true\nvibebloat" },
+  });
+
+  expect(findings).toContainEqual({
+    status: "error",
+    check: "fallback-path",
+    message: "Fallback shim is not first on every supported shell PATH.",
+  });
+  expect(findings).toContainEqual({
+    status: "error",
+    check: "filesystem-guard",
+    message: "Persistent filesystem guard is not running with its owned receipt.",
+  });
+  expect(findings.some((finding) => finding.check === "proof")).toBeFalse();
+});
+
+test("doctor CLI rechecks selected local sources without reading history", () => {
+  const root = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-doctor-source-"));
+  tempDirectories.push(root);
+  const home = join(root, "home");
+  const claude = join(root, "claude");
+  const codex = join(root, "codex");
+  for (const directory of [join(home, "guards"), claude, codex]) mkdirSync(directory, { recursive: true });
+  writeFileSync(join(home, "guards", "proof.json"), "{}\n");
+  writeFileSync(join(claude, "settings.json"), "vibebloat");
+  writeFileSync(join(codex, "config.toml"), "plugin_hooks = true\nvibebloat");
+  writeFileSync(join(home, "onboarding.json"), JSON.stringify({ coordinator: { selectedSourceIds: ["hermes"] } }));
+
+  const result = Bun.spawnSync(["bun", "src/cli.ts", "doctor"], {
+    cwd: import.meta.dir + "/..",
+    env: { ...process.env, VIBEBLOAT_HOME: home, CLAUDE_CONFIG_DIR: claude, CODEX_HOME: codex, HERMES_HOME: join(root, "missing-hermes"), OPENCLAW_SESSION: "" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  expect(result.exitCode).toBe(1);
+  expect(result.stderr.toString()).toContain("WHY: History source hermes is unreachable.\n");
+  expect(result.stderr.toString()).toContain("FIX: vibebloat init\n");
+});
+
+test("doctor CLI reports locally cached semantic index staleness", () => {
+  const root = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-doctor-index-"));
+  tempDirectories.push(root);
+  const home = join(root, "home");
+  const claude = join(root, "claude");
+  const codex = join(root, "codex");
+  for (const directory of [join(home, "guards"), claude, codex]) mkdirSync(directory, { recursive: true });
+  writeFileSync(join(home, "guards", "proof.json"), "{}\n");
+  writeFileSync(join(claude, "settings.json"), "vibebloat");
+  writeFileSync(join(codex, "config.toml"), "plugin_hooks = true\nvibebloat");
+  const indexPath = localSemanticIndexPath(import.meta.dir + "/..", home);
+  mkdirSync(dirname(indexPath), { recursive: true });
+  writeFileSync(indexPath, "local-index");
+  const old = new Date("2026-01-01T00:00:00.000Z");
+  utimesSync(indexPath, old, old);
+
+  const result = Bun.spawnSync(["bun", "src/cli.ts", "doctor"], {
+    cwd: import.meta.dir + "/..",
+    env: { ...process.env, VIBEBLOAT_HOME: home, CLAUDE_CONFIG_DIR: claude, CODEX_HOME: codex, HERMES_HOME: join(root, "missing-hermes"), OPENCLAW_SESSION: "" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  expect(result.exitCode).toBe(0);
+  expect(result.stdout.toString()).toContain("Semantic index is missing or stale.");
+  expect(result.stderr.toString()).toBe("");
+});
+
 test("fresh install stays healthy in an OpenClaw delegated session", () => {
   const root = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-doctor-"));
   tempDirectories.push(root);
@@ -177,16 +251,19 @@ test("fresh install stays healthy in an OpenClaw delegated session", () => {
   const guards = join(root, "guards");
   const claude = join(root, "claude");
   const codex = join(root, "codex");
+  const hermes = join(root, "hermes");
   mkdirSync(guards, { recursive: true });
   mkdirSync(claude, { recursive: true });
   mkdirSync(codex, { recursive: true });
+  mkdirSync(hermes, { recursive: true });
   writeFileSync(join(guards, "proof.json"), "{}");
   writeFileSync(join(claude, "settings.json"), "vibebloat");
   writeFileSync(join(codex, "config.toml"), "plugin_hooks = true\nvibebloat");
+  writeFileSync(join(hermes, "shell-hooks-allowlist.json"), "{\"approvals\":[]}\n");
 
   const result = Bun.spawnSync(["bun", "src/cli.ts", "doctor"], {
     cwd: import.meta.dir + "/..",
-    env: { ...process.env, USERPROFILE: user, HOME: user, VIBEBLOAT_HOME: root, CLAUDE_CONFIG_DIR: claude, CODEX_HOME: codex, HERMES_HOME: join(root, "missing-hermes"), OPENCLAW_SESSION: "session" },
+    env: { ...process.env, USERPROFILE: user, HOME: user, VIBEBLOAT_HOME: root, CLAUDE_CONFIG_DIR: claude, CODEX_HOME: codex, HERMES_HOME: hermes, OPENCLAW_SESSION: "session" },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -194,6 +271,42 @@ test("fresh install stays healthy in an OpenClaw delegated session", () => {
   expect(result.exitCode).toBe(0);
   expect(result.stderr.toString()).toBe("");
   expect(result.stdout.toString()).toBe("VibeBloat doctor: healthy.\n");
+});
+
+test("doctor requires complete digest-bound Hermes hook evidence", () => {
+  const root = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-doctor-hermes-"));
+  tempDirectories.push(root);
+  const home = join(root, "home");
+  const claude = join(root, "claude");
+  const codex = join(root, "codex");
+  const hermes = join(root, "hermes");
+  for (const directory of [join(home, "guards"), claude, codex, join(hermes, "hooks", "vibebloat")]) mkdirSync(directory, { recursive: true });
+  writeFileSync(join(home, "guards", "proof.json"), "{}\n");
+  writeFileSync(join(claude, "settings.json"), "vibebloat");
+  writeFileSync(join(codex, "config.toml"), "plugin_hooks = true\nvibebloat");
+  writeFileSync(join(hermes, "hooks", "vibebloat", "handler.py"), "# owned handler residue\n");
+
+  const result = Bun.spawnSync(["bun", "src/cli.ts", "doctor"], {
+    cwd: import.meta.dir + "/..",
+    env: { ...process.env, VIBEBLOAT_HOME: home, CLAUDE_CONFIG_DIR: claude, CODEX_HOME: codex, HERMES_HOME: hermes, OPENCLAW_SESSION: "session" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  expect(result.exitCode).toBe(1);
+  expect(result.stderr.toString()).toContain("require hermes, but doctor could not verify its native chokepoint");
+  expect(result.stderr.toString()).not.toContain("openclaw");
+
+  rmSync(join(hermes, "hooks"), { recursive: true });
+  writeFileSync(join(hermes, "config.yaml"), "# vibebloat-hermes-pre-tool-call\n--vibebloat-handler-sha=deadbeef\n");
+  const configOnly = Bun.spawnSync(["bun", "src/cli.ts", "doctor"], {
+    cwd: import.meta.dir + "/..",
+    env: { ...process.env, VIBEBLOAT_HOME: home, CLAUDE_CONFIG_DIR: claude, CODEX_HOME: codex, HERMES_HOME: hermes, OPENCLAW_SESSION: "session" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(configOnly.exitCode).toBe(1);
+  expect(configOnly.stderr.toString()).toContain("require hermes, but doctor could not verify its native chokepoint");
 });
 
 test("doctor CLI uses durable last-fired summary after detailed events are pruned", () => {

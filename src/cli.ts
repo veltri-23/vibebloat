@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { isAbsolute, join, resolve } from "node:path";
 import { createFiringRecorder, readAndPruneFirings, readLastFiredSummaries } from "./audit/firings";
 import { disableGuard, disabledGuardIds } from "./cli/disable";
@@ -9,11 +10,11 @@ import { forgetEmail } from "./growth/email-capture";
 import { canonicalGuardId, gitStashUntrackedGuard, mcpConfigWrongFileGuard } from "./guards";
 import { formatGuardRuntimeFailure, hookResponseForVerdict, runPreToolUse } from "./hooks";
 import { match } from "./match";
-import { closeWatcherOnSignals, fsGuardReceiptPath, hasUnenforceableFileGuard, launchPersistentFsGuard, stopPersistentFsGuard, waitForFsGuardLaunchReceipt, watchFsGuardStopRequests, watchGuardedWrites } from "./install/fs-guard";
+import { closeWatcherOnSignals, fsGuardReceiptPath, hasUnenforceableFileGuard, inspectPersistentFsGuard, launchPersistentFsGuard, stopPersistentFsGuard, waitForFsGuardLaunchReceipt, watchFsGuardStopRequests, watchGuardedWrites } from "./install/fs-guard";
 import { discoverCurrentRepoGitHookPaths, installCurrentRepoGitHooks, planGitHook, type GitHookName } from "./install/git-hooks";
 import { installNativeHooks } from "./install/orchestrator";
 import { installHermesHook, preflightHermesHook } from "./install/hermes";
-import type { Shell } from "./install/shim";
+import { verifyShellPaths, type Shell } from "./install/shim";
 import { compileGuard } from "./compiler/codex-fill";
 import { compileLiveForScope, drainQueuedLiveCompilesForScope } from "./compiler/live-compile";
 import { approveLiveCompileProposal, authorizeHumanLiveCompileApproval, drainQueuedLiveProposalsForScope, processQueuedLiveProposal, reviewLiveCompileProposal } from "./compiler/live-incident";
@@ -21,7 +22,7 @@ import { runShellShimCommand } from "./hooks/shell-shim-handler";
 import { cliSelfCommand } from "./self-command";
 import { createCodebaseMemorySemanticAdapter } from "./ingest/codebase-memory-semantic";
 import { discoverLocalHistory, type LocalHistoryCatalog } from "./ingest/discovery";
-import { createLocalSemanticAdapter } from "./ingest/local-semantic";
+import { createLocalSemanticAdapter, localSemanticIndexPath } from "./ingest/local-semantic";
 import { scanHistory } from "./ingest/scan";
 import type { UntrustedSemanticContext } from "./ingest/semantic-context";
 import { rankIncidents, type IncidentManifest } from "./ingest/rank";
@@ -124,6 +125,7 @@ function gitHookName(value: string | undefined): GitHookName {
 
 function installFailureReason(error: unknown): string {
   const message = error instanceof Error ? error.message : "";
+  if (message.startsWith("post-install doctor failed: ")) return message;
   if (message === "fallback installation requires both --fallback-shim-dir and --fallback-git") return message;
   if (message === "fallback paths must be absolute") return message;
   if (message.startsWith("Current directory is not an installable Git repository:")) return "current directory is not an installable Git repository";
@@ -172,6 +174,92 @@ function readFallbackShellPath(shell: Shell, probe: string): string {
   const result = Bun.spawnSync(command[shell], { stdout: "pipe", stderr: "pipe" });
   if (result.exitCode !== 0) throw new Error(`PATH verification could not run ${shell}: ${result.stderr.toString().trim() || "shell unavailable"}`);
   return result.stdout.toString();
+}
+
+function fallbackPathIsHealthy(shimDirectory: string): boolean {
+  try {
+    verifyShellPaths(shimDirectory, readFallbackShellPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function doctorLocalEvidence(home = onboardingHome(), repository = resolve(process.cwd())): {
+  sources?: Array<{ id: string; reachable: boolean }>;
+  semanticIndex?: { configured: true; lastUpdatedAt: Date };
+} {
+  const checkpoint = loadOnboardingState(home)?.coordinator;
+  const selectedSourceIds = checkpoint?.selectedSourceIds ?? [];
+  let sources: Array<{ id: string; reachable: boolean }> | undefined;
+  if (selectedSourceIds.length > 0) {
+    let reachableIds = new Set<string>();
+    try {
+      const homes = agentHomes();
+      reachableIds = new Set(discoverLocalHistory({
+        homeDirectory: process.env.USERPROFILE ?? process.env.HOME ?? ".",
+        claudeHome: process.env.CLAUDE_CONFIG_DIR,
+        codexHome: process.env.CODEX_HOME,
+        hermesHome: homes.hermesHome,
+      }).sources.map(({ id }) => id));
+    } catch {
+      reachableIds = new Set();
+    }
+    sources = selectedSourceIds.map((id) => ({ id, reachable: reachableIds.has(id) }));
+  }
+  const indexPath = localSemanticIndexPath(repository, home);
+  const semanticIndex = existsSync(indexPath)
+    ? { configured: true as const, lastUpdatedAt: statSync(indexPath).mtime }
+    : undefined;
+  return { sources, semanticIndex };
+}
+
+function hermesHookEvidence(hermesHome: string, hermesConfig: string): { expected: boolean; verifiedConfig: string } {
+  const hookHome = join(hermesHome, "hooks", "vibebloat");
+  const handlerPath = join(hookHome, "handler.py");
+  const hookManifest = join(hookHome, "HOOK.yaml");
+  const allowlistPath = join(hermesHome, "shell-hooks-allowlist.json");
+  let allowlistSource = "";
+  try {
+    if (existsSync(allowlistPath)) allowlistSource = readFileSync(allowlistPath, "utf8");
+  } catch {
+    allowlistSource = "";
+  }
+  const expected = hermesConfig.includes("vibebloat-hermes-pre-tool-call")
+    || existsSync(handlerPath)
+    || existsSync(hookManifest)
+    || allowlistSource.includes("vibebloat-handler-sha=");
+  if (!existsSync(handlerPath) || !existsSync(hookManifest) || !allowlistSource) return { expected, verifiedConfig: "" };
+  try {
+    const digest = createHash("sha256").update(readFileSync(handlerPath)).digest("hex");
+    const digestArgument = `--vibebloat-handler-sha=${digest}`;
+    const allowlist = JSON.parse(allowlistSource) as { approvals?: unknown[] };
+    const approved = Array.isArray(allowlist.approvals) && allowlist.approvals.some((entry) => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
+      const approval = entry as Record<string, unknown>;
+      return approval.event === "pre_tool_call"
+        && typeof approval.command === "string"
+        && approval.command.includes(handlerPath)
+        && approval.command.includes(digestArgument);
+    });
+    return {
+      expected,
+      verifiedConfig: approved
+        && hermesConfig.includes("vibebloat-hermes-pre-tool-call")
+        && hermesConfig.includes(handlerPath)
+        && hermesConfig.includes(digestArgument)
+        ? hermesConfig
+        : "",
+    };
+  } catch {
+    return { expected, verifiedConfig: "" };
+  }
+}
+
+function verifiedInstalledAgents(hermesExpected: boolean, includeHermes = false): GuardAgent[] {
+  const installedAgents: GuardAgent[] = ["claude-code", "codex"];
+  if (includeHermes || hermesExpected) installedAgents.push("hermes");
+  return installedAgents;
 }
 
 function isHistoryChunk(value: unknown): value is HistoryChunk {
@@ -349,27 +437,35 @@ function createProductionOnboardingCoordinator(
 
 if (mode === "doctor") {
   try {
-    const base = process.env.USERPROFILE ?? process.env.HOME ?? ".";
-    const claudeHome = process.env.CLAUDE_CONFIG_DIR ?? join(base, ".claude");
-    const codexHome = process.env.CODEX_HOME ?? join(base, ".codex");
-    const hermesHome = process.env.HERMES_HOME ?? join(base, ".hermes");
-    const installedAgents: GuardAgent[] = ["claude-code", "codex"];
-    if (existsSync(hermesHome)) installedAgents.push("hermes");
+    const homes = agentHomes();
+    const hermesConfig = configText(join(homes.hermesHome, "config.yaml"));
+    const hermesEvidence = hermesHookEvidence(homes.hermesHome, hermesConfig);
+    const installedAgents = verifiedInstalledAgents(hermesEvidence.expected);
     const directories = guardDirectories();
     const loadedGuards = runtimeGuards();
+    const fallbackShimDirectory = argumentValue("--fallback-shim-dir");
+    const filesystemGuardHealth = inspectPersistentFsGuard({ directory: resolve(process.cwd()) });
+    const localEvidence = doctorLocalEvidence();
     const doctorOptions = {
       guardDirectories: directories,
       dataHomes: [...new Set([globalGuardHome(), ...guardHomes()])],
       guards: loadedGuards,
       installedAtByGuard: readInstalledAtByGuard(loadedGuards, directories),
       installedAgents,
+      ...localEvidence,
+      ...(fallbackShimDirectory ? { fallbackPathHealthy: fallbackPathIsHealthy(resolve(fallbackShimDirectory)) } : {}),
+      ...(fallbackShimDirectory || filesystemGuardHealth !== "absent" ? { filesystemGuardHealth } : {}),
       hookConfigs: {
-        claude: configText(join(claudeHome, "settings.json")),
-        codex: configText(join(codexHome, "config.toml")),
-        hermes: configText(join(hermesHome, "config.yaml")),
+        claude: configText(homes.claudePath),
+        codex: configText(homes.codexPath),
+        hermes: hermesEvidence.verifiedConfig,
       },
     };
-    if (installationState(doctorOptions) === "not-installed") {
+    const hasLocalEvidence = Boolean(fallbackShimDirectory
+      || filesystemGuardHealth !== "absent"
+      || localEvidence.sources?.length
+      || localEvidence.semanticIndex);
+    if (installationState(doctorOptions) === "not-installed" && !hasLocalEvidence) {
       process.stdout.write("VibeBloat doctor: not installed.\n");
       process.exit(0);
     }
@@ -381,11 +477,19 @@ if (mode === "doctor") {
     if (errors.length === 0) {
       process.stdout.write("VibeBloat doctor: healthy.\n");
       if (warnings.length > 0) {
-        process.stdout.write(`WHAT needs review: doctor found ${warnings.length} stale guard(s).\nWHY: ${warnings.map((finding) => finding.message).join(" ")}\nFIX: inspect guard provenance; run vibebloat disable <guard-id> for obsolete guards.\n`);
+        const fix = warnings.some((finding) => finding.check === "index-freshness")
+          ? "vibebloat init"
+          : "vibebloat disable <guard-id>";
+        process.stdout.write(`WHAT needs review: doctor found ${warnings.length} warning(s).\nWHY: ${warnings.map((finding) => finding.message).join(" ")}\nFIX: ${fix}\n`);
       }
       process.exit(0);
     }
-    process.stderr.write(`WHAT failed: doctor found ${errors.length} problem(s).\nWHY: ${errors.map((finding) => finding.message).join(" ")}\nFIX: vibebloat install --yes\n`);
+    const fix = errors.some((finding) => finding.check === "fallback-path" || finding.check === "filesystem-guard")
+      ? "vibebloat install --yes --fallback-shim-dir <absolute-shim-dir> --fallback-git <absolute-git-executable>"
+      : errors.some((finding) => finding.check === "source-health")
+        ? "vibebloat init"
+        : "vibebloat install --yes";
+    process.stderr.write(`WHAT failed: doctor found ${errors.length} problem(s).\nWHY: ${errors.map((finding) => finding.message).join(" ")}\nFIX: ${fix}\n`);
     process.exit(1);
   } catch (error) {
     process.stderr.write(`WHAT failed: doctor could not run.\nWHY: ${error instanceof Error ? error.message : "unknown error"}\nFIX: vibebloat doctor\n`);
@@ -506,6 +610,30 @@ if (mode === "install") {
     installCurrentRepoGitHooks(process.cwd(), gitHookCommands);
     if (fallbackShimDirectory) {
       launchPersistentFsGuard({ directory: resolve(process.cwd()), command: fsGuardCommand(resolve(process.cwd())) });
+    }
+    const repository = resolve(process.cwd());
+    const postInstallHermesHome = hermesHome ?? homes.hermesHome;
+    const hermesConfig = configText(join(postInstallHermesHome, "config.yaml"));
+    const hermesEvidence = hermesHookEvidence(postInstallHermesHome, hermesConfig);
+    const filesystemGuardHealth = inspectPersistentFsGuard({ directory: repository });
+    const postInstallFindings = runDoctor({
+      requireProof: false,
+      guardDirectories: guardDirectories(),
+      dataHomes: [...new Set([globalGuardHome(), ...guardHomes()])],
+      guards: [],
+      installedAgents: verifiedInstalledAgents(hermesEvidence.expected, Boolean(hermesHome)),
+      ...doctorLocalEvidence(onboardingHome(), repository),
+      ...(fallbackShimDirectory ? { fallbackPathHealthy: fallbackPathIsHealthy(resolve(fallbackShimDirectory)) } : {}),
+      ...(fallbackShimDirectory || filesystemGuardHealth !== "absent" ? { filesystemGuardHealth } : {}),
+      hookConfigs: {
+        claude: configText(homes.claudePath),
+        codex: configText(homes.codexPath),
+        hermes: hermesEvidence.verifiedConfig,
+      },
+    });
+    const postInstallErrors = postInstallFindings.filter((finding) => finding.status === "error");
+    if (postInstallErrors.length > 0) {
+      throw new Error(`post-install doctor failed: ${postInstallErrors.map((finding) => finding.message).join(" ")}`);
     }
     process.stdout.write(fallbackShimDirectory
       ? `Native hooks, Git hooks, fallback git shims, and filesystem guard installed. Run: vibebloat doctor\n`

@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { mcpConfigWrongFileGuard } from "../src/guards";
-import { closeWatcherOnSignals, evaluateFsWrite, fsGuardReceiptPath, fsGuardStopRequestPath, hasUnenforceableFileGuard, launchPersistentFsGuard, stopPersistentFsGuard, waitForFsGuardLaunchReceipt, watchFsGuardStopRequests, watchGuardedWrites } from "../src/install/fs-guard";
+import { closeWatcherOnSignals, evaluateFsWrite, fsGuardReceiptPath, fsGuardStopRequestPath, hasUnenforceableFileGuard, inspectPersistentFsGuard, launchPersistentFsGuard, stopPersistentFsGuard, waitForFsGuardLaunchReceipt, watchFsGuardStopRequests, watchGuardedWrites } from "../src/install/fs-guard";
 
 const temporaryDirectories: string[] = [];
 
@@ -79,6 +79,22 @@ test("persistent filesystem guard launch writes an owned receipt and is idempote
   expect(spawnedCommand).toContain(`--vibebloat-fs-guard-instance=${first.instanceId}`);
   expect(spawnedCommand).toContain(`--vibebloat-fs-guard-receipt=${fsGuardReceiptPath(directory)}`);
   expect(JSON.parse(readFileSync(fsGuardReceiptPath(directory), "utf8"))).toEqual(first);
+});
+
+test("persistent filesystem guard health requires an owned live process", () => {
+  const directory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-fs-health-"));
+  temporaryDirectories.push(directory);
+  const command = [process.execPath, join(import.meta.dir, "..", "src", "cli.ts"), "watch", directory];
+
+  expect(inspectPersistentFsGuard({ directory })).toBe("absent");
+  launchPersistentFsGuard({
+    directory,
+    command,
+    spawn: () => ({ pid: 4242, unref: () => {}, kill: () => {} }),
+    probeProcess: () => "owned",
+  });
+  expect(inspectPersistentFsGuard({ directory, probeProcess: () => "owned" })).toBe("healthy");
+  expect(inspectPersistentFsGuard({ directory, probeProcess: () => "missing" })).toBe("unhealthy");
 });
 
 test("persistent filesystem guard replaces a stale owned receipt", () => {

@@ -5,7 +5,7 @@ import { assessGuardStaleness } from "./staleness";
 
 export interface DoctorFinding {
   status: "error" | "warning";
-  check: "proof" | "claude-hook" | "codex-hook" | "guard-bind" | "guard-staleness" | "guard-conflict" | "source-health" | "index-freshness";
+  check: "proof" | "claude-hook" | "codex-hook" | "guard-bind" | "guard-staleness" | "guard-conflict" | "source-health" | "index-freshness" | "fallback-path" | "filesystem-guard";
   message: string;
 }
 
@@ -15,6 +15,7 @@ export interface GuardUpstreamVersions {
 }
 
 export interface DoctorOptions {
+  requireProof?: boolean;
   guardDirectory?: string;
   guardDirectories?: readonly string[];
   dataHomes?: readonly string[];
@@ -26,6 +27,8 @@ export interface DoctorOptions {
   installedAgents?: readonly GuardAgent[];
   sources?: readonly { id: string; reachable: boolean }[];
   semanticIndex?: { configured: boolean; lastUpdatedAt?: string | Date; staleAfterDays?: number };
+  fallbackPathHealthy?: boolean;
+  filesystemGuardHealth?: "absent" | "healthy" | "unhealthy";
   hookConfigs: { claude: string; codex: string; hermes?: string; openclaw?: string };
 }
 
@@ -130,7 +133,7 @@ export function runDoctor(options: DoctorOptions): DoctorFinding[] {
   const findings: DoctorFinding[] = [];
   const guardDirectories = options.guardDirectories ?? (options.guardDirectory ? [options.guardDirectory] : []);
   const hasProof = guardDirectories.some((directory) => existsSync(join(directory, "proof.json")));
-  if (!hasProof) findings.push({ status: "error", check: "proof", message: "No runner-written proof marker found." });
+  if (options.requireProof !== false && !hasProof) findings.push({ status: "error", check: "proof", message: "No runner-written proof marker found." });
   if (!hasChokepoint("claude-code", options.hookConfigs)) findings.push({ status: "error", check: "claude-hook", message: "Claude Code hook is missing." });
   if (!hasChokepoint("codex", options.hookConfigs)) findings.push({ status: "error", check: "codex-hook", message: "Codex hook is missing." });
   const installedAgents = options.installedAgents ?? ["claude-code", "codex"];
@@ -172,6 +175,12 @@ export function runDoctor(options: DoctorOptions): DoctorFinding[] {
   }
   for (const source of options.sources ?? []) {
     if (!source.reachable) findings.push({ status: "error", check: "source-health", message: `History source ${source.id} is unreachable.` });
+  }
+  if (options.fallbackPathHealthy === false) {
+    findings.push({ status: "error", check: "fallback-path", message: "Fallback shim is not first on every supported shell PATH." });
+  }
+  if (options.filesystemGuardHealth && options.filesystemGuardHealth !== "healthy") {
+    findings.push({ status: "error", check: "filesystem-guard", message: "Persistent filesystem guard is not running with its owned receipt." });
   }
   if (options.semanticIndex?.configured) {
     const staleAfterDays = options.semanticIndex.staleAfterDays ?? 7;

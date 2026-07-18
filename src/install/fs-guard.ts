@@ -67,6 +67,13 @@ export interface FsGuardStopWatcher {
   close(): void;
 }
 
+export type PersistentFsGuardHealth = "absent" | "healthy" | "unhealthy";
+
+export interface PersistentFsGuardHealthOptions {
+  directory: string;
+  probeProcess?: (pid: number, instanceId: string) => ProcessIdentityState;
+}
+
 const instanceArgument = "--vibebloat-fs-guard-instance";
 const receiptArgument = "--vibebloat-fs-guard-receipt";
 const instanceIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -153,6 +160,24 @@ export function fsGuardReceiptPath(repository: string): string {
 
 export function fsGuardStopRequestPath(repository: string): string {
   return join(resolve(repository), ".vibebloat", "receipts", "fs-guard.stop.json");
+}
+
+export function inspectPersistentFsGuard(options: PersistentFsGuardHealthOptions): PersistentFsGuardHealth {
+  try {
+    const directory = realpathSync(resolve(options.directory));
+    if (!statSync(directory).isDirectory()) return "unhealthy";
+    const receiptPath = fsGuardReceiptPath(directory);
+    if (!existsSync(receiptPath)) return "absent";
+    if (lstatSync(receiptPath).isSymbolicLink()) return "unhealthy";
+    assertNoSymlinkedReceiptParent(join(directory, ".vibebloat"), receiptPath);
+    const receipt = parseReceipt(readFileSync(receiptPath, "utf8"));
+    if (receipt.directory !== directory) return "unhealthy";
+    return (options.probeProcess ?? defaultProbeProcess)(receipt.pid, receipt.instanceId) === "owned"
+      ? "healthy"
+      : "unhealthy";
+  } catch {
+    return "unhealthy";
+  }
 }
 
 function assertNoSymlinkedReceiptParent(ownedRoot: string, receiptPath: string): void {
