@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import os
 import shutil
@@ -117,6 +118,18 @@ def _block(message: str) -> dict[str, str]:
     return {"decision": "block", "reason": message}
 
 
+def _integrity_error() -> str | None:
+    prefix = "--vibebloat-handler-sha="
+    expected = next((argument[len(prefix):] for argument in sys.argv[1:] if argument.startswith(prefix)), None)
+    if not expected:
+        return "VibeBloat hook integrity token is missing."
+    with open(__file__, "rb") as handler_file:
+        actual = hashlib.sha256(handler_file.read()).hexdigest()
+    if expected != actual:
+        return "VibeBloat hook integrity check failed."
+    return None
+
+
 async def handle_shell_hook(payload: object) -> dict[str, str] | None:
     if not isinstance(payload, dict):
         return _block("VibeBloat hook received an invalid Hermes payload.")
@@ -133,6 +146,10 @@ async def handle_shell_hook(payload: object) -> dict[str, str] | None:
 
 
 def main() -> int:
+    integrity_error = _integrity_error()
+    if integrity_error is not None:
+        print(json.dumps(_block(integrity_error), separators=(",", ":")))
+        return 0
     try:
         payload = json.load(sys.stdin)
     except (json.JSONDecodeError, OSError) as error:

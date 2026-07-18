@@ -1,34 +1,40 @@
+import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
 
 export interface HermesHookInstallOptions {
   permitted: boolean;
-  hooksDirectory: string;
-  configPath?: string;
-  allowlistPath?: string;
+  hermesHome: string;
+  pythonExecutable: string;
   sourceDirectory?: string;
 }
 
 export function installHermesHook(options: HermesHookInstallOptions): void {
   if (!options.permitted) throw new Error("Explicit setup permission is required.");
-  if (!isAbsolute(options.hooksDirectory)) throw new Error("Hermes hooks directory must be absolute.");
-  if (options.configPath && !isAbsolute(options.configPath)) throw new Error("Hermes config path must be absolute.");
-  if (options.allowlistPath && !isAbsolute(options.allowlistPath)) throw new Error("Hermes shell-hook allowlist path must be absolute.");
-  if (options.allowlistPath && !options.configPath) throw new Error("Hermes shell-hook allowlist requires an explicit Hermes config path.");
+  if (!isAbsolute(options.hermesHome)) throw new Error("Hermes home must be absolute.");
+  if (!existsSync(options.hermesHome) || !statSync(options.hermesHome).isDirectory()) throw new Error("Hermes home must be an existing directory.");
+  if (!isAbsolute(options.pythonExecutable) || !existsSync(options.pythonExecutable) || !statSync(options.pythonExecutable).isFile()) {
+    throw new Error("Hermes Python interpreter must be an existing absolute file.");
+  }
   const source = options.sourceDirectory ?? join(import.meta.dir, "../../hermes");
-  const destination = join(options.hooksDirectory, "vibebloat");
+  const hooksDirectory = join(options.hermesHome, "hooks");
+  const configPath = join(options.hermesHome, "config.yaml");
+  const allowlistPath = join(options.hermesHome, "shell-hooks-allowlist.json");
+  const destination = join(hooksDirectory, "vibebloat");
   const handlerPath = join(destination, "handler.py");
-  const allowlistPath = options.allowlistPath ?? (options.configPath ? join(dirname(options.configPath), "shell-hooks-allowlist.json") : undefined);
-  const currentConfig = options.configPath && existsSync(options.configPath) ? readFileSync(options.configPath, "utf8") : "";
-  const currentAllowlist = allowlistPath && existsSync(allowlistPath) ? readFileSync(allowlistPath, "utf8") : "";
-  const updatedConfig = options.configPath ? updateHermesConfig(currentConfig, handlerPath) : undefined;
-  if (allowlistPath) assertHermesAllowlist(currentAllowlist);
+  const handlerSource = join(source, "handler.py");
+  const handlerDigest = createHash("sha256").update(readFileSync(handlerSource)).digest("hex");
+  const command = bridgeCommand(options.pythonExecutable, handlerPath, handlerDigest);
+  const currentConfig = existsSync(configPath) ? readFileSync(configPath, "utf8") : "";
+  const currentAllowlist = existsSync(allowlistPath) ? readFileSync(allowlistPath, "utf8") : "";
+  const updatedConfig = updateHermesConfig(currentConfig, command);
+  assertHermesAllowlist(currentAllowlist);
   mkdirSync(destination, { recursive: true });
   copyAtomically(join(source, "HOOK.yaml"), join(destination, "HOOK.yaml"));
-  copyAtomically(join(source, "handler.py"), handlerPath);
-  const updatedAllowlist = allowlistPath ? updateHermesAllowlist(currentAllowlist, bridgeCommand(handlerPath), handlerPath) : undefined;
-  if (allowlistPath && updatedAllowlist !== currentAllowlist) writeAtomically(allowlistPath, updatedAllowlist);
-  if (options.configPath && updatedConfig !== currentConfig) writeAtomically(options.configPath, updatedConfig);
+  copyAtomically(handlerSource, handlerPath);
+  const updatedAllowlist = updateHermesAllowlist(currentAllowlist, command, handlerPath);
+  if (updatedAllowlist !== currentAllowlist) writeAtomically(allowlistPath, updatedAllowlist);
+  if (updatedConfig !== currentConfig) writeAtomically(configPath, updatedConfig);
 }
 
 function copyAtomically(source: string, destination: string): void {
@@ -45,8 +51,7 @@ function yamlSingleQuoted(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;
 }
 
-function bridgeLines(indent: string, handlerPath: string): string[] {
-  const command = bridgeCommand(handlerPath);
+function bridgeLines(indent: string, command: string): string[] {
   return [
     `${indent}# vibebloat-hermes-pre-tool-call`,
     `${indent}- command: ${yamlSingleQuoted(command)}`,
@@ -55,8 +60,8 @@ function bridgeLines(indent: string, handlerPath: string): string[] {
   ];
 }
 
-function bridgeCommand(handlerPath: string): string {
-  return `python "${handlerPath}"`;
+function bridgeCommand(pythonExecutable: string, handlerPath: string, handlerDigest: string): string {
+  return `"${pythonExecutable}" "${handlerPath}" --vibebloat-handler-sha=${handlerDigest}`;
 }
 
 interface HermesAllowlist {
@@ -120,8 +125,7 @@ function sectionEnd(lines: string[], start: number, indent: number): number {
   return lines.length;
 }
 
-function updateHermesConfig(source: string, handlerPath: string): string {
-  if (source.includes("vibebloat-hermes-pre-tool-call")) return source;
+function updateHermesConfig(source: string, command: string): string {
   const lines = source.length === 0 ? [] : source.replace(/\r?\n$/, "").split(/\r?\n/);
   const hooksCandidate = lines.findIndex((line) => /^hooks\s*:/.test(line));
   if (hooksCandidate >= 0 && !/^hooks\s*:\s*(?:#.*)?$/.test(lines[hooksCandidate])) {
@@ -130,7 +134,7 @@ function updateHermesConfig(source: string, handlerPath: string): string {
   const hooksIndex = hooksCandidate;
   if (hooksIndex < 0) {
     if (lines.length > 0 && lines.at(-1)?.trim() !== "") lines.push("");
-    lines.push("hooks:", "  pre_tool_call:", ...bridgeLines("    ", handlerPath));
+    lines.push("hooks:", "  pre_tool_call:", ...bridgeLines("    ", command));
     return `${lines.join("\n")}\n`;
   }
   const hooksEnd = sectionEnd(lines, hooksIndex, 0);
@@ -140,11 +144,21 @@ function updateHermesConfig(source: string, handlerPath: string): string {
   }
   const eventIndex = eventCandidate;
   if (eventIndex < 0) {
-    lines.splice(hooksEnd, 0, "  pre_tool_call:", ...bridgeLines("    ", handlerPath));
+    lines.splice(hooksEnd, 0, "  pre_tool_call:", ...bridgeLines("    ", command));
     return `${lines.join("\n")}\n`;
   }
   const eventEnd = sectionEnd(lines, eventIndex, 2);
-  lines.splice(eventEnd, 0, ...bridgeLines("    ", handlerPath));
+  const markerIndex = lines.findIndex((line, index) => index > eventIndex && index < eventEnd && line.trim() === "# vibebloat-hermes-pre-tool-call");
+  if (markerIndex >= 0) {
+    const indent = lines[markerIndex].slice(0, indentOf(lines[markerIndex]));
+    const bridge = lines.slice(markerIndex, markerIndex + 4);
+    if (bridge.length !== 4 || !bridge[1]?.startsWith(`${indent}- command:`) || !bridge[2]?.startsWith(`${indent}  matcher:`) || !bridge[3]?.startsWith(`${indent}  timeout:`)) {
+      throw new Error("VibeBloat Hermes pre-tool bridge is malformed; refusing to overwrite it.");
+    }
+    lines.splice(markerIndex, 4, ...bridgeLines(indent, command));
+    return `${lines.join("\n")}\n`;
+  }
+  lines.splice(eventEnd, 0, ...bridgeLines("    ", command));
   return `${lines.join("\n")}\n`;
 }
 

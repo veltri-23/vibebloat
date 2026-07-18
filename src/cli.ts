@@ -199,20 +199,21 @@ if (mode === "install") {
     process.stderr.write("WHAT failed: setup permission was not confirmed.\nWHY: install changes native agent configuration.\nFIX: vibebloat install --yes\n");
     process.exit(1);
   }
-  const hermesHooksDirectoryIndex = process.argv.indexOf("--hermes-hooks-dir");
-  const hermesHooksDirectory = hermesHooksDirectoryIndex < 0 ? undefined : process.argv[hermesHooksDirectoryIndex + 1];
-  const hermesConfigIndex = process.argv.indexOf("--hermes-config");
-  const hermesConfigPath = hermesConfigIndex < 0 ? undefined : process.argv[hermesConfigIndex + 1];
-  if (hermesHooksDirectoryIndex >= 0 && !hermesHooksDirectory) {
-    process.stderr.write("WHAT failed: Hermes hooks directory was not supplied.\nWHY: Hermes installation needs an explicit writable hooks path.\nFIX: vibebloat install --yes --hermes-hooks-dir <path>\n");
+  const legacyHermesFlags = ["--hermes-hooks-dir", "--hermes-config"];
+  if (legacyHermesFlags.some((flag) => process.argv.includes(flag))) {
+    process.stderr.write("WHAT failed: Hermes setup flags are outdated.\nWHY: VibeBloat must install into Hermes home and approve its canonical config bridge.\nFIX: vibebloat install --yes --hermes-home <path> --hermes-python <path>\n");
     process.exit(1);
   }
-  if (hermesConfigIndex >= 0 && !hermesConfigPath) {
-    process.stderr.write("WHAT failed: Hermes config path was not supplied.\nWHY: Hermes shell-hook installation needs an explicit config path.\nFIX: vibebloat install --yes --hermes-hooks-dir <path> --hermes-config <path>\n");
+  const hermesHomeIndex = process.argv.indexOf("--hermes-home");
+  const hermesHome = hermesHomeIndex < 0 ? undefined : process.argv[hermesHomeIndex + 1];
+  const hermesPythonIndex = process.argv.indexOf("--hermes-python");
+  const hermesPython = hermesPythonIndex < 0 ? undefined : process.argv[hermesPythonIndex + 1];
+  if ((hermesHomeIndex >= 0 && (!hermesHome || hermesHome.startsWith("--"))) || (hermesPythonIndex >= 0 && (!hermesPython || hermesPython.startsWith("--")))) {
+    process.stderr.write("WHAT failed: Hermes home or Python interpreter was not supplied.\nWHY: VibeBloat must wire Hermes's canonical config with explicit paths.\nFIX: vibebloat install --yes --hermes-home <path> --hermes-python <path>\n");
     process.exit(1);
   }
-  if (hermesConfigPath && !hermesHooksDirectory) {
-    process.stderr.write("WHAT failed: Hermes hooks directory was not supplied.\nWHY: Hermes config must point to an explicitly installed bridge.\nFIX: vibebloat install --yes --hermes-hooks-dir <path> --hermes-config <path>\n");
+  if (Boolean(hermesHome) !== Boolean(hermesPython)) {
+    process.stderr.write("WHAT failed: Hermes home and Python interpreter must be supplied together.\nWHY: VibeBloat must wire Hermes's canonical config with an explicit interpreter.\nFIX: vibebloat install --yes --hermes-home <path> --hermes-python <path>\n");
     process.exit(1);
   }
   try {
@@ -238,7 +239,7 @@ if (mode === "install") {
         },
       } : {}),
     });
-    if (hermesHooksDirectory) installHermesHook({ permitted: true, hooksDirectory: hermesHooksDirectory, configPath: hermesConfigPath });
+    if (hermesHome && hermesPython) installHermesHook({ permitted: true, hermesHome, pythonExecutable: hermesPython });
     process.stdout.write(fallbackShimDirectory
       ? `Native hooks and fallback git shims installed. Add ${fallbackShimDirectory} first on PATH in each shell, then run: vibebloat doctor\n`
       : "Native hooks installed. Run: vibebloat doctor\n");

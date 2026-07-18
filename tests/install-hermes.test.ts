@@ -11,8 +11,8 @@ test("Hermes installer copies self-contained HookRegistry hook into supplied hoo
   tempDirectories.push(directory);
   const hooksDirectory = join(directory, "hooks");
 
-  expect(() => installHermesHook({ permitted: false, hooksDirectory })).toThrow("permission");
-  installHermesHook({ permitted: true, hooksDirectory });
+  expect(() => installHermesHook({ permitted: false, hermesHome: directory, pythonExecutable: process.execPath })).toThrow("permission");
+  installHermesHook({ permitted: true, hermesHome: directory, pythonExecutable: process.execPath });
 
   const hook = join(hooksDirectory, "vibebloat");
   expect(existsSync(join(hook, "HOOK.yaml"))).toBeTrue();
@@ -24,18 +24,17 @@ test("Hermes installer copies self-contained HookRegistry hook into supplied hoo
   expect(handler).not.toContain('ROOT / "src" / "cli.ts"');
 });
 
-test("CLI installs Hermes hook only with explicit hooks directory", () => {
+test("CLI installs Hermes hook only with explicit home and Python interpreter", () => {
   const directory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-hermes-cli-"));
   tempDirectories.push(directory);
-  const hooksDirectory = join(directory, "hooks");
   const result = Bun.spawnSync({
-    cmd: [process.execPath, join(import.meta.dir, "../src/cli.ts"), "install", "--yes", "--hermes-hooks-dir", hooksDirectory],
+    cmd: [process.execPath, join(import.meta.dir, "../src/cli.ts"), "install", "--yes", "--hermes-home", directory, "--hermes-python", process.execPath],
     cwd: join(import.meta.dir, ".."),
     env: { ...process.env, CLAUDE_CONFIG_DIR: join(directory, "claude"), CODEX_HOME: join(directory, "codex") },
   });
 
   expect(result.exitCode).toBe(0);
-  expect(existsSync(join(hooksDirectory, "vibebloat", "HOOK.yaml"))).toBeTrue();
+  expect(existsSync(join(directory, "hooks", "vibebloat", "HOOK.yaml"))).toBeTrue();
 });
 
 test("Hermes installer atomically appends one configured pre-tool bridge without clobbering hooks", () => {
@@ -45,15 +44,15 @@ test("Hermes installer atomically appends one configured pre-tool bridge without
   const configPath = join(directory, "config.yaml");
   writeFileSync(configPath, "model: test\nhooks:\n  pre_llm_call:\n    - command: existing-hook\nother: preserve\n");
 
-  installHermesHook({ permitted: true, hooksDirectory, configPath });
-  installHermesHook({ permitted: true, hooksDirectory, configPath });
+  installHermesHook({ permitted: true, hermesHome: directory, pythonExecutable: process.execPath });
+  installHermesHook({ permitted: true, hermesHome: directory, pythonExecutable: process.execPath });
 
   const config = readFileSync(configPath, "utf8");
   expect(config).toContain("model: test");
   expect(config).toContain("- command: existing-hook");
   expect(config).toContain("other: preserve");
   expect(config).toContain("pre_tool_call:");
-  expect(config).toContain("python \"");
+  expect(config).toContain(`\"${process.execPath}\" \"`);
   expect(config).toContain("matcher: '^(terminal|execute_code|patch|write_file)$'");
   expect(config.match(/vibebloat-hermes-pre-tool-call/g)?.length).toBe(1);
 });
@@ -66,12 +65,11 @@ test("Hermes installer adds only its exact pre-tool command to the upstream allo
   const allowlistPath = join(directory, "shell-hooks-allowlist.json");
   writeFileSync(allowlistPath, JSON.stringify({ approvals: [{ event: "pre_tool_call", command: "existing-hook" }], preserved: true }));
 
-  installHermesHook({ permitted: true, hooksDirectory, configPath });
-  installHermesHook({ permitted: true, hooksDirectory, configPath });
+  installHermesHook({ permitted: true, hermesHome: directory, pythonExecutable: process.execPath });
+  installHermesHook({ permitted: true, hermesHome: directory, pythonExecutable: process.execPath });
 
   const allowlist = JSON.parse(readFileSync(allowlistPath, "utf8")) as { approvals: Array<Record<string, unknown>>; preserved: boolean };
-  const command = `python "${join(hooksDirectory, "vibebloat", "handler.py")}"`;
-  const approvals = allowlist.approvals.filter((approval) => approval.event === "pre_tool_call" && approval.command === command);
+  const approvals = allowlist.approvals.filter((approval) => approval.event === "pre_tool_call" && typeof approval.command === "string" && approval.command.startsWith(`\"${process.execPath}\" \"${join(hooksDirectory, "vibebloat", "handler.py")}\" --vibebloat-handler-sha=`));
   expect(allowlist.preserved).toBeTrue();
   expect(approvals).toHaveLength(1);
   expect(approvals[0]?.approved_at).toBeString();
@@ -83,7 +81,7 @@ const upstreamHermesPython = process.env.VIBEBLOAT_HERMES_PYTHON;
 if (upstreamHermesSource && upstreamHermesPython) test("installed Hermes bridge registers upstream pre-tool hook without a TTY", () => {
   const directory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-hermes-upstream-"));
   tempDirectories.push(directory);
-  installHermesHook({ permitted: true, hooksDirectory: join(directory, "hooks"), configPath: join(directory, "config.yaml") });
+  installHermesHook({ permitted: true, hermesHome: directory, pythonExecutable: upstreamHermesPython });
   const result = Bun.spawnSync({
     cmd: [upstreamHermesPython, "-c", [
       "import json",
@@ -101,20 +99,19 @@ if (upstreamHermesSource && upstreamHermesPython) test("installed Hermes bridge 
   expect(JSON.parse(result.stdout.toString())).toEqual({ registered: 1, has_pre_tool_hook: true });
 });
 
-test("CLI configures Hermes shell bridge only with both explicit paths", () => {
+test("CLI configures Hermes shell bridge only with explicit home and Python", () => {
   const directory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-hermes-cli-config-"));
   tempDirectories.push(directory);
-  const hooksDirectory = join(directory, "hooks");
   const configPath = join(directory, "config.yaml");
   const result = Bun.spawnSync({
-    cmd: [process.execPath, join(import.meta.dir, "../src/cli.ts"), "install", "--yes", "--hermes-hooks-dir", hooksDirectory, "--hermes-config", configPath],
+    cmd: [process.execPath, join(import.meta.dir, "../src/cli.ts"), "install", "--yes", "--hermes-home", directory, "--hermes-python", process.execPath],
     cwd: join(import.meta.dir, ".."),
     env: { ...process.env, CLAUDE_CONFIG_DIR: join(directory, "claude"), CODEX_HOME: join(directory, "codex") },
   });
 
   expect(result.exitCode).toBe(0);
   expect(readFileSync(configPath, "utf8")).toContain("vibebloat-hermes-pre-tool-call");
-  expect(existsSync(join(hooksDirectory, "vibebloat", "handler.py"))).toBeTrue();
+  expect(existsSync(join(directory, "hooks", "vibebloat", "handler.py"))).toBeTrue();
 });
 
 test("Hermes installer refuses inline hook mappings without changing config", () => {
@@ -124,20 +121,19 @@ test("Hermes installer refuses inline hook mappings without changing config", ()
   const original = "hooks: []\n";
   writeFileSync(configPath, original);
 
-  expect(() => installHermesHook({ permitted: true, hooksDirectory: join(directory, "hooks"), configPath })).toThrow("block mapping");
+  expect(() => installHermesHook({ permitted: true, hermesHome: directory, pythonExecutable: process.execPath })).toThrow("block mapping");
   expect(readFileSync(configPath, "utf8")).toBe(original);
 });
 
-test("CLI does not infer a Hermes hooks directory", () => {
+test("CLI rejects legacy arbitrary Hermes config paths", () => {
   const directory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-hermes-no-auto-"));
   tempDirectories.push(directory);
-  const hermesHome = join(directory, "hermes");
   const result = Bun.spawnSync({
-    cmd: [process.execPath, join(import.meta.dir, "../src/cli.ts"), "install", "--yes"],
+    cmd: [process.execPath, join(import.meta.dir, "../src/cli.ts"), "install", "--yes", "--hermes-hooks-dir", join(directory, "hooks"), "--hermes-config", join(directory, "other.yaml")],
     cwd: join(import.meta.dir, ".."),
-    env: { ...process.env, CLAUDE_CONFIG_DIR: join(directory, "claude"), CODEX_HOME: join(directory, "codex"), HERMES_HOME: hermesHome },
+    env: { ...process.env, CLAUDE_CONFIG_DIR: join(directory, "claude"), CODEX_HOME: join(directory, "codex") },
   });
 
-  expect(result.exitCode).toBe(0);
-  expect(existsSync(join(hermesHome, "hooks", "vibebloat"))).toBeFalse();
+  expect(result.exitCode).toBe(1);
+  expect(result.stderr.toString()).toContain("--hermes-home <path> --hermes-python <path>");
 });

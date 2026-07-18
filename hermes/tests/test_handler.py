@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
@@ -17,6 +18,10 @@ SPEC = importlib.util.spec_from_file_location("vibebloat_handler", HANDLER_PATH)
 assert SPEC and SPEC.loader
 HANDLER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(HANDLER)
+
+
+def handler_digest() -> str:
+    return hashlib.sha256(HANDLER_PATH.read_bytes()).hexdigest()
 
 
 def test_gateway_command_event_uses_configured_cli_and_denies():
@@ -126,7 +131,7 @@ def test_shell_hook_executable_writes_hermes_block_json():
         return {"decision": "block", "reason": "blocked by guard"}
 
     output = io.StringIO()
-    with patch.object(HANDLER.sys, "stdin", io.StringIO(json.dumps({"hook_event_name": "pre_tool_call"}))), patch.object(HANDLER, "handle_shell_hook", side_effect=block), contextlib.redirect_stdout(output):
+    with patch.object(HANDLER.sys, "stdin", io.StringIO(json.dumps({"hook_event_name": "pre_tool_call"}))), patch.object(HANDLER.sys, "argv", [str(HANDLER_PATH), f"--vibebloat-handler-sha={handler_digest()}"]), patch.object(HANDLER, "handle_shell_hook", side_effect=block), contextlib.redirect_stdout(output):
         assert HANDLER.main() == 0
 
     assert json.loads(output.getvalue()) == {"decision": "block", "reason": "blocked by guard"}
@@ -137,10 +142,18 @@ def test_shell_hook_executable_blocks_unexpected_runtime_error():
         raise RuntimeError("guard crash")
 
     output = io.StringIO()
-    with patch.object(HANDLER.sys, "stdin", io.StringIO(json.dumps({"hook_event_name": "pre_tool_call"}))), patch.object(HANDLER, "handle_shell_hook", side_effect=crash), contextlib.redirect_stdout(output):
+    with patch.object(HANDLER.sys, "stdin", io.StringIO(json.dumps({"hook_event_name": "pre_tool_call"}))), patch.object(HANDLER.sys, "argv", [str(HANDLER_PATH), f"--vibebloat-handler-sha={handler_digest()}"]), patch.object(HANDLER, "handle_shell_hook", side_effect=crash), contextlib.redirect_stdout(output):
         assert HANDLER.main() == 0
 
     assert json.loads(output.getvalue()) == {"decision": "block", "reason": "VibeBloat hook could not evaluate Hermes input: guard crash"}
+
+
+def test_shell_hook_executable_blocks_handler_integrity_mismatch():
+    output = io.StringIO()
+    with patch.object(HANDLER.sys, "argv", [str(HANDLER_PATH), "--vibebloat-handler-sha=incorrect"]), contextlib.redirect_stdout(output):
+        assert HANDLER.main() == 0
+
+    assert json.loads(output.getvalue()) == {"decision": "block", "reason": "VibeBloat hook integrity check failed."}
 
 
 def test_copied_handler_uses_cli_contract_without_source_tree():
