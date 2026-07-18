@@ -68,7 +68,7 @@ test("Shot 5: incident compiles into an installed guard that blocks the retry", 
 
   const hook = Bun.spawnSync(["bun", cliPath, "hook"], {
     cwd: repository,
-    env: { ...process.env, VIBEBLOAT_HOME: home },
+    env: { ...process.env, USERPROFILE: home, HOME: home, VIBEBLOAT_HOME: home },
     stdin: new Blob([JSON.stringify({ tool_input: { command: "git clean -fd" } })]),
     stdout: "pipe",
     stderr: "pipe",
@@ -79,6 +79,8 @@ test("Shot 5: incident compiles into an installed guard that blocks the retry", 
   const shim = run([sh, join(shimDirectory, "git"), "clean", "-fd"], repository, {
     ...process.env,
     BUN_EXECUTABLE: process.execPath.replaceAll("\\", "/"),
+    USERPROFILE: home,
+    HOME: home,
     VIBEBLOAT_HOME: home,
   });
   expect(shim.exitCode).toBe(2);

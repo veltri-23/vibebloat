@@ -1,7 +1,9 @@
+import { createFiringRecorder } from "../audit/firings";
 import { disabledGuardIds } from "../cli/disable";
-import { guardDirectories } from "../guard-home";
+import { globalGuardHome, guardDirectories } from "../guard-home";
 import { loadGuards } from "../guard-loader";
 import { gitStashUntrackedGuard, mcpConfigWrongFileGuard } from "../guards";
+import { formatGuardRuntimeFailure } from "../hooks";
 import { Runtime } from "../runtime";
 import type { Guard } from "../types";
 import { runShellShim } from "./shell-shim";
@@ -24,13 +26,20 @@ if (!gitExecutable) {
 }
 
 try {
-  const response = runShellShim(runtimeGuards(), `git ${arguments_.join(" ")}`, "bash", new Runtime(disabledGuardIds()));
+  const response = runShellShim(runtimeGuards(), `git ${arguments_.join(" ")}`, "bash", new Runtime(
+    disabledGuardIds(),
+    undefined,
+    undefined,
+    createFiringRecorder(globalGuardHome()),
+  ));
   if (response.exitCode !== 0) {
     process.stderr.write(`${response.stderr}\n`);
+    if (response.localWarning) process.stderr.write(`${response.localWarning}\n`);
     process.exit(response.exitCode);
   }
-} catch (error) {
-  process.stderr.write(`Guard runtime failed closed: ${error instanceof Error ? error.message : "unknown error"}\n`);
+  if (response.localWarning) process.stderr.write(`${response.localWarning}\n`);
+} catch {
+  process.stderr.write(`${formatGuardRuntimeFailure("shell guard evaluation stopped")}\n`);
   process.exit(2);
 }
 

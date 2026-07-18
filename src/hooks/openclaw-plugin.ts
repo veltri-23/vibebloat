@@ -1,5 +1,6 @@
-import { evaluatePreToolUse } from "../hooks";
-import { guardDirectories } from "../guard-home";
+import { createFiringRecorder } from "../audit/firings";
+import { evaluatePreToolUse, formatAuditWarning, formatGuardRuntimeFailure } from "../hooks";
+import { globalGuardHome, guardDirectories } from "../guard-home";
 import { loadGuards } from "../guard-loader";
 import { gitStashUntrackedGuard, mcpConfigWrongFileGuard } from "../guards";
 import { withGitAliases } from "../normalization/git-aliases";
@@ -15,6 +16,7 @@ export interface BeforeToolCallEvent {
 export interface BeforeToolCallResult {
   block?: boolean;
   blockReason?: string;
+  localWarning?: string;
   requireApproval?: {
     title: string;
     description: string;
@@ -44,9 +46,11 @@ function payloadFor(event: BeforeToolCallEvent): unknown {
 
 export function beforeToolCall(guards: Guard[], event: BeforeToolCallEvent, runtime = new Runtime()): BeforeToolCallResult | undefined {
   const verdict = evaluatePreToolUse(guards, payloadFor(event), runtime, "openclaw");
+  const localWarning = formatAuditWarning(verdict.auditWarnings);
   if (!verdict.fired) return undefined;
   if (verdict.actionType === "require-confirm") {
     return {
+      ...(localWarning ? { localWarning } : {}),
       requireApproval: {
         title: "VibeBloat confirmation",
         description: verdict.reason ?? "Confirm this guarded action.",
@@ -57,7 +61,8 @@ export function beforeToolCall(guards: Guard[], event: BeforeToolCallEvent, runt
       },
     };
   }
-  return verdict.blocked ? { block: true, blockReason: verdict.reason } : undefined;
+  if (verdict.blocked) return { block: true, blockReason: verdict.reason, ...(localWarning ? { localWarning } : {}) };
+  return localWarning ? { localWarning } : undefined;
 }
 
 const builtInGuards: Guard[] = [gitStashUntrackedGuard, mcpConfigWrongFileGuard];
@@ -79,12 +84,17 @@ export function guardedBeforeToolCall(
     return beforeToolCall(
       runtimeGuards(environment, cwd),
       event,
-      new Runtime([], undefined, (input) => withGitAliases(input, { cwd, environment })),
+      new Runtime(
+        [],
+        undefined,
+        (input) => withGitAliases(input, { cwd, environment }),
+        createFiringRecorder(globalGuardHome(environment)),
+      ),
     );
-  } catch (error) {
+  } catch {
     return {
       block: true,
-      blockReason: `Guard runtime failed closed: ${error instanceof Error ? error.message : "unknown error"}`,
+      blockReason: formatGuardRuntimeFailure("OpenClaw guard evaluation stopped"),
     };
   }
 }
@@ -94,7 +104,13 @@ const openClawPlugin = {
   name: "VibeBloat",
   description: "Blocks known agent failure modes before tool execution.",
   register(api: OpenClawApi): void {
-    api.on("before_tool_call", (event) => guardedBeforeToolCall(event));
+    api.on("before_tool_call", (event) => {
+      const result = guardedBeforeToolCall(event);
+      if (!result?.localWarning) return result;
+      process.stderr.write(`${result.localWarning}\n`);
+      const { localWarning: _warning, ...response } = result;
+      return Object.keys(response).length ? response : undefined;
+    });
   },
 };
 

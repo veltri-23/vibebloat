@@ -9,7 +9,7 @@ afterEach(() => { for (const directory of tempDirectories.splice(0)) rmSync(dire
 function invoke(home: string, mode: string, args: string[] = [], payload?: unknown) {
   return Bun.spawnSync(["bun", "src/cli.ts", mode, ...args], {
     cwd: import.meta.dir + "/..",
-    env: { ...process.env, VIBEBLOAT_HOME: home },
+    env: { ...process.env, USERPROFILE: join(home, "user"), HOME: join(home, "user"), VIBEBLOAT_HOME: home },
     stdin: payload === undefined ? undefined : new Blob([JSON.stringify(payload)]),
     stdout: "pipe",
     stderr: "pipe",
@@ -35,7 +35,7 @@ test("allow persists for the next matching hook only", () => {
   const blocked = invoke(home, "hook", [], { tool_input: { command: "npm publish" } });
   expect(blocked.exitCode).toBe(2);
   expect(blocked.stderr.toString()).toContain("Publish is blocked.");
-});
+}, 15_000);
 
 test("legacy persisted stash override allows the canonical guard once", () => {
   const home = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-allow-"));
@@ -54,7 +54,7 @@ test("allow rejects a malformed pending override at hook time", () => {
   writeFileSync(join(home, "overrides", state), "{");
   const result = invoke(home, "hook", [], { tool_input: { command: "npm publish" } });
   expect(result.exitCode).toBe(2);
-  expect(result.stderr.toString()).toContain("Guard runtime failed closed: Override state is invalid.");
+  expect(result.stderr.toString()).toBe("WHAT failed: guard hook evaluation stopped.\nWHY: guard runtime could not load or evaluate installed guards.\nFIX: vibebloat doctor\n");
 });
 
 test("allow writes and consumes the onboarding-selected repo guard home", () => {

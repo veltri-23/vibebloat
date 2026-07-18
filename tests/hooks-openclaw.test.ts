@@ -96,7 +96,10 @@ test("OpenClaw fails closed when compiled guard loading fails", () => {
     { toolName: "exec", params: { command: "echo safe" } },
     { USERPROFILE: user },
     project,
-  )).toMatchObject({ block: true, blockReason: expect.stringContaining("Guard runtime failed closed") });
+  )).toEqual({
+    block: true,
+    blockReason: "WHAT failed: OpenClaw guard evaluation stopped.\nWHY: guard runtime could not load or evaluate installed guards.\nFIX: vibebloat doctor",
+  });
 });
 
 test("OpenClaw fails closed when compiled guard ids duplicate", () => {
@@ -115,5 +118,8 @@ test("OpenClaw fails closed when compiled guard ids duplicate", () => {
     { toolName: "exec", params: { command: "echo safe" } },
     { USERPROFILE: user },
     project,
-  )).toMatchObject({ block: true, blockReason: expect.stringContaining("duplicates built-in id: duplicate") });
+  )).toEqual({
+    block: true,
+    blockReason: "WHAT failed: OpenClaw guard evaluation stopped.\nWHY: guard runtime could not load or evaluate installed guards.\nFIX: vibebloat doctor",
+  });
 });

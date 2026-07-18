@@ -1,9 +1,10 @@
 import { Runtime } from "./runtime";
-import type { Event, Guard, GuardAgent, Verdict } from "./types";
+import type { Event, Guard, GuardAgent, LocalWarning, Verdict } from "./types";
 
 export interface HookResponse {
   exitCode: 0 | 2;
   stderr?: string;
+  localWarning?: string;
 }
 
 interface HookBinding {
@@ -41,12 +42,28 @@ export function evaluatePreToolUse(guards: Guard[], payload: unknown, runtime = 
   return binding ? runtime.evaluate(binding.guards, binding.event, { agent }) : { fired: false };
 }
 
+export function formatAuditWarning(warnings: readonly LocalWarning[] | undefined): string | undefined {
+  if (!warnings?.length) return undefined;
+  return "WHAT failed: firing audit update stopped.\nWHY: local firing audit storage or retention failed.\nFIX: vibebloat doctor";
+}
+
+export function formatGuardRuntimeFailure(operation: string): string {
+  return `WHAT failed: ${operation}.\nWHY: guard runtime could not load or evaluate installed guards.\nFIX: vibebloat doctor`;
+}
+
+export function hookResponseForVerdict(verdict: Verdict): HookResponse {
+  const localWarning = formatAuditWarning(verdict.auditWarnings);
+  return verdict.blocked
+    ? { exitCode: 2, stderr: verdict.reason, ...(localWarning ? { localWarning } : {}) }
+    : { exitCode: 0, ...(localWarning ? { localWarning } : {}) };
+}
+
 export function runPreToolUse(guards: Guard[], payload: unknown, runtime = new Runtime(), agent?: GuardAgent): HookResponse {
   const verdict = evaluatePreToolUse(guards, payload, runtime, agent);
-  return verdict.blocked ? { exitCode: 2, stderr: verdict.reason } : { exitCode: 0 };
+  return hookResponseForVerdict(verdict);
 }
 
 export function runFileGuard(guards: Guard[], event: Event, runtime = new Runtime()): HookResponse {
   const verdict = runtime.evaluate(guards, event);
-  return verdict.blocked ? { exitCode: 2, stderr: verdict.reason } : { exitCode: 0 };
+  return hookResponseForVerdict(verdict);
 }

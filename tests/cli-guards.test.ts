@@ -8,7 +8,7 @@ afterEach(() => { for (const directory of tempDirectories.splice(0)) rmSync(dire
 function runHook(home: string, payload: unknown, environment: Record<string, string | undefined> = {}) {
   return Bun.spawnSync(["bun", "src/cli.ts", "hook"], {
     cwd: import.meta.dir + "/..",
-    env: { ...process.env, VIBEBLOAT_HOME: home, ...environment },
+    env: { ...process.env, USERPROFILE: join(home, "user"), HOME: join(home, "user"), VIBEBLOAT_HOME: home, ...environment },
     stdin: new Blob([JSON.stringify(payload)]),
     stdout: "pipe",
     stderr: "pipe",
@@ -54,7 +54,7 @@ test("hook fails closed when an installed guard is invalid", () => {
   writeFileSync(join(home, "guards", "broken.json"), "{");
   const result = runHook(home, { tool_input: { command: "echo safe" } });
   expect(result.exitCode).toBe(2);
-  expect(result.stderr.toString()).toContain("Guard runtime failed closed");
+  expect(result.stderr.toString()).toBe("WHAT failed: guard hook evaluation stopped.\nWHY: guard runtime could not load or evaluate installed guards.\nFIX: vibebloat doctor\n");
 });
 
 test("hook layers global and project guards when no home override is set", () => {
@@ -83,5 +83,5 @@ test("hook fails closed when global and project guards duplicate an id", () => {
   writeFileSync(join(user, ".vibebloat", "guards", "global.json"), JSON.stringify(guard("duplicate", "npm publish")));
   const result = Bun.spawnSync(["bun", join(import.meta.dir, "..", "src", "cli.ts"), "hook"], { cwd: project, env: { ...process.env, USERPROFILE: user, VIBEBLOAT_HOME: undefined }, stdin: new Blob([JSON.stringify({ tool_input: { command: "echo safe" } })]), stdout: "pipe", stderr: "pipe" });
   expect(result.exitCode).toBe(2);
-  expect(result.stderr.toString()).toContain("duplicates built-in id: duplicate");
+  expect(result.stderr.toString()).toBe("WHAT failed: guard hook evaluation stopped.\nWHY: guard runtime could not load or evaluate installed guards.\nFIX: vibebloat doctor\n");
 });

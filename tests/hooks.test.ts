@@ -1,6 +1,17 @@
-import { expect, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { gitStashUntrackedGuard, mcpConfigWrongFileGuard } from "../src/guards";
 import { runFileGuard, runPreToolUse } from "../src/hooks";
+
+const temporaryDirectories: string[] = [];
+afterEach(() => { for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
+
+function hookEnvironment(): NodeJS.ProcessEnv {
+  const home = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-hook-"));
+  temporaryDirectories.push(home);
+  return { ...process.env, USERPROFILE: home, HOME: home };
+}
 
 test("Claude Code Class A hook cell blocks", () => {
   expect(runPreToolUse([gitStashUntrackedGuard], { tool_input: { command: "git stash -u" } })).toMatchObject({ exitCode: 2 });
@@ -26,6 +37,7 @@ test("Codex Class B file cell blocks", () => {
 test("Codex hook transport emits a deny decision", () => {
   const result = Bun.spawnSync(["bun", "src/cli.ts", "hook", "--agent=codex"], {
     cwd: import.meta.dir + "/..",
+    env: hookEnvironment(),
     stdin: new Blob([JSON.stringify({ tool_input: { command: "git stash -u" } })]),
   });
   expect(result.exitCode).toBe(0);
@@ -37,8 +49,9 @@ test("Codex hook transport emits a deny decision", () => {
 test("unknown hook agent fails closed", () => {
   const result = Bun.spawnSync(["bun", "src/cli.ts", "hook", "--agent=unknown"], {
     cwd: import.meta.dir + "/..",
+    env: hookEnvironment(),
     stdin: new Blob([JSON.stringify({ tool_input: { command: "git stash -u" } })]),
   });
   expect(result.exitCode).toBe(2);
-  expect(new TextDecoder().decode(result.stderr)).toContain("hook agent must be claude-code, codex, or hermes");
+  expect(new TextDecoder().decode(result.stderr)).toBe("WHAT failed: guard hook evaluation stopped.\nWHY: guard runtime could not load or evaluate installed guards.\nFIX: vibebloat doctor\n");
 });

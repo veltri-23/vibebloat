@@ -1,12 +1,13 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
+import { createFiringRecorder } from "./audit/firings";
 import { disableGuard, disabledGuardIds } from "./cli/disable";
 import { runDoctor } from "./doctor/checks";
 import { globalGuardHome, guardDirectories, guardHomeForScope, guardHomes, onboardingHome } from "./guard-home";
 import { loadGuards } from "./guard-loader";
 import { forgetEmail } from "./growth/email-capture";
 import { canonicalGuardId, gitStashUntrackedGuard, mcpConfigWrongFileGuard } from "./guards";
-import { runPreToolUse } from "./hooks";
+import { formatGuardRuntimeFailure, runPreToolUse } from "./hooks";
 import { match } from "./match";
 import { closeWatcherOnSignals, hasUnenforceableFileGuard, watchGuardedWrites } from "./install/fs-guard";
 import { installNativeHooks } from "./install/orchestrator";
@@ -492,11 +493,14 @@ if (mode === "hook") {
     response = runPreToolUse(runtimeGuards(), JSON.parse(input), new Runtime(
       disabledGuards(),
       (guardId) => consumeAllowedOnce(guardId, guardHomeForScope(guardScope())),
+      undefined,
+      createFiringRecorder(globalGuardHome()),
     ), hookAgent());
-  } catch (error) {
-    response = { exitCode: 2 as const, stderr: `Guard runtime failed closed: ${error instanceof Error ? error.message : "unknown error"}` };
+  } catch {
+    response = { exitCode: 2 as const, stderr: formatGuardRuntimeFailure("guard hook evaluation stopped") };
   }
   if (response.exitCode === 2 && process.argv[3] === "--agent=codex") {
+    if (response.localWarning) process.stderr.write(`${response.localWarning}\n`);
     process.stdout.write(`${JSON.stringify({
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
@@ -507,6 +511,7 @@ if (mode === "hook") {
     process.exit(0);
   }
   if (response.stderr) process.stderr.write(`${response.stderr}\n`);
+  if (response.localWarning) process.stderr.write(`${response.localWarning}\n`);
   process.exit(response.exitCode);
 }
 

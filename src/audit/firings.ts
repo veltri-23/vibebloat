@@ -184,3 +184,10 @@ export function appendFiring(
   warnings.push(...readAndPruneFirings(globalHome, now).warnings);
   return { status: "appended", event, warnings };
 }
+
+export function createFiringRecorder(globalHome: string): (metadata: FiringMetadata) => AuditWarning[] {
+  return (metadata) => {
+    const result = appendFiring(globalHome, true, metadata);
+    return result.status === "appended" ? result.warnings : [];
+  };
+}

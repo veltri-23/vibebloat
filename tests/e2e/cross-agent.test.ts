@@ -43,7 +43,7 @@ function runCli(guardHome: string, arguments_: string[]) {
   return Bun.spawnSync({
     cmd: [process.execPath, cliPath, ...arguments_],
     cwd: repositoryRoot,
-    env: { ...process.env, VIBEBLOAT_HOME: guardHome },
+    env: { ...process.env, USERPROFILE: guardHome, HOME: guardHome, VIBEBLOAT_HOME: guardHome },
     stdin: new Blob([JSON.stringify({ tool_input: { command: "npm publish" } })]),
   });
 }
@@ -73,7 +73,7 @@ test("same learned guard denies Claude Code, Codex, OpenClaw, and Hermes", () =>
 
   expect(guardedBeforeToolCall(
     { toolName: "exec", params: { command: "npm publish" } },
-    { VIBEBLOAT_HOME: guardHome },
+    { USERPROFILE: root, HOME: root, VIBEBLOAT_HOME: guardHome },
     root,
   )).toMatchObject({ block: true, blockReason: "VibeBloat found no-publish in 1 incident." });
 
@@ -90,6 +90,8 @@ test("same learned guard denies Claude Code, Codex, OpenClaw, and Hermes", () =>
     cwd: root,
     env: {
       ...process.env,
+      USERPROFILE: root,
+      HOME: root,
       VIBEBLOAT_HOME: guardHome,
       VIBEBLOAT_CLI: createHermesCliWrapper(root),
     },
@@ -136,6 +138,8 @@ test("Hermes bridge resolves a repository Git alias before blocking a compiled g
     cwd: root,
     env: {
       ...process.env,
+      USERPROFILE: root,
+      HOME: root,
       VIBEBLOAT_HOME: guardHome,
       VIBEBLOAT_CLI: createHermesCliWrapper(root),
     },

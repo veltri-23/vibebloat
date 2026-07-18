@@ -52,4 +52,11 @@ export interface Verdict {
   warning?: string;
   quarantinedPath?: string;
   actionType?: ActionType;
+  auditWarnings?: LocalWarning[];
+}
+
+export interface LocalWarning {
+  what: string;
+  why: string;
+  fix: string;
 }

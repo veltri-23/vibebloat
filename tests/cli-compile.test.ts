@@ -32,7 +32,7 @@ function hook(project: string, command: string, environment: Record<string, stri
   const { VIBEBLOAT_HOME: _ignored, ...parentEnvironment } = process.env;
   return Bun.spawnSync(["bun", join(root, "src", "cli.ts"), "hook"], {
     cwd: project,
-    env: { ...parentEnvironment, ...environment },
+    env: { ...parentEnvironment, USERPROFILE: join(project, "user"), HOME: join(project, "user"), ...environment },
     stdin: new Blob([JSON.stringify({ tool_input: { command } })]),
     stdout: "pipe",
     stderr: "pipe",
