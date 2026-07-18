@@ -13,6 +13,8 @@ export class ControlledScrubbersUnavailableError extends Error {
   }
 }
 
+const controlledScrubberPublicKeySha256: string | undefined = undefined;
+
 function containedAbsolutePath(root: string, value: string): string {
   const path = resolve(root, value);
   const pathFromRoot = relative(root, path);
@@ -30,6 +32,9 @@ export function resolveControlledScrubberCommands(
     if (!existsSync(metadataPath)) throw new ControlledScrubbersUnavailableError();
 
     const metadata = parseReleaseMetadata(readFileSync(metadataPath, "utf8"));
+    if (!controlledScrubberPublicKeySha256 || metadata.publicKeySha256 !== controlledScrubberPublicKeySha256) {
+      throw new ControlledScrubbersUnavailableError();
+    }
     const artifact = containedAbsolutePath(packageRoot, metadata.artifact);
     const signature = containedAbsolutePath(packageRoot, metadata.signature);
     const publicKey = containedAbsolutePath(packageRoot, metadata.publicKey);
