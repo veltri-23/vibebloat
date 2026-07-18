@@ -4,6 +4,7 @@ import { replaceGuardAtomically } from "../compiler/live-compile";
 import type { GuardScope } from "../guard-home";
 import type { RunnerKind } from "./detect-runner";
 import type { GuardReviewDecision, OnboardingCheckpoint } from "./coordinator";
+import type { OnboardingPreferences } from "./preferences";
 
 export interface OnboardingState {
   gate: string;
@@ -14,6 +15,7 @@ export interface OnboardingState {
   coordinator?: OnboardingCheckpoint;
   reviewDecisions?: GuardReviewDecision[];
   returningConversations?: ReturningConversation[];
+  preferences?: OnboardingPreferences;
 }
 
 export interface ReturningConversation {
