@@ -1037,7 +1037,7 @@ if (mode === "watch") {
     await new Promise<void>((resolve) => {
       const guards = runtimeGuards();
       const watcher = watchGuardedWrites(directory, guards, (path, response) => {
-        process.stderr.write(`WHAT detected: guarded write.\nWHY: ${response.stderr ?? "filesystem guard matched after the write."}\nFIX: use a native pre-write guard.\n`);
+        process.stderr.write(`WHAT detected: guarded write quarantined.\nWHY: ${response.stderr ?? "filesystem guard rejected the write after the filesystem event."}\nFIX: inspect .vibebloat/quarantine/fs-guard\n`);
       }, new Runtime(disabledGuards()));
       let lifecycleWatcher: ReturnType<typeof watchFsGuardStopRequests> | undefined;
       const close = closeWatcherOnSignals(watcher, process, () => {
@@ -1048,7 +1048,7 @@ if (mode === "watch") {
         lifecycleWatcher = watchFsGuardStopRequests({ directory, instanceId: instanceId!, receiptPath }, close);
       } else {
         process.stdout.write(hasUnenforceableFileGuard(guards)
-          ? `Watching guarded writes in ${directory}. File guards report after writes; native hooks enforce before writes. Press Ctrl+C to stop.\n`
+          ? `Watching guarded writes in ${directory}. Rejected bytes are quarantined and prior content is restored; native hooks block before writes. Press Ctrl+C to stop.\n`
           : `Watching guarded writes in ${directory}. Press Ctrl+C to stop.\n`);
       }
     });
