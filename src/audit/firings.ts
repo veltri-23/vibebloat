@@ -13,6 +13,7 @@ const actionTypes = new Set<ActionType>(["block", "warn", "require-confirm", "qu
 const agents = new Set<GuardAgent>(["claude-code", "codex", "hermes", "openclaw"]);
 const metadataFields = new Set(["guardId", "class", "chokepoint", "actionType", "blocked", "agent"]);
 const eventFields = new Set(["schemaVersion", "eventId", "firedAt", ...metadataFields]);
+const lastFiredFields = new Set(["schemaVersion", "guardId", "lastFiredAt"]);
 
 export interface FiringMetadata {
   guardId: string;
@@ -42,6 +43,18 @@ export interface AuditSweepResult {
   warnings: AuditWarning[];
 }
 
+export interface LastFiredSummary {
+  schemaVersion: 1;
+  guardId: string;
+  lastFiredAt: string;
+}
+
+export interface LastFiredSweepResult {
+  summaries: LastFiredSummary[];
+  quarantined: number;
+  warnings: AuditWarning[];
+}
+
 export type AppendFiringResult =
   | { status: "skipped"; warnings: [] }
   | { status: "appended"; event: FiringEvent; warnings: AuditWarning[] };
@@ -52,6 +65,14 @@ function firingsDirectory(globalHome: string): string {
 
 function quarantineDirectory(globalHome: string): string {
   return join(globalHome, "audit", "quarantine", "firings");
+}
+
+function lastFiredDirectory(globalHome: string): string {
+  return join(globalHome, "audit", "last-fired");
+}
+
+function lastFiredQuarantineDirectory(globalHome: string): string {
+  return join(globalHome, "audit", "quarantine", "last-fired");
 }
 
 function secureDirectory(directory: string): void {
@@ -96,8 +117,26 @@ function parseEvent(value: unknown): FiringEvent {
   return { schemaVersion: 1, eventId: event.eventId, firedAt: event.firedAt, ...parseMetadata(Object.fromEntries(Object.entries(event).filter(([field]) => metadataFields.has(field)))) };
 }
 
+function parseLastFiredSummary(value: unknown): LastFiredSummary {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Audit last-fired summary must be an object.");
+  const summary = value as Record<string, unknown>;
+  assertExactFields(summary, lastFiredFields);
+  if (summary.schemaVersion !== 1) throw new Error("Audit last-fired schemaVersion is invalid.");
+  if (typeof summary.guardId !== "string" || !guardIdPattern.test(summary.guardId)) throw new Error("Audit last-fired guardId is invalid.");
+  if (typeof summary.lastFiredAt !== "string") throw new Error("Audit lastFiredAt is invalid.");
+  const lastFiredAt = new Date(summary.lastFiredAt);
+  if (!Number.isFinite(lastFiredAt.getTime()) || lastFiredAt.toISOString() !== summary.lastFiredAt) throw new Error("Audit lastFiredAt is invalid.");
+  return { schemaVersion: 1, guardId: summary.guardId, lastFiredAt: summary.lastFiredAt };
+}
+
 function quarantine(globalHome: string, path: string): void {
   const directory = quarantineDirectory(globalHome);
+  secureDirectory(directory);
+  renameSync(path, join(directory, `${basename(path, ".json")}-${randomUUID()}.json`));
+}
+
+function quarantineLastFired(globalHome: string, path: string): void {
+  const directory = lastFiredQuarantineDirectory(globalHome);
   secureDirectory(directory);
   renameSync(path, join(directory, `${basename(path, ".json")}-${randomUUID()}.json`));
 }
@@ -159,6 +198,57 @@ export function readAndPruneFirings(globalHome: string, now = new Date()): Audit
   return result;
 }
 
+export function readLastFiredSummaries(globalHome: string, now = new Date()): LastFiredSweepResult {
+  const directory = lastFiredDirectory(globalHome);
+  const result: LastFiredSweepResult = { summaries: [], quarantined: 0, warnings: [] };
+  const nowMilliseconds = validNow(now);
+  if (!existsSync(directory)) return result;
+  let files: string[];
+  try {
+    files = readdirSync(directory).filter((file) => file.endsWith(".json"));
+  } catch (error) {
+    result.warnings.push(warning(error, "Audit last-fired summary read failed."));
+    return result;
+  }
+  for (const file of files) {
+    const path = join(directory, file);
+    try {
+      if (!statSync(path).isFile()) throw new Error("Audit last-fired summary is not a file.");
+      const summary = parseLastFiredSummary(JSON.parse(readFileSync(path, "utf8")));
+      if (`${summary.guardId}.json` !== file) throw new Error("Audit last-fired filename does not match guardId.");
+      if (Date.parse(summary.lastFiredAt) > nowMilliseconds) throw new Error("Audit last-fired timestamp is in the future.");
+      result.summaries.push(summary);
+    } catch (error) {
+      try {
+        quarantineLastFired(globalHome, path);
+        result.quarantined += 1;
+      } catch (quarantineError) {
+        result.warnings.push(warning(quarantineError instanceof Error ? quarantineError : error, "Audit last-fired summary quarantine failed."));
+      }
+    }
+  }
+  result.summaries.sort((left, right) => left.guardId.localeCompare(right.guardId));
+  return result;
+}
+
+function updateLastFiredSummary(globalHome: string, event: FiringEvent): void {
+  const directory = lastFiredDirectory(globalHome);
+  secureDirectory(directory);
+  const path = join(directory, `${event.guardId}.json`);
+  if (existsSync(path)) {
+    try {
+      const current = parseLastFiredSummary(JSON.parse(readFileSync(path, "utf8")));
+      if (current.guardId !== event.guardId) throw new Error("Audit last-fired filename does not match guardId.");
+      if (current.lastFiredAt >= event.firedAt) return;
+    } catch {
+      quarantineLastFired(globalHome, path);
+    }
+  }
+  const summary: LastFiredSummary = { schemaVersion: 1, guardId: event.guardId, lastFiredAt: event.firedAt };
+  replaceGuardAtomically(path, `${JSON.stringify(summary)}\n`);
+  if (process.platform !== "win32") chmodSync(path, 0o600);
+}
+
 export function appendFiring(
   globalHome: string,
   fired: boolean,
@@ -180,6 +270,11 @@ export function appendFiring(
     } catch (error) {
       warnings.push(warning(error, "Audit file permission hardening failed."));
     }
+  }
+  try {
+    updateLastFiredSummary(globalHome, event);
+  } catch (error) {
+    warnings.push(warning(error, "Audit last-fired summary update failed."));
   }
   warnings.push(...readAndPruneFirings(globalHome, now).warnings);
   return { status: "appended", event, warnings };

@@ -1,20 +1,48 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { Guard, GuardAgent } from "../types";
+import { assessGuardStaleness } from "./staleness";
 
 export interface DoctorFinding {
-  status: "error" | "ok";
-  check: "proof" | "claude-hook" | "codex-hook" | "guard-bind";
+  status: "error" | "warning";
+  check: "proof" | "claude-hook" | "codex-hook" | "guard-bind" | "guard-staleness";
   message: string;
+}
+
+export interface GuardUpstreamVersions {
+  installed?: string;
+  current?: string;
 }
 
 export interface DoctorOptions {
   guardDirectory?: string;
   guardDirectories?: readonly string[];
+  dataHomes?: readonly string[];
   guards?: readonly Guard[];
+  lastFiredAtByGuard?: Readonly<Record<string, string | Date>>;
+  installedAtByGuard?: Readonly<Record<string, string | Date>>;
+  upstreamVersions?: Readonly<Record<string, GuardUpstreamVersions>>;
+  now?: Date;
   installedAgents?: readonly GuardAgent[];
   hookConfigs: { claude: string; codex: string; hermes?: string; openclaw?: string };
 }
+
+export type InstallationState = "installed" | "not-installed" | "partial";
+
+const ownedDataNames = [
+  "audit",
+  "cache",
+  "failed-ingest",
+  "overrides",
+  "compile-queue",
+  "checkpoints",
+  "receipts",
+  "onboarding.json",
+  "email.json",
+  "compile-budget.json",
+  "compile-budget.lock",
+  "disabled.json",
+] as const;
 
 function hasChokepoint(agent: GuardAgent, hookConfigs: DoctorOptions["hookConfigs"]): boolean {
   switch (agent) {
@@ -23,6 +51,67 @@ function hasChokepoint(agent: GuardAgent, hookConfigs: DoctorOptions["hookConfig
     case "hermes": return hookConfigs.hermes?.includes("vibebloat-hermes-pre-tool-call") === true;
     case "openclaw": return hookConfigs.openclaw?.includes("vibebloat") === true;
   }
+}
+
+function directoryHasData(directory: string): boolean {
+  if (!existsSync(directory)) return false;
+  try {
+    return readdirSync(directory).length > 0;
+  } catch {
+    return true;
+  }
+}
+
+export function installationState(options: DoctorOptions): InstallationState {
+  const guardDirectories = options.guardDirectories ?? (options.guardDirectory ? [options.guardDirectory] : []);
+  const hasProof = guardDirectories.some((directory) => existsSync(join(directory, "proof.json")));
+  const hasGuardData = guardDirectories.some(directoryHasData);
+  const hasOwnedData = (options.dataHomes ?? []).some((home) => ownedDataNames.some((name) => existsSync(join(home, name))));
+  const hasVibeBloatHook = Object.values(options.hookConfigs).some((config) => config?.includes("vibebloat") === true);
+  if (!hasProof && !hasGuardData && !hasOwnedData && !hasVibeBloatHook) return "not-installed";
+  if (hasProof && hasChokepoint("claude-code", options.hookConfigs) && hasChokepoint("codex", options.hookConfigs)) return "installed";
+  return "partial";
+}
+
+function latestTimestamp(values: readonly (string | Date | undefined)[]): string | Date | undefined {
+  let latest: string | Date | undefined;
+  let latestMilliseconds = Number.NEGATIVE_INFINITY;
+  for (const value of values) {
+    if (value === undefined) continue;
+    const milliseconds = value instanceof Date ? value.getTime() : Date.parse(value);
+    if (!Number.isFinite(milliseconds)) return value;
+    if (milliseconds > latestMilliseconds) {
+      latest = value;
+      latestMilliseconds = milliseconds;
+    }
+  }
+  return latest;
+}
+
+export function readInstalledAtByGuard(
+  guards: readonly Guard[],
+  guardDirectories: readonly string[],
+): Readonly<Record<string, Date>> {
+  const proofTimes = guardDirectories.flatMap((directory) => {
+    try {
+      const path = join(directory, "proof.json");
+      return existsSync(path) ? [statSync(path).mtime] : [];
+    } catch {
+      return [];
+    }
+  });
+  const proofTime = proofTimes.sort((left, right) => right.getTime() - left.getTime())[0];
+  return Object.fromEntries(guards.flatMap((guard) => {
+    for (const directory of guardDirectories) {
+      try {
+        const path = join(directory, `${guard.id}.json`);
+        if (existsSync(path)) return [[guard.id, statSync(path).mtime] as const];
+      } catch {
+        continue;
+      }
+    }
+    return proofTime ? [[guard.id, proofTime] as const] : [];
+  }));
 }
 
 export function runDoctor(options: DoctorOptions): DoctorFinding[] {
@@ -52,6 +141,27 @@ export function runDoctor(options: DoctorOptions): DoctorFinding[] {
       status: "error",
       check: "guard-bind",
       message: `Guards ${guardIds.join(", ")} require ${agent}, but doctor could not verify its native chokepoint.`,
+    });
+  }
+  for (const guard of options.guards ?? []) {
+    if (!guard.enabled) continue;
+    const versions = options.upstreamVersions?.[guard.id];
+    const lastActivityAt = latestTimestamp([
+      options.installedAtByGuard?.[guard.id],
+      options.lastFiredAtByGuard?.[guard.id],
+    ]);
+    if (lastActivityAt === undefined && !(versions?.installed && versions.current)) continue;
+    const assessment = assessGuardStaleness({
+      lastFiredAt: lastActivityAt,
+      installedUpstreamVersion: versions?.installed,
+      currentUpstreamVersion: versions?.current,
+      now: options.now ?? new Date(),
+    });
+    if (!assessment.needsReaffirmation) continue;
+    findings.push({
+      status: "warning",
+      check: "guard-staleness",
+      message: `Guard ${guard.id} needs reaffirmation: ${assessment.reasons.join(", ")}.`,
     });
   }
   return findings;

@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
-import { createFiringRecorder } from "./audit/firings";
+import { createFiringRecorder, readAndPruneFirings, readLastFiredSummaries } from "./audit/firings";
 import { disableGuard, disabledGuardIds } from "./cli/disable";
-import { runDoctor } from "./doctor/checks";
+import { installationState, readInstalledAtByGuard, runDoctor } from "./doctor/checks";
 import { globalGuardHome, guardDirectories, guardHomeForScope, guardHomes, onboardingHome } from "./guard-home";
 import { loadGuards } from "./guard-loader";
 import { forgetEmail } from "./growth/email-capture";
@@ -184,34 +184,61 @@ async function runModelCommand(command: readonly string[], candidates: HistoryCh
 }
 
 if (mode === "doctor") {
-  const base = process.env.USERPROFILE ?? process.env.HOME ?? ".";
-  const claudeHome = process.env.CLAUDE_CONFIG_DIR ?? join(base, ".claude");
-  const codexHome = process.env.CODEX_HOME ?? join(base, ".codex");
-  const hermesHome = process.env.HERMES_HOME ?? join(base, ".hermes");
-  const installedAgents: GuardAgent[] = ["claude-code", "codex"];
-  if (existsSync(hermesHome)) installedAgents.push("hermes");
-  if (process.env.OPENCLAW_SESSION) installedAgents.push("openclaw");
-  const findings = runDoctor({
-    guardDirectories: guardDirectories(),
-    guards: runtimeGuards(),
-    installedAgents,
-    hookConfigs: {
-      claude: configText(join(claudeHome, "settings.json")),
-      codex: configText(join(codexHome, "config.toml")),
-      hermes: configText(join(hermesHome, "config.yaml")),
-    },
-  });
-  if (findings.length === 0) {
-    process.stdout.write("VibeBloat doctor: healthy.\n");
-    process.exit(0);
+  try {
+    const base = process.env.USERPROFILE ?? process.env.HOME ?? ".";
+    const claudeHome = process.env.CLAUDE_CONFIG_DIR ?? join(base, ".claude");
+    const codexHome = process.env.CODEX_HOME ?? join(base, ".codex");
+    const hermesHome = process.env.HERMES_HOME ?? join(base, ".hermes");
+    const installedAgents: GuardAgent[] = ["claude-code", "codex"];
+    if (existsSync(hermesHome)) installedAgents.push("hermes");
+    if (process.env.OPENCLAW_SESSION) installedAgents.push("openclaw");
+    const directories = guardDirectories();
+    const loadedGuards = runtimeGuards();
+    const doctorOptions = {
+      guardDirectories: directories,
+      dataHomes: [...new Set([globalGuardHome(), ...guardHomes()])],
+      guards: loadedGuards,
+      installedAtByGuard: readInstalledAtByGuard(loadedGuards, directories),
+      installedAgents,
+      hookConfigs: {
+        claude: configText(join(claudeHome, "settings.json")),
+        codex: configText(join(codexHome, "config.toml")),
+        hermes: configText(join(hermesHome, "config.yaml")),
+      },
+    };
+    if (installationState(doctorOptions) === "not-installed") {
+      process.stdout.write("VibeBloat doctor: not installed.\n");
+      process.exit(0);
+    }
+    const audit = readLastFiredSummaries(globalGuardHome());
+    const lastFiredAtByGuard = Object.fromEntries(audit.summaries.map((summary) => [summary.guardId, summary.lastFiredAt]));
+    const findings = runDoctor({ ...doctorOptions, lastFiredAtByGuard });
+    const errors = findings.filter((finding) => finding.status === "error");
+    const warnings = findings.filter((finding) => finding.status === "warning");
+    if (errors.length === 0) {
+      process.stdout.write("VibeBloat doctor: healthy.\n");
+      if (warnings.length > 0) {
+        process.stdout.write(`WHAT needs review: doctor found ${warnings.length} stale guard(s).\nWHY: ${warnings.map((finding) => finding.message).join(" ")}\nFIX: inspect guard provenance; run vibebloat disable <guard-id> for obsolete guards.\n`);
+      }
+      process.exit(0);
+    }
+    process.stderr.write(`WHAT failed: doctor found ${errors.length} problem(s).\nWHY: ${errors.map((finding) => finding.message).join(" ")}\nFIX: vibebloat install --yes\n`);
+    process.exit(1);
+  } catch (error) {
+    process.stderr.write(`WHAT failed: doctor could not run.\nWHY: ${error instanceof Error ? error.message : "unknown error"}\nFIX: vibebloat doctor\n`);
+    process.exit(1);
   }
-  process.stderr.write(`WHAT failed: doctor found ${findings.length} problem(s).\nWHY: ${findings.map((finding) => finding.message).join(" ")}\nFIX: vibebloat install\n`);
-  process.exit(1);
 }
 
 if (mode === "stats") {
-  process.stdout.write(`${JSON.stringify(readLocalStats(guardDirectories()))}\n`);
-  process.exit(0);
+  try {
+    const audit = readAndPruneFirings(globalGuardHome());
+    process.stdout.write(`${JSON.stringify(readLocalStats(guardDirectories(), audit.events))}\n`);
+    process.exit(0);
+  } catch (error) {
+    process.stderr.write(`WHAT failed: local stats could not be read.\nWHY: ${error instanceof Error ? error.message : "unknown error"}\nFIX: vibebloat doctor\n`);
+    process.exit(1);
+  }
 }
 
 if (mode === "email" && process.argv[3] === "--forget") {

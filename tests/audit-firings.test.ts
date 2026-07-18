@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { appendFiring, readAndPruneFirings, type FiringMetadata } from "../src/audit/firings";
+import { appendFiring, readAndPruneFirings, readLastFiredSummaries, type FiringMetadata } from "../src/audit/firings";
 
 const temporaryDirectories: string[] = [];
 const metadata: FiringMetadata = {
@@ -34,6 +34,11 @@ test("a firing appends one closed metadata-only event atomically", () => {
   const event = JSON.parse(readFileSync(join(firings, files[0]!), "utf8"));
   expect(event).toEqual(result.status === "appended" ? result.event : undefined);
   expect(Object.keys(event).sort()).toEqual(["actionType", "agent", "blocked", "chokepoint", "class", "eventId", "firedAt", "guardId", "schemaVersion"]);
+  expect(readLastFiredSummaries(directory)).toEqual({
+    summaries: [{ schemaVersion: 1, guardId: "git-stash-u", lastFiredAt: "2026-07-18T12:34:56.789Z" }],
+    quarantined: 0,
+    warnings: [],
+  });
   if (process.platform !== "win32") {
     expect(statSync(firings).mode & 0o777).toBe(0o700);
     expect(statSync(join(firings, files[0]!)).mode & 0o777).toBe(0o600);
@@ -69,6 +74,45 @@ test("retention prunes the exact thirty-day boundary and keeps newer events", ()
   const result = readAndPruneFirings(directory, new Date("2026-07-18T12:00:00.000Z"));
   expect(result.pruned).toBe(1);
   expect(result.events.map((event) => event.guardId)).toEqual(["newer"]);
+  expect(readLastFiredSummaries(directory).summaries.map((summary) => summary.guardId)).toEqual(["boundary", "newer"]);
+});
+
+test("last-fired summary keeps the latest timestamp after event retention and older writes", () => {
+  const directory = home();
+  appendFiring(directory, true, metadata, new Date("2026-03-01T00:00:00.000Z"));
+  appendFiring(directory, true, metadata, new Date("2026-02-01T00:00:00.000Z"));
+  expect(readAndPruneFirings(directory, new Date("2026-07-18T00:00:00.000Z")).events).toEqual([]);
+  expect(readLastFiredSummaries(directory).summaries).toEqual([
+    { schemaVersion: 1, guardId: "git-stash-u", lastFiredAt: "2026-03-01T00:00:00.000Z" },
+  ]);
+});
+
+test("last-fired summary schema is closed and malformed files are quarantined", () => {
+  const directory = home();
+  const summaries = join(directory, "audit", "last-fired");
+  mkdirSync(summaries, { recursive: true });
+  writeFileSync(join(summaries, "git-stash-u.json"), JSON.stringify({
+    schemaVersion: 1,
+    guardId: "git-stash-u",
+    lastFiredAt: "2026-07-18T00:00:00.000Z",
+    command: "must-not-survive",
+  }));
+
+  expect(readLastFiredSummaries(directory)).toMatchObject({ summaries: [], quarantined: 1, warnings: [] });
+  expect(readdirSync(join(directory, "audit", "quarantine", "last-fired"))).toHaveLength(1);
+});
+
+test("future last-fired summaries are quarantined instead of suppressing staleness", () => {
+  const directory = home();
+  const summaries = join(directory, "audit", "last-fired");
+  mkdirSync(summaries, { recursive: true });
+  writeFileSync(join(summaries, "git-stash-u.json"), JSON.stringify({
+    schemaVersion: 1,
+    guardId: "git-stash-u",
+    lastFiredAt: "2026-07-19T00:00:00.000Z",
+  }));
+
+  expect(readLastFiredSummaries(directory, new Date("2026-07-18T00:00:00.000Z"))).toMatchObject({ summaries: [], quarantined: 1, warnings: [] });
 });
 
 test("malformed and future events are quarantined and excluded", () => {
