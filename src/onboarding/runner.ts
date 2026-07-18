@@ -33,13 +33,19 @@ export class OnboardingRunner {
 
   advance(): RunnerState {
     if (!autoAdvances(this.state.gate)) return this.snapshot();
+    // ponytail: SCAN stays pending until scan owner provides an outcome; runner never starts expensive work.
+    if (this.state.gate === "SCAN" && !this.context.scanOutcome) return this.snapshot();
     const next = nextFirstRunGate(this.state.gate, "", this.context);
     if (next) this.state.gate = next;
     return this.snapshot();
   }
 
   advanceAutomaticGates(): RunnerState {
-    while (autoAdvances(this.state.gate)) this.advance();
+    while (autoAdvances(this.state.gate)) {
+      const before = this.state.gate;
+      this.advance();
+      if (this.state.gate === before) break;
+    }
     return this.snapshot();
   }
 

@@ -22,6 +22,11 @@ test("no-question gates auto-advance and Cancel persists any current gate", () =
   expect(saved).toHaveLength(1);
 });
 
+test("SCAN remains pending until its owner supplies an outcome", () => {
+  const runner = new OnboardingRunner({ gate: "SCAN", answers: {} });
+  expect(runner.advanceAutomaticGates().gate).toBe("SCAN");
+});
+
 test("opening consent gate always waits for a human choice", () => {
   const runner = new OnboardingRunner({ gate: "A0", answers: {} });
   expect(runner.advanceAutomaticGates()).toMatchObject({ gate: "A0", answers: {} });

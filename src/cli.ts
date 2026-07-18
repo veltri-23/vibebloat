@@ -7,6 +7,7 @@ import { forgetEmail } from "./growth/email-capture";
 import { gitStashUntrackedGuard, mcpConfigWrongFileGuard } from "./guards";
 import { runPreToolUse } from "./hooks";
 import { installNativeHooks } from "./install/orchestrator";
+import { isGateChoice } from "./onboarding/gates";
 import { OnboardingRunner, type RunnerState } from "./onboarding/runner";
 import { loadOnboardingState, saveOnboardingState } from "./onboarding/state";
 import { Runtime } from "./runtime";
@@ -88,8 +89,9 @@ if (mode === "init") {
     process.stdout.write(`${JSON.stringify({ ...runner.snapshot(), prompt: runner.current() })}\n`);
     process.exit(0);
   }
+  const answer = process.argv[answerIndex + 1] ?? "";
   const before = runner.snapshot();
-  const next = runner.choose(process.argv[answerIndex + 1] ?? "");
+  let next = runner.choose(answer);
   try {
     if (before.gate === "F0" && next.gate === "B1") {
       const base = process.env.USERPROFILE ?? process.env.HOME ?? ".";
@@ -100,6 +102,7 @@ if (mode === "init") {
         command: "vibebloat hook",
       });
     }
+    if (isGateChoice(before.gate, answer) && !next.cancelled) next = runner.advanceAutomaticGates();
     saveOnboardingState(home, next);
   } catch (error) {
     process.stderr.write(`WHAT failed: onboarding setup stopped.\nWHY: ${error instanceof Error ? error.message : "unknown error"}\nFIX: vibebloat init --answer Yes\n`);

@@ -45,3 +45,25 @@ test("F0 consent installs native hooks before advancing", () => {
   expect(readFileSync(join(claudeHome, "settings.json"), "utf8")).toContain("vibebloat hook");
   expect(readFileSync(join(codexHome, "config.toml"), "utf8")).toContain("plugin_hooks = true");
 });
+
+test("init advances only silent gates after a valid human answer", () => {
+  const home = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-init-"));
+  temporaryDirectories.push(home);
+  writeFileSync(join(home, "onboarding.json"), JSON.stringify({ gate: "F2", answers: {} }));
+  expect(JSON.parse(init(home, "--answer", "Run it locally and free (a bit slower)").stdout.toString())).toMatchObject({ gate: "F4" });
+  expect(JSON.parse(readFileSync(join(home, "onboarding.json"), "utf8"))).toMatchObject({ gate: "F4", answers: { F2: "Run it locally and free (a bit slower)" } });
+});
+
+test("init never starts the scan from a silent transition", () => {
+  const home = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-init-"));
+  temporaryDirectories.push(home);
+  writeFileSync(join(home, "onboarding.json"), JSON.stringify({ gate: "F6", answers: {} }));
+  expect(JSON.parse(init(home, "--answer", "Skip").stdout.toString())).toMatchObject({ gate: "SCAN" });
+});
+
+test("init saves a Cancel from every gate without advancing", () => {
+  const home = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-init-"));
+  temporaryDirectories.push(home);
+  writeFileSync(join(home, "onboarding.json"), JSON.stringify({ gate: "A1", answers: {} }));
+  expect(JSON.parse(init(home, "--answer", "cancel").stdout.toString())).toMatchObject({ gate: "A1", cancelled: true });
+});
