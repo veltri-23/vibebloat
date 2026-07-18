@@ -1,10 +1,11 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
 
 export interface HermesHookInstallOptions {
   permitted: boolean;
   hooksDirectory: string;
   configPath?: string;
+  allowlistPath?: string;
   sourceDirectory?: string;
 }
 
@@ -12,14 +13,21 @@ export function installHermesHook(options: HermesHookInstallOptions): void {
   if (!options.permitted) throw new Error("Explicit setup permission is required.");
   if (!isAbsolute(options.hooksDirectory)) throw new Error("Hermes hooks directory must be absolute.");
   if (options.configPath && !isAbsolute(options.configPath)) throw new Error("Hermes config path must be absolute.");
+  if (options.allowlistPath && !isAbsolute(options.allowlistPath)) throw new Error("Hermes shell-hook allowlist path must be absolute.");
+  if (options.allowlistPath && !options.configPath) throw new Error("Hermes shell-hook allowlist requires an explicit Hermes config path.");
   const source = options.sourceDirectory ?? join(import.meta.dir, "../../hermes");
   const destination = join(options.hooksDirectory, "vibebloat");
   const handlerPath = join(destination, "handler.py");
+  const allowlistPath = options.allowlistPath ?? (options.configPath ? join(dirname(options.configPath), "shell-hooks-allowlist.json") : undefined);
   const currentConfig = options.configPath && existsSync(options.configPath) ? readFileSync(options.configPath, "utf8") : "";
+  const currentAllowlist = allowlistPath && existsSync(allowlistPath) ? readFileSync(allowlistPath, "utf8") : "";
   const updatedConfig = options.configPath ? updateHermesConfig(currentConfig, handlerPath) : undefined;
+  if (allowlistPath) assertHermesAllowlist(currentAllowlist);
   mkdirSync(destination, { recursive: true });
   copyAtomically(join(source, "HOOK.yaml"), join(destination, "HOOK.yaml"));
   copyAtomically(join(source, "handler.py"), handlerPath);
+  const updatedAllowlist = allowlistPath ? updateHermesAllowlist(currentAllowlist, bridgeCommand(handlerPath), handlerPath) : undefined;
+  if (allowlistPath && updatedAllowlist !== currentAllowlist) writeAtomically(allowlistPath, updatedAllowlist);
   if (options.configPath && updatedConfig !== currentConfig) writeAtomically(options.configPath, updatedConfig);
 }
 
@@ -38,13 +46,62 @@ function yamlSingleQuoted(value: string): string {
 }
 
 function bridgeLines(indent: string, handlerPath: string): string[] {
-  const command = `python "${handlerPath}"`;
+  const command = bridgeCommand(handlerPath);
   return [
     `${indent}# vibebloat-hermes-pre-tool-call`,
     `${indent}- command: ${yamlSingleQuoted(command)}`,
     `${indent}  matcher: '^(terminal|execute_code|patch|write_file)$'`,
     `${indent}  timeout: 10`,
   ];
+}
+
+function bridgeCommand(handlerPath: string): string {
+  return `python "${handlerPath}"`;
+}
+
+interface HermesAllowlist {
+  approvals: unknown[];
+  [key: string]: unknown;
+}
+
+function parseHermesAllowlist(source: string): HermesAllowlist {
+  if (!source.trim()) return { approvals: [] };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(source);
+  } catch {
+    throw new Error("Hermes shell-hook allowlist must be valid JSON; refusing to overwrite it.");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Hermes shell-hook allowlist must be a JSON object; refusing to overwrite it.");
+  }
+  const allowlist = parsed as HermesAllowlist;
+  if (allowlist.approvals === undefined) allowlist.approvals = [];
+  if (!Array.isArray(allowlist.approvals)) {
+    throw new Error("Hermes shell-hook allowlist approvals must be an array; refusing to overwrite it.");
+  }
+  return allowlist;
+}
+
+function assertHermesAllowlist(source: string): void {
+  parseHermesAllowlist(source);
+}
+
+function updateHermesAllowlist(source: string, command: string, handlerPath: string): string {
+  const allowlist = parseHermesAllowlist(source);
+  const alreadyApproved = allowlist.approvals.some((approval) => (
+    typeof approval === "object" && approval !== null
+      && (approval as Record<string, unknown>).event === "pre_tool_call"
+      && (approval as Record<string, unknown>).command === command
+  ));
+  if (alreadyApproved) return source;
+  allowlist.approvals.push({
+    event: "pre_tool_call",
+    command,
+    approved_at: new Date().toISOString(),
+    script_mtime_at_approval: statSync(handlerPath).mtime.toISOString(),
+  });
+  return `${JSON.stringify(allowlist, null, 2)}\n`;
 }
 
 function isStructuralLine(line: string): boolean {

@@ -58,6 +58,49 @@ test("Hermes installer atomically appends one configured pre-tool bridge without
   expect(config.match(/vibebloat-hermes-pre-tool-call/g)?.length).toBe(1);
 });
 
+test("Hermes installer adds only its exact pre-tool command to the upstream allowlist", () => {
+  const directory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-hermes-allowlist-"));
+  tempDirectories.push(directory);
+  const hooksDirectory = join(directory, "hooks");
+  const configPath = join(directory, "config.yaml");
+  const allowlistPath = join(directory, "shell-hooks-allowlist.json");
+  writeFileSync(allowlistPath, JSON.stringify({ approvals: [{ event: "pre_tool_call", command: "existing-hook" }], preserved: true }));
+
+  installHermesHook({ permitted: true, hooksDirectory, configPath });
+  installHermesHook({ permitted: true, hooksDirectory, configPath });
+
+  const allowlist = JSON.parse(readFileSync(allowlistPath, "utf8")) as { approvals: Array<Record<string, unknown>>; preserved: boolean };
+  const command = `python "${join(hooksDirectory, "vibebloat", "handler.py")}"`;
+  const approvals = allowlist.approvals.filter((approval) => approval.event === "pre_tool_call" && approval.command === command);
+  expect(allowlist.preserved).toBeTrue();
+  expect(approvals).toHaveLength(1);
+  expect(approvals[0]?.approved_at).toBeString();
+  expect(approvals[0]?.script_mtime_at_approval).toBeString();
+});
+
+const upstreamHermesSource = process.env.VIBEBLOAT_HERMES_SOURCE;
+const upstreamHermesPython = process.env.VIBEBLOAT_HERMES_PYTHON;
+if (upstreamHermesSource && upstreamHermesPython) test("installed Hermes bridge registers upstream pre-tool hook without a TTY", () => {
+  const directory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-hermes-upstream-"));
+  tempDirectories.push(directory);
+  installHermesHook({ permitted: true, hooksDirectory: join(directory, "hooks"), configPath: join(directory, "config.yaml") });
+  const result = Bun.spawnSync({
+    cmd: [upstreamHermesPython, "-c", [
+      "import json",
+      "from agent import shell_hooks",
+      "from hermes_cli.config import load_config",
+      "from hermes_cli.plugins import get_plugin_manager",
+      "shell_hooks.reset_for_tests()",
+      "registered = shell_hooks.register_from_config(load_config(), accept_hooks=False)",
+      "print(json.dumps({'registered': len(registered), 'has_pre_tool_hook': get_plugin_manager().has_hook('pre_tool_call')}))",
+    ].join("; ")],
+    env: { ...process.env, HERMES_HOME: directory, PYTHONPATH: upstreamHermesSource },
+  });
+
+  expect(result.exitCode).toBe(0);
+  expect(JSON.parse(result.stdout.toString())).toEqual({ registered: 1, has_pre_tool_hook: true });
+});
+
 test("CLI configures Hermes shell bridge only with both explicit paths", () => {
   const directory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-hermes-cli-config-"));
   tempDirectories.push(directory);
