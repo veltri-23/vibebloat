@@ -56,6 +56,8 @@ describe("Phase 0 matcher", () => {
 
   test("fails closed for Class A syntax errors before the keyword fast path", () => {
     expect(match(gitStashUntrackedGuard, { chokepoint: "shell", command: "echo 'unterminated" })).toMatchObject({ fired: true, parseError: true });
+    expect(match(gitStashUntrackedGuard, { chokepoint: "shell", command: "if then" })).toMatchObject({ fired: true, parseError: true });
+    expect(match(gitStashUntrackedGuard, { chokepoint: "shell", command: "echo )" })).toMatchObject({ fired: true, parseError: true });
   });
 
   test("bounds oversized shell input before normalization or parsing", () => {

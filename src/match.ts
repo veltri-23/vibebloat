@@ -144,10 +144,18 @@ export function match(guard: Guard, event: Event): Verdict {
     const normalizedCommand = normalizeCommand(event.command, event.variables);
     if (exceedsShellCommandLimit(normalizedCommand)) return parseErrorVerdict(guard);
     if (hasObviousSyntaxError(normalizedCommand)) return parseErrorVerdict(guard);
+    const parsedCommands = guard.class === "A" ? shellCommands(normalizedCommand) : undefined;
     if (!hasCommandKeyword(normalizedCommand, expected[0])) return { fired: false };
-    for (const candidate of shellCommands(normalizedCommand)) {
+    for (const candidate of parsedCommands ?? shellCommands(normalizedCommand)) {
       if (candidate.binary === "git" && candidate.args[0]) {
-        candidate.args[0] = event.aliases?.[candidate.args[0]] ?? candidate.args[0];
+        if (event.aliasResolutionFailed) throw new Error("Git alias normalization could not read local configuration.");
+        const alias = event.aliases?.[candidate.args[0]];
+        if (alias) {
+          if (alias.trimStart().startsWith("!")) throw new Error("Git shell aliases cannot be normalized safely.");
+          const expansion = tokenize(alias);
+          if (!expansion.length) throw new Error("Git alias has no command expansion.");
+          candidate.args.splice(0, 1, ...expansion);
+        }
       }
       if (candidate.binary !== expected[0] || candidate.args[0] !== expected[1]) continue;
       if (candidate.args.includes("--")) continue;

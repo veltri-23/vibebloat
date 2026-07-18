@@ -5,10 +5,10 @@ import { join } from "node:path";
 const tempDirectories: string[] = [];
 afterEach(() => { for (const directory of tempDirectories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
 
-function runHook(home: string, payload: unknown) {
+function runHook(home: string, payload: unknown, environment: Record<string, string | undefined> = {}) {
   return Bun.spawnSync(["bun", "src/cli.ts", "hook"], {
     cwd: import.meta.dir + "/..",
-    env: { ...process.env, VIBEBLOAT_HOME: home },
+    env: { ...process.env, VIBEBLOAT_HOME: home, ...environment },
     stdin: new Blob([JSON.stringify(payload)]),
     stdout: "pipe",
     stderr: "pipe",
@@ -35,6 +35,16 @@ test("hook loads a compiled guard from VIBEBLOAT_HOME", () => {
   const result = runHook(home, { tool_input: { command: "npm publish" } });
   expect(result.exitCode).toBe(2);
   expect(result.stderr.toString()).toContain("Publish is blocked.");
+});
+
+test("hook resolves a local Git alias before Class A evaluation", () => {
+  const home = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-alias-"));
+  tempDirectories.push(home);
+  writeFileSync(join(home, ".gitconfig"), "[alias]\n  st = stash\n");
+  const result = runHook(home, { tool_input: { command: "git st -u" } }, { HOME: home, USERPROFILE: home });
+
+  expect(result.exitCode).toBe(2);
+  expect(result.stderr.toString()).toContain("07-15 this deleted untracked files");
 });
 
 test("hook fails closed when an installed guard is invalid", () => {

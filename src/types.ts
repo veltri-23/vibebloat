@@ -38,6 +38,7 @@ export interface Event {
   path?: string;
   variables?: Record<string, string>;
   aliases?: Record<string, string>;
+  aliasResolutionFailed?: boolean;
 }
 
 export interface Verdict {

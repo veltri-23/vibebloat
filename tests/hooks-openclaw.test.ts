@@ -61,6 +61,21 @@ test("OpenClaw blocks a learned project guard", () => {
   )).toMatchObject({ block: true, blockReason: "no-publish is blocked." });
 });
 
+test("OpenClaw resolves repository Git aliases before Class A evaluation", () => {
+  const root = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-openclaw-alias-"));
+  tempDirectories.push(root);
+  const project = join(root, "project");
+  const user = join(root, "user");
+  mkdirSync(join(project, ".git"), { recursive: true });
+  writeFileSync(join(project, ".git", "config"), "[alias]\n  st = stash\n");
+
+  expect(guardedBeforeToolCall(
+    { toolName: "exec", params: { command: "git st -u" } },
+    { HOME: user, USERPROFILE: user },
+    project,
+  )).toMatchObject({ block: true, blockReason: gitStashUntrackedGuard.action.message });
+});
+
 test("OpenClaw fails closed when compiled guard loading fails", () => {
   const root = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-openclaw-"));
   tempDirectories.push(root);

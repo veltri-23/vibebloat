@@ -2,6 +2,7 @@ import { evaluatePreToolUse } from "../hooks";
 import { guardDirectories } from "../guard-home";
 import { loadGuards } from "../guard-loader";
 import { gitStashUntrackedGuard, mcpConfigWrongFileGuard } from "../guards";
+import { withGitAliases } from "../normalization/git-aliases";
 import { Runtime } from "../runtime";
 import type { Guard } from "../types";
 
@@ -41,8 +42,8 @@ function payloadFor(event: BeforeToolCallEvent): unknown {
   };
 }
 
-export function beforeToolCall(guards: Guard[], event: BeforeToolCallEvent): BeforeToolCallResult | undefined {
-  const verdict = evaluatePreToolUse(guards, payloadFor(event), new Runtime());
+export function beforeToolCall(guards: Guard[], event: BeforeToolCallEvent, runtime = new Runtime()): BeforeToolCallResult | undefined {
+  const verdict = evaluatePreToolUse(guards, payloadFor(event), runtime);
   if (!verdict.fired) return undefined;
   if (verdict.actionType === "require-confirm") {
     return {
@@ -75,7 +76,11 @@ export function guardedBeforeToolCall(
   cwd = process.cwd(),
 ): BeforeToolCallResult | undefined {
   try {
-    return beforeToolCall(runtimeGuards(environment, cwd), event);
+    return beforeToolCall(
+      runtimeGuards(environment, cwd),
+      event,
+      new Runtime([], undefined, (input) => withGitAliases(input, { cwd, environment })),
+    );
   } catch (error) {
     return {
       block: true,
