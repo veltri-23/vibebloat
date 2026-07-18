@@ -1,4 +1,4 @@
-:root { --ink-900:#1a1a1a; --ink-700:#404040; --paper:#fafaf7; --paper-tint:#f4f3ee; --line:#e6e4dc; --accent:#9e3700; --block:#d63841; --font-display:'IBM Plex Serif',serif; --font-body:'IBM Plex Sans',sans-serif; --font-mono:'JetBrains Mono',monospace; }
+:root { --ink-900:#1a1a1a; --ink-700:#404040; --paper:#fafaf7; --paper-tint:#f4f3ee; --line:#e6e4dc; --accent:#c44601; --block:#d63841; --warn:#f59e0b; --go:#2d7a3d; --font-display:'IBM Plex Serif','Charter',serif; --font-body:'IBM Plex Sans','Inter',sans-serif; --font-mono:'JetBrains Mono','Menlo',monospace; }
 * { box-sizing:border-box; }
 body { margin:0; background:var(--paper); color:var(--ink-900); font:16px/1.55 var(--font-body); }
 header, main, footer { max-width:1080px; margin:auto; padding-left:24px; padding-right:24px; }

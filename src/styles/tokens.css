@@ -1,0 +1,14 @@
+:root {
+  --ink-900: #1a1a1a;
+  --ink-700: #404040;
+  --paper: #fafaf7;
+  --paper-tint: #f4f3ee;
+  --line: #e6e4dc;
+  --accent: #c44601;
+  --block: #d63841;
+  --warn: #f59e0b;
+  --go: #2d7a3d;
+  --font-display: "IBM Plex Serif", "Charter", serif;
+  --font-body: "IBM Plex Sans", "Inter", sans-serif;
+  --font-mono: "JetBrains Mono", "Menlo", monospace;
+}
