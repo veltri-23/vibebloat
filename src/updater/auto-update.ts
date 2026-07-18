@@ -49,7 +49,7 @@ function doctorPassed(doctor: () => boolean): boolean {
   }
 }
 
-function replaceBinaryAtomically(binaryPath: string, binary: Uint8Array): void {
+export function replaceBinaryAtomically(binaryPath: string, binary: Uint8Array): void {
   const temporaryPath = join(dirname(binaryPath), `.${randomUUID()}.update`);
   const mode = statSync(binaryPath).mode;
   try {
