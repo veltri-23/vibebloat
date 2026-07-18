@@ -12,4 +12,8 @@ test("baseline site publishes local-first privacy and deletion controls", async 
     expect(text).toContain("vibebloat uninstall --yes");
   }
   expect(home).toContain('href="privacy.html"');
+  expect(home).not.toContain("fonts.googleapis.com");
+  expect(home).not.toContain("fonts.gstatic.com");
+  expect(home).toContain("BLOCKED&nbsp; guard: git-stash-u&nbsp; class: A");
+  expect(home).toContain("fix: vibebloat allow git-stash-u --once");
 });

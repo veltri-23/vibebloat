@@ -4,9 +4,6 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>VibeBloat</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Serif:wght@600&family=JetBrains+Mono&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="styles.css">
   </head>
   <body>
@@ -20,9 +17,10 @@
         <a class="button" href="#install">Install VibeBloat</a>
       </section>
       <section class="receipt" aria-label="Example block receipt">
-        <p>BLOCKED by VibeBloat</p>
-        <code>git stash -u</code>
-        <span>Untracked files remain untouched. Incident: 2026-07-15.</span>
+        <code>BLOCKED&nbsp; guard: git-stash-u&nbsp; class: A</code>
+        <code>incident: git stash -u deleted operational untracked files&nbsp; date: 2026-07-15</code>
+        <code>why: 07-15 this deleted untracked files. Use git stash -u -- &lt;path&gt; or commit first.</code>
+        <code>fix: vibebloat allow git-stash-u --once</code>
       </section>
       <section id="library" aria-labelledby="library-title">
         <p class="eyebrow">CURATED LIBRARY</p>
