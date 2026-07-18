@@ -6,6 +6,7 @@ import { loadGuards } from "./guard-loader";
 import { forgetEmail } from "./growth/email-capture";
 import { gitStashUntrackedGuard, mcpConfigWrongFileGuard } from "./guards";
 import { runPreToolUse } from "./hooks";
+import { closeWatcherOnSignals, watchGuardedWrites } from "./install/fs-guard";
 import { installNativeHooks } from "./install/orchestrator";
 import { installHermesHook } from "./install/hermes";
 import { isGateChoice } from "./onboarding/gates";
@@ -131,6 +132,27 @@ if (mode === "disable") {
   }
 }
 
+if (mode === "watch") {
+  const directory = process.argv[3];
+  if (!directory) {
+    process.stderr.write("WHAT failed: watch directory was not supplied.\nWHY: watch needs one directory path.\nFIX: vibebloat watch <directory>\n");
+    process.exit(1);
+  }
+  try {
+    await new Promise<void>((resolve) => {
+      const watcher = watchGuardedWrites(directory, runtimeGuards(), (path, response) => {
+        process.stderr.write(`WHAT blocked: guarded write at ${path}.\nWHY: ${response.stderr ?? "filesystem guard denied write."}\nFIX: change write or disable guard.\n`);
+      }, new Runtime(disabledGuardIds()));
+      closeWatcherOnSignals(watcher, process, resolve);
+      process.stdout.write(`Watching guarded writes in ${directory}. Press Ctrl+C to stop.\n`);
+    });
+    process.exit(0);
+  } catch (error) {
+    process.stderr.write(`WHAT failed: filesystem watch could not start.\nWHY: ${error instanceof Error ? error.message : "unknown error"}\nFIX: vibebloat watch <directory>\n`);
+    process.exit(1);
+  }
+}
+
 const input = await Bun.stdin.text();
 
 if (mode === "eval") {
@@ -165,5 +187,5 @@ if (mode === "hook") {
   process.exit(response.exitCode);
 }
 
-process.stderr.write("WHAT failed: expected eval, hook, disable, doctor, init, install, or email.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
+process.stderr.write("WHAT failed: expected eval, hook, disable, doctor, init, install, watch, or email.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
 process.exit(1);
