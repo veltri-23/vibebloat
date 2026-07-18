@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { readCustomAgentHomes, saveCustomAgentHome } from "../../src/onboarding/custom-agent-homes";
+import { readCustomAgentHomes, revokeCustomAgentHomes, saveCustomAgentHome } from "../../src/onboarding/custom-agent-homes";
 
 const roots: string[] = [];
 
@@ -18,6 +18,8 @@ test("custom agent homes persist atomically and reject tampered receipts", () =>
 
   expect(saveCustomAgentHome(state, "codex", codex)).toEqual({ codex });
   expect(readCustomAgentHomes(state)).toEqual({ codex });
+  expect(revokeCustomAgentHomes(state, ["codex"])).toEqual({});
+  expect(readCustomAgentHomes(state)).toEqual({});
 
   writeFileSync(join(state, "custom-agent-homes.json"), JSON.stringify({ schemaVersion: 1, owner: "vibebloat", homes: { unknown: codex } }));
   expect(() => readCustomAgentHomes(state)).toThrow("invalid");

@@ -165,6 +165,36 @@ test("doctor uses the latest firing and supplied upstream versions for staleness
   ]);
 });
 
+test("doctor verifies a receipt-selected custom Codex binding", () => {
+  const root = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-doctor-custom-codex-"));
+  tempDirectories.push(root);
+  const repository = join(root, "repo");
+  const home = join(root, "home");
+  const customCodex = join(root, "custom-codex");
+  mkdirSync(join(repository, ".vibebloat", "receipts"), { recursive: true });
+  mkdirSync(join(home, "guards"), { recursive: true });
+  mkdirSync(customCodex, { recursive: true });
+  writeFileSync(join(home, "guards", "proof.json"), "{}\n");
+  writeFileSync(join(customCodex, "config.toml"), "plugin_hooks = true\ncommand = 'vibebloat hook'\n");
+  writeFileSync(join(home, "custom-agent-homes.json"), JSON.stringify({ schemaVersion: 1, owner: "vibebloat", homes: { codex: customCodex } }));
+  writeFileSync(join(repository, ".vibebloat", "receipts", "onboarding-bindings.json"), JSON.stringify({
+    schemaVersion: 1,
+    owner: "vibebloat",
+    kind: "onboarding-bindings",
+    environments: [{ id: "codex", mechanism: "codex-pre-tool-use" }],
+    gitBaseline: "verified",
+    verifiedAt: new Date().toISOString(),
+  }));
+  const result = Bun.spawnSync(["bun", join(import.meta.dir, "..", "src", "cli.ts"), "doctor"], {
+    cwd: repository,
+    env: { ...process.env, VIBEBLOAT_HOME: home, CODEX_HOME: join(root, "wrong-codex"), CLAUDE_CONFIG_DIR: join(root, "claude"), HERMES_HOME: join(root, "hermes") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(result.exitCode, result.stderr.toString()).toBe(0);
+  expect(result.stdout.toString()).toContain("VibeBloat doctor: healthy.");
+});
+
 test("doctor reports exact guard conflicts, unreachable sources, and stale index", () => {
   const findings = runDoctor({
     guards: [

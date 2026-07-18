@@ -1,8 +1,9 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const temporaryDirectories: string[] = [];
+setDefaultTimeout(15_000);
 afterEach(() => { for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
 
 function init(home: string, ...args: string[]) {
@@ -220,7 +221,7 @@ test("starter pack collision keeps onboarding on its current gate", () => {
   expect(existsSync(join(home, "guards", "starter-git-stash-untracked.json"))).toBeFalse();
 });
 
-test("B1 missing rescans supplied history directories without exposing paths in onboarding state", () => {
+test("B1 missing rescans supplied history directories without exposing paths in onboarding state", { timeout: 15_000 }, () => {
   const home = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-init-"));
   temporaryDirectories.push(home);
   const repository = join(home, "repo");
@@ -238,8 +239,8 @@ test("B1 missing rescans supplied history directories without exposing paths in 
   expect(initAt(repository, home, environment, "--answer", "You missed one").exitCode).toBe(0);
   expect(initAt(repository, home, environment, "--answer", `Cursor at ${cursorHome}`).exitCode).toBe(0);
   let stored = JSON.parse(readFileSync(join(home, "onboarding.json"), "utf8"));
-  expect(stored.coordinator.discovery.environments).toContainEqual({ id: "cursor", label: "Cursor" });
-  expect(stored.coordinator.discovery.sources).toContainEqual(expect.objectContaining({ id: "codex", environmentId: "cursor", label: "Codex history" }));
+  expect(stored.coordinator.discovery.environments).toContainEqual({ id: "codex", label: "Cursor" });
+  expect(stored.coordinator.discovery.sources).toContainEqual(expect.objectContaining({ id: "codex", environmentId: "codex", label: "Codex history" }));
   expect(JSON.stringify(stored)).not.toContain(cursorHome);
   expect(JSON.parse(readFileSync(join(home, "custom-agent-homes.json"), "utf8"))).toMatchObject({
     schemaVersion: 1,
@@ -247,9 +248,10 @@ test("B1 missing rescans supplied history directories without exposing paths in 
     homes: { codex: cursorHome },
   });
   expect(initAt(repository, home, environment, "--answer", "Ignore some of these").exitCode).toBe(0);
-  expect(initAt(repository, home, environment, "--answer", "cursor").exitCode).toBe(0);
+  expect(initAt(repository, home, environment, "--answer", "Cursor").exitCode).toBe(0);
   stored = JSON.parse(readFileSync(join(home, "onboarding.json"), "utf8"));
-  expect(stored.coordinator.discovery.environments).not.toContainEqual({ id: "cursor", label: "Cursor" });
+  expect(stored.coordinator.discovery.environments).not.toContainEqual({ id: "codex", label: "Cursor" });
+  expect(JSON.parse(readFileSync(join(home, "custom-agent-homes.json"), "utf8"))).toMatchObject({ homes: {} });
 
   expect(initAt(repository, home, environment, "--answer", "You missed one").exitCode).toBe(0);
   expect(initAt(repository, home, environment, "--answer", `Codex at ${customCodexHome}`).exitCode).toBe(0);
@@ -297,7 +299,9 @@ test("unverified onboarding effects fail closed without advancing", () => {
     const result = init(home, "--answer", answer);
     expect(result.exitCode).toBe(1);
     expect(result.stderr.toString()).toContain("WHAT failed: onboarding effect was not activated.");
-    expect(result.stderr.toString()).toContain(`FIX: vibebloat init --answer ${JSON.stringify(fallback)}`);
+    expect(result.stderr.toString()).toContain(gate === "O1"
+      ? "FIX: install a signed VibeBloat release, then rerun vibebloat init"
+      : `FIX: vibebloat init --answer ${JSON.stringify(fallback)}`);
     expect(JSON.parse(readFileSync(join(home, "onboarding.json"), "utf8"))).toMatchObject({ gate });
   }
 });

@@ -41,7 +41,7 @@ import { validateOnboardingEffectRequirements, type EffectGateId, type Onboardin
 import { canonicalGateChoice, isGateChoice, type OnboardingContext } from "./onboarding/gates";
 import { OnboardingCoordinator, reviewDecisionForChoice, type GuardReviewDecision, type OnboardingCheckpoint } from "./onboarding/coordinator";
 import { lookupMarkdownAnswer } from "./onboarding/markdown-help";
-import { readCustomAgentHomes, saveCustomAgentHome, type CustomAgentHomes } from "./onboarding/custom-agent-homes";
+import { readCustomAgentHomes, revokeCustomAgentHomes, saveCustomAgentHome, type CustomAgentHomes } from "./onboarding/custom-agent-homes";
 import { applyOnboardingPreference, modelCommandEnvironmentName, type ModelRoute } from "./onboarding/preferences";
 import { getReturningGate, recordReturningConversation, returningRoute, type ReturningChoice } from "./onboarding/returning";
 import { runReturningService } from "./onboarding/returning-service";
@@ -414,17 +414,6 @@ function onboardingRunnerContext(
   };
 }
 
-function environmentId(label: string): string {
-  const normalized = label.trim().toLowerCase();
-  if (/claude/.test(normalized)) return "claude-code";
-  if (/codex/.test(normalized)) return "codex";
-  if (/hermes/.test(normalized)) return "hermes";
-  if (/open\s*claw/.test(normalized)) return "openclaw";
-  const id = normalized.replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-  if (!id || id.length > 80) throw new Error("Missing environment name is invalid.");
-  return id;
-}
-
 function verifiedMissingEnvironmentDirectory(path: string): string {
   if (!isAbsolute(path) || path.length > 4_096 || !existsSync(path)) {
     throw new Error("Missing environment path must be an existing absolute directory.");
@@ -448,9 +437,7 @@ function addMissingEnvironment(coordinator: OnboardingCoordinator, home: string,
   const path = verifiedMissingEnvironmentDirectory(match[2].trim().replace(/^['"]|['"]$/g, ""));
   const discovery = coordinator.discovery();
   if (!discovery) throw new Error("Environment discovery is unavailable.");
-  const id = environmentId(label);
   const environments = new Map(discovery.environments.map((environment) => [environment.id, environment]));
-  environments.set(id, { id, label });
   const customCatalog = discoverLocalHistory({
     homeDirectory: path,
     claudeHome: path,
@@ -458,14 +445,16 @@ function addMissingEnvironment(coordinator: OnboardingCoordinator, home: string,
     hermesHome: path,
   });
   const discoveredSources = customCatalog.sources;
+  if (discoveredSources.length === 0) throw new Error("Missing environment directory has no supported Claude, Codex, or Hermes history.");
   for (const source of discoveredSources) {
     saveCustomAgentHome(home, source.id, path);
+    environments.set(source.id, { id: source.id, label: discoveredSources.length === 1 ? label : source.label });
   }
   const sources = [
     ...discovery.sources.filter((candidate) => !discoveredSources.some((source) => source.id === candidate.id)),
     ...discoveredSources.map((source) => ({
       id: source.id,
-      environmentId: id,
+      environmentId: source.id,
       label: `${source.label} history`,
       lastActive: source.lastActivityAt,
       stale: source.stale,
@@ -474,7 +463,7 @@ function addMissingEnvironment(coordinator: OnboardingCoordinator, home: string,
   coordinator.reviseDiscovery({ environments: [...environments.values()], sources });
 }
 
-function ignoreEnvironments(coordinator: OnboardingCoordinator, answer: string): void {
+function ignoreEnvironments(coordinator: OnboardingCoordinator, home: string, answer: string): void {
   const discovery = coordinator.discovery();
   if (!discovery) throw new Error("Environment discovery is unavailable.");
   const requested = answer.split(",").map((value) => value.trim().toLowerCase()).filter(Boolean);
@@ -485,6 +474,11 @@ function ignoreEnvironments(coordinator: OnboardingCoordinator, answer: string):
     if (!environment) throw new Error(`Ignored environment was not discovered: ${value}`);
     ignored.add(environment.id);
   }
+  const revokedHomes = [
+    ...ignored,
+    ...discovery.sources.filter(({ environmentId }) => ignored.has(environmentId)).map(({ id }) => id),
+  ];
+  revokeCustomAgentHomes(home, revokedHomes);
   coordinator.reviseDiscovery({
     environments: discovery.environments.filter(({ id }) => !ignored.has(id)),
     sources: discovery.sources.filter(({ environmentId }) => !ignored.has(environmentId)),
@@ -630,13 +624,15 @@ async function runProductionReturningScan(
 
 function currentDoctorOptions() {
   const homes = agentHomes();
-  const hermesConfig = configText(join(homes.hermesHome, "config.yaml"));
-  const hermesEvidence = hermesHookEvidence(homes.hermesHome, hermesConfig);
+  const customHomes = readCustomAgentHomes(onboardingHome());
+  const hermesHome = customHomes.hermes ?? homes.hermesHome;
+  const hermesConfig = configText(join(hermesHome, "config.yaml"));
+  const hermesEvidence = hermesHookEvidence(hermesHome, hermesConfig);
   const bindingReceipt = readOnboardingBindingReceipt(resolve(process.cwd()));
   const receiptAgents = bindingReceipt?.environments.map(({ id }) => id)
     .filter((id): id is GuardAgent => id === "claude-code" || id === "codex" || id === "hermes" || id === "openclaw");
-  const claudeConfig = configText(homes.claudePath);
-  const codexConfig = configText(homes.codexPath);
+  const claudeConfig = configText(customHomes["claude-code"] ? join(customHomes["claude-code"], "settings.json") : homes.claudePath);
+  const codexConfig = configText(customHomes.codex ? join(customHomes.codex, "config.toml") : homes.codexPath);
   const detectedAgents: GuardAgent[] = [
     ...(claudeConfig.includes("vibebloat") ? ["claude-code" as const] : []),
     ...(codexConfig.includes("vibebloat") && /plugin_hooks\s*=\s*true/.test(codexConfig) ? ["codex" as const] : []),
@@ -1143,7 +1139,7 @@ if (mode === "init") {
     }
     if (validChoice && before.gate === "B1" && next.gate === "D1") coordinator.confirmEnvironments(true);
     if (validChoice && before.gate === "B1.missing") addMissingEnvironment(coordinator, home, effectiveAnswer);
-    if (validChoice && before.gate === "B1.ignore") ignoreEnvironments(coordinator, effectiveAnswer);
+    if (validChoice && before.gate === "B1.ignore") ignoreEnvironments(coordinator, home, effectiveAnswer);
     if (validChoice && before.gate === "D1" && next.gate === "D1") {
       const requested = argumentAssignment("--sources")?.split(",").map((id) => id.trim()).filter(Boolean);
       const known = new Set((coordinator.discovery()?.sources ?? []).map(({ id }) => id));

@@ -50,3 +50,11 @@ export function saveCustomAgentHome(directory: string, id: CustomAgentHomeId, ho
   applyAtomicFilePlans([{ path: receiptPath(directory), content: `${JSON.stringify(receipt)}\n`, mode: 0o600 }]);
   return homes;
 }
+
+export function revokeCustomAgentHomes(directory: string, identifiers: readonly string[]): CustomAgentHomes {
+  const revoked = new Set(identifiers.filter((id): id is CustomAgentHomeId => ids.has(id as CustomAgentHomeId)));
+  const homes = Object.fromEntries(Object.entries(readCustomAgentHomes(directory)).filter(([id]) => !revoked.has(id))) as CustomAgentHomes;
+  const receipt: CustomAgentHomeReceipt = { schemaVersion: 1, owner: "vibebloat", homes };
+  applyAtomicFilePlans([{ path: receiptPath(directory), content: `${JSON.stringify(receipt)}\n`, mode: 0o600 }]);
+  return homes;
+}
