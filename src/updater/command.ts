@@ -7,6 +7,7 @@ import {
   UpdateCoordinatorError,
   type UpdateCoordinatorResult,
 } from "./coordinator";
+import type { WindowsSwapStageOptions } from "./windows-swap";
 
 type CommandRunner = (command: readonly string[]) => number;
 
@@ -31,6 +32,8 @@ export interface ControlledUpdateCommandOptions {
   packageRoot: string;
   run: CommandRunner;
   selfCommand: readonly string[];
+  platform?: NodeJS.Platform;
+  scheduleWindowsSwap?: (options: WindowsSwapStageOptions) => unknown;
 }
 
 export function parseUpdateArguments(arguments_: readonly string[]): boolean {
@@ -50,7 +53,9 @@ export function runControlledUpdateCommand(options: ControlledUpdateCommandOptio
   const packageRoot = realpathSync(resolve(options.packageRoot));
   const metadataPath = controlledAsset(join(packageRoot, "release", "metadata.json"));
   const pinnedPublicKeyPath = controlledAsset(join(packageRoot, "release", "vibebloat.pub"));
-  if (options.apply && options.selfCommand.length !== 1) throw new UpdateCommandError("standalone");
+  const platform = options.platform ?? process.platform;
+  const standaloneSelfTarget = options.selfCommand.length === 1;
+  if (options.apply && !standaloneSelfTarget) throw new UpdateCommandError("standalone");
   return coordinateUpdate({
     binaryPath: options.selfCommand[0] ?? process.execPath,
     communityGuardDirectory: options.communityGuardDirectory,
@@ -61,11 +66,16 @@ export function runControlledUpdateCommand(options: ControlledUpdateCommandOptio
     run: options.run,
     doctor: options.doctor,
     apply: options.apply,
+    platform,
+    ...(platform === "win32" ? { windowsSelfUpdateTarget: standaloneSelfTarget } : {}),
+    ...(options.scheduleWindowsSwap ? { scheduleWindowsSwap: options.scheduleWindowsSwap } : {}),
   });
 }
 
 export function formatUpdateCommandResult(result: UpdateCoordinatorResult): string {
-  return result.applied
+  return result.scheduled
+    ? `Update scheduled: ${result.currentVersion} -> ${result.candidateVersion}\nDoctor and rollback run after this process exits.\n`
+    : result.applied
     ? `${formatUpdateSuccess(result.currentVersion, result.candidateVersion, result.diff)}\n`
     : `${result.preview}\n`;
 }

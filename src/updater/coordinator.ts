@@ -21,6 +21,7 @@ import type { Guard } from "../types";
 import { replaceBinaryAtomically } from "./auto-update";
 import { diffCommunityGuards, formatGuardDiff, type CommunityGuardDiff } from "./guard-diff";
 import { createRollback, rollback } from "./rollback";
+import { scheduleWindowsBinarySwap, type WindowsSwapStageOptions } from "./windows-swap";
 
 type CommandRunner = (command: readonly string[]) => number;
 
@@ -65,10 +66,14 @@ export interface UpdateCoordinatorOptions {
   automatic?: boolean;
   receiptPath?: string;
   now?: () => Date;
+  platform?: NodeJS.Platform;
+  windowsSelfUpdateTarget?: boolean;
+  scheduleWindowsSwap?: (options: WindowsSwapStageOptions) => unknown;
 }
 
 export interface UpdateCoordinatorResult {
   applied: boolean;
+  scheduled?: boolean;
   currentVersion: string;
   candidateVersion: string;
   diff: CommunityGuardDiff;
@@ -413,6 +418,11 @@ export function coordinateUpdate(options: UpdateCoordinatorOptions): UpdateCoord
     const preview = formatGuardDiff(options.currentVersion, metadata.version, diff);
     if (!options.apply) return { applied: false, currentVersion: options.currentVersion, candidateVersion: metadata.version, diff, preview };
 
+    const platform = options.platform ?? process.platform;
+    if (platform === "win32" && !options.windowsSelfUpdateTarget) {
+      throw new Error("Windows updates require a verified standalone self-update target.");
+    }
+
     let receipt: string | undefined;
     if (options.automatic) {
       if (!options.receiptPath) throw new Error("Automatic update receipt path is required.");
@@ -420,10 +430,40 @@ export function coordinateUpdate(options: UpdateCoordinatorOptions): UpdateCoord
       applyAtomicFilePlans([{ path: options.receiptPath, content: receipt, mode: 0o600 }]);
     }
 
+    const communityGuardDirectory = resolve(options.communityGuardDirectory);
+    if (platform === "win32") {
+      const stagedGuards = stageCommunityGuards(communityGuardDirectory, candidateManifest.guards);
+      const guardBackupDirectory = join(dirname(communityGuardDirectory), `.${basename(communityGuardDirectory)}.${randomUUID()}.rollback`);
+      try {
+        (options.scheduleWindowsSwap ?? scheduleWindowsBinarySwap)({
+          binaryPath: options.binaryPath,
+          candidate: verified.binary,
+          guardTransaction: {
+            directory: communityGuardDirectory,
+            candidateDirectory: stagedGuards,
+            backupDirectory: guardBackupDirectory,
+            existed: existsSync(communityGuardDirectory),
+          },
+        });
+      } catch (error) {
+        rmSync(stagedGuards, { recursive: true, force: true });
+        throw error;
+      }
+      return {
+        applied: false,
+        scheduled: true,
+        currentVersion: options.currentVersion,
+        candidateVersion: metadata.version,
+        diff,
+        preview,
+        ...(receipt ? { receipt } : {}),
+      };
+    }
+
     const binaryBackup = createRollback(options.binaryPath);
     let guardBackup: DirectoryBackup;
     try {
-      guardBackup = backupDirectory(resolve(options.communityGuardDirectory));
+      guardBackup = backupDirectory(communityGuardDirectory);
     } catch (error) {
       rmSync(binaryBackup, { force: true });
       throw error;
@@ -431,11 +471,11 @@ export function coordinateUpdate(options: UpdateCoordinatorOptions): UpdateCoord
 
     try {
       replaceBinaryAtomically(options.binaryPath, verified.binary);
-      replaceCommunityGuards(resolve(options.communityGuardDirectory), candidateManifest.guards);
+      replaceCommunityGuards(communityGuardDirectory, candidateManifest.guards);
     } catch (error) {
       try {
         rollback(options.binaryPath, binaryBackup);
-        restoreCommunityGuards(resolve(options.communityGuardDirectory), guardBackup);
+        restoreCommunityGuards(communityGuardDirectory, guardBackup);
       } catch {
         throw new UpdateCoordinatorError("rollback", options.currentVersion, metadata.version);
       }
@@ -450,7 +490,7 @@ export function coordinateUpdate(options: UpdateCoordinatorOptions): UpdateCoord
 
     try {
       rollback(options.binaryPath, binaryBackup);
-      restoreCommunityGuards(resolve(options.communityGuardDirectory), guardBackup);
+      restoreCommunityGuards(communityGuardDirectory, guardBackup);
     } catch {
       throw new UpdateCoordinatorError("rollback", options.currentVersion, metadata.version);
     }

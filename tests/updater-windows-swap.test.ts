@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   scheduleWindowsBinarySwap,
@@ -34,13 +34,26 @@ function digest(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function guardTransaction(root: string) {
+  const directory = join(root, "guards");
+  const candidateDirectory = join(root, ".guards.candidate.update");
+  const backupDirectory = join(root, ".guards.backup.rollback");
+  mkdirSync(directory);
+  mkdirSync(candidateDirectory);
+  writeFileSync(join(directory, "old.json"), "old-guard");
+  writeFileSync(join(candidateDirectory, "new.json"), "new-guard");
+  return { directory, candidateDirectory, backupDirectory, existed: true };
+}
+
 test("stages verified bytes and a digest-bound confined plan", () => {
   const value = fixture();
+  const transaction = guardTransaction(value.root);
   const bundle = stageWindowsBinarySwap({
     binaryPath: value.binaryPath,
     candidate: Buffer.from("new-binary"),
     parentPid: 42,
     powershellPath: value.powershellPath,
+    guardTransaction: transaction,
   });
   const plan = JSON.parse(readFileSync(bundle.planPath, "utf8"));
 
@@ -50,6 +63,11 @@ test("stages verified bytes and a digest-bound confined plan", () => {
   expect(readFileSync(plan.candidatePath, "utf8")).toBe("new-binary");
   expect(existsSync(plan.backupPath)).toBeFalse();
   expect(plan.originalSha256).toMatch(/^[a-f0-9]{64}$/);
+  expect(plan.guardDirectory).toBe(transaction.directory);
+  expect(plan.candidateGuardDirectory).toBe(transaction.candidateDirectory);
+  expect(plan.guardBackupDirectory).toBe(transaction.backupDirectory);
+  expect(plan.originalGuards).toEqual([{ name: "old.json", sha256: expect.stringMatching(/^[a-f0-9]{64}$/) }]);
+  expect(plan.candidateGuards).toEqual([{ name: "new.json", sha256: expect.stringMatching(/^[a-f0-9]{64}$/) }]);
   expect(readFileSync(bundle.helperPath, "utf8")).toBe(windowsSwapHelperScript);
   expect(bundle.planSha256).toMatch(/^[a-f0-9]{64}$/);
 });
@@ -141,6 +159,43 @@ test.skipIf(process.platform !== "win32")("helper restores prior binary when can
   expect(readFileSync(binaryPath, "utf8")).toContain("echo old");
   expect(readFileSync(join(root, "marker.txt"), "utf8").trim()).toBe("old");
   expect(JSON.parse(readFileSync(join(root, ".vibebloat.cmd.update-result.json"), "utf8")).status).toBe("rolled-back");
+});
+
+test.skipIf(process.platform !== "win32")("helper applies and rolls back community guards with the binary", () => {
+  const root = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-windows-swap-live-"));
+  roots.push(root);
+  const binaryPath = join(root, "vibebloat.cmd");
+  writeFileSync(binaryPath, "@exit /b 0\r\n");
+  const successful = guardTransaction(root);
+  const successBundle = stageWindowsBinarySwap({
+    binaryPath,
+    candidate: Buffer.from("@if not exist \"%~dp0guards\\new.json\" exit /b 1\r\n@exit /b 0\r\n"),
+    parentPid: 2_147_483_647,
+    powershellPath: systemPowerShell(),
+    guardTransaction: successful,
+  });
+
+  const success = Bun.spawnSync([successBundle.powershellPath, ...windowsSwapLaunch(successBundle).arguments], { stdout: "pipe", stderr: "pipe" });
+  expect(success.exitCode, success.stderr.toString()).toBe(0);
+  expect(readdirSync(successful.directory)).toEqual(["new.json"]);
+  expect(existsSync(successful.backupDirectory)).toBeFalse();
+
+  writeFileSync(binaryPath, "@exit /b 0\r\n");
+  rmSync(successful.directory, { recursive: true, force: true });
+  const failing = guardTransaction(root);
+  const failureBundle = stageWindowsBinarySwap({
+    binaryPath,
+    candidate: Buffer.from("@exit /b 1\r\n"),
+    parentPid: 2_147_483_647,
+    powershellPath: systemPowerShell(),
+    guardTransaction: failing,
+  });
+
+  const failure = Bun.spawnSync([failureBundle.powershellPath, ...windowsSwapLaunch(failureBundle).arguments], { stdout: "pipe", stderr: "pipe" });
+  expect(failure.exitCode, failure.stderr.toString()).toBe(10);
+  expect(readFileSync(binaryPath, "utf8")).toContain("exit /b 0");
+  expect(readdirSync(failing.directory)).toEqual(["old.json"]);
+  expect(existsSync(failing.backupDirectory)).toBeFalse();
 });
 
 test.skipIf(process.platform !== "win32")("helper rejects a tampered or path-escaping plan before swap", () => {

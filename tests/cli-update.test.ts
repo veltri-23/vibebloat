@@ -111,6 +111,7 @@ test("controlled command verifies both assets and preserves local guard bytes", 
       return 0;
     },
     selfCommand: [binary],
+    platform: "linux",
   });
 
   expect(commandCount).toBe(2);

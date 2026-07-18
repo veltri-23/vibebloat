@@ -75,6 +75,7 @@ function options(value: ReturnType<typeof fixture>, overrides: Record<string, un
     run: () => 0,
     doctor: () => true,
     apply: true,
+    platform: "linux",
     ...overrides,
   };
 }
@@ -244,4 +245,58 @@ test("automatic apply writes complete verified preview receipt before mutation",
   expect(receipt.preview).toBe(result.preview);
   expect(receipt.createdAt).toBe("2026-07-18T12:00:00.000Z");
   expect(receipt.digest).toMatch(/^[a-f0-9]{64}$/);
+});
+
+test("Windows apply schedules one detached binary and guard transaction without mutating live files", () => {
+  const value = fixture();
+  let scheduled: unknown;
+  const result = coordinateUpdate(options(value, {
+    platform: "win32",
+    windowsSelfUpdateTarget: true,
+    scheduleWindowsSwap: (swap: unknown) => { scheduled = swap; },
+  }));
+
+  expect(result.applied).toBeFalse();
+  expect(result.scheduled).toBeTrue();
+  expect(readFileSync(value.binary, "utf8")).toBe("old-binary");
+  expect(readdirSync(value.community)).toEqual(["old-guard.json"]);
+  const transaction = scheduled as {
+    binaryPath: string;
+    candidate: Uint8Array;
+    guardTransaction: { directory: string; candidateDirectory: string; backupDirectory: string; existed: boolean };
+  };
+  expect(transaction.binaryPath).toBe(value.binary);
+  expect(Buffer.from(transaction.candidate).toString()).toBe("new-binary");
+  expect(transaction.guardTransaction.directory).toBe(value.community);
+  expect(transaction.guardTransaction.existed).toBeTrue();
+  expect(readdirSync(transaction.guardTransaction.candidateDirectory)).toEqual(["new-guard.json"]);
+  expect(existsSync(transaction.guardTransaction.backupDirectory)).toBeFalse();
+});
+
+test("Windows detached launch failure removes staged guards and leaves live installation unchanged", () => {
+  const value = fixture();
+  let stagedDirectory = "";
+  expect(() => coordinateUpdate(options(value, {
+    platform: "win32",
+    windowsSelfUpdateTarget: true,
+    scheduleWindowsSwap: (swap: { guardTransaction?: { candidateDirectory: string } }) => {
+      stagedDirectory = swap.guardTransaction!.candidateDirectory;
+      throw new Error("spawn failed");
+    },
+  }))).toThrow(UpdateCoordinatorError);
+
+  expect(stagedDirectory).not.toBe("");
+  expect(existsSync(stagedDirectory)).toBeFalse();
+  expect(readFileSync(value.binary, "utf8")).toBe("old-binary");
+  expect(readdirSync(value.community)).toEqual(["old-guard.json"]);
+});
+
+test("Windows apply fails closed without a verified standalone self-update target", () => {
+  const value = fixture();
+
+  expect(() => coordinateUpdate(options(value, { platform: "win32" }))).toThrow(UpdateCoordinatorError);
+
+  expect(readFileSync(value.binary, "utf8")).toBe("old-binary");
+  expect(readdirSync(value.community)).toEqual(["old-guard.json"]);
+  expect(readdirSync(join(value.root, "installed")).some((entry) => entry.includes(".update") || entry.includes(".rollback"))).toBeFalse();
 });
