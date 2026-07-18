@@ -73,6 +73,40 @@ test("filesystem watcher restores the previous guarded file without losing the r
   expect(readFileSync(join(quarantineDirectory, quarantine!), "utf8")).toBe("rejected\n");
 });
 
+test("filesystem watcher recovers a second rejected write during its own callback", async () => {
+  const directory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-fs-rapid-"));
+  temporaryDirectories.push(directory);
+  const target = join(directory, ".mcp.json");
+  writeFileSync(target, "trusted\n");
+
+  await new Promise<void>((resolve, reject) => {
+    let detections = 0;
+    let timeout: ReturnType<typeof setTimeout>;
+    const watcher = watchGuardedWrites(directory, [mcpConfigWrongFileGuard], () => {
+      detections += 1;
+      if (detections === 1) writeFileSync(target, "second-rejected\n");
+      if (detections === 2) {
+        watcher.close();
+        clearTimeout(timeout);
+        resolve();
+      }
+    });
+    timeout = setTimeout(() => {
+      watcher.close();
+      reject(new Error("fs.watch did not recover both guarded writes"));
+    }, 1_000);
+    writeFileSync(target, "first-rejected\n");
+  });
+
+  expect(readFileSync(target, "utf8")).toBe("trusted\n");
+  const quarantineDirectory = join(directory, ".vibebloat", "quarantine", "fs-guard");
+  const rejected = readdirSync(quarantineDirectory)
+    .filter((entry) => entry.startsWith(".mcp.json.") && entry.endsWith(".rejected"))
+    .map((entry) => readFileSync(join(quarantineDirectory, entry), "utf8"))
+    .sort();
+  expect(rejected).toEqual(["first-rejected\n", "second-rejected\n"]);
+});
+
 test("filesystem watcher closes once when signaled", () => {
   const listeners = new Map<string, () => void>();
   const signals = {

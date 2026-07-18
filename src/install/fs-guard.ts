@@ -509,6 +509,13 @@ function snapshotGuardedFile(path: string): GuardedFileSnapshot {
   return { existed: true, content: readFileSync(path), mode: stat.mode };
 }
 
+function matchesGuardedFileSnapshot(path: string, snapshot: GuardedFileSnapshot): boolean {
+  const current = snapshotGuardedFile(path);
+  if (current.existed !== snapshot.existed) return false;
+  if (!current.existed) return true;
+  return current.content!.equals(snapshot.content!) && (current.mode! & 0o777) === (snapshot.mode! & 0o777);
+}
+
 function ensureOwnedQuarantineDirectory(root: string): string {
   let current = root;
   for (const segment of [".vibebloat", "quarantine", "fs-guard"]) {
@@ -535,21 +542,16 @@ export function watchGuardedWrites(directory: string, guards: Guard[], onDetecte
   const guarded = guardedFileNames(guards);
   const snapshots = new Map([...guarded].map((name) => [name, snapshotGuardedFile(join(root, name))]));
   const quarantineDirectory = guarded.size > 0 ? ensureOwnedQuarantineDirectory(root) : undefined;
-  const recovering = new Set<string>();
   return watch(root, { persistent: true }, (_eventType, filename) => {
     if (!filename) return;
     const name = filename.toString().replaceAll("\\", "/").replace(/^.*\//, "");
-    if (recovering.has(name)) return;
     const response = evaluateFsWrite(guards, name, runtime);
     const snapshot = snapshots.get(name);
     if (response.exitCode === 2 && snapshot) {
-      recovering.add(name);
-      try {
-        recoverGuardedFile(join(root, name), snapshot, quarantineDirectory!);
-        onDetected(name, response);
-      } finally {
-        setTimeout(() => recovering.delete(name), 50);
-      }
+      const path = join(root, name);
+      if (matchesGuardedFileSnapshot(path, snapshot)) return;
+      recoverGuardedFile(path, snapshot, quarantineDirectory!);
+      onDetected(name, response);
       return;
     }
     if (snapshot) snapshots.set(name, snapshotGuardedFile(join(root, name)));
