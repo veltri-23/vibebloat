@@ -25,6 +25,7 @@ import { allowOnce, consumeAllowedOnce } from "./runtime/override";
 import { executeCommand } from "./scrub/command";
 import { ControlledScrubbersUnavailableError, resolveControlledScrubberCommands } from "./scrub/controlled-release";
 import { createLocalOnlySink } from "./scrub/local-sink";
+import { readLocalStats } from "./stats/local";
 import type { Event, Guard } from "./types";
 
 const guards: Guard[] = [gitStashUntrackedGuard, mcpConfigWrongFileGuard];
@@ -184,6 +185,11 @@ if (mode === "doctor") {
   }
   process.stderr.write(`WHAT failed: doctor found ${findings.length} problem(s).\nWHY: ${findings.map((finding) => finding.message).join(" ")}\nFIX: vibebloat install\n`);
   process.exit(1);
+}
+
+if (mode === "stats") {
+  process.stdout.write(`${JSON.stringify(readLocalStats(guardDirectories()))}\n`);
+  process.exit(0);
 }
 
 if (mode === "email" && process.argv[3] === "--forget") {
@@ -480,5 +486,5 @@ if (mode === "hook") {
   process.exit(response.exitCode);
 }
 
-process.stderr.write("WHAT failed: expected allow, compile, eval, hook, disable, doctor, init, install, scan, watch, or email.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
+process.stderr.write("WHAT failed: expected allow, compile, eval, hook, disable, doctor, init, install, scan, stats, watch, or email.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
 process.exit(1);
