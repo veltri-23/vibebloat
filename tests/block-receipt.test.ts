@@ -8,14 +8,14 @@ function guard(action: "block" | "warn"): Guard {
     id: `receipt-${action}`,
     class: "A",
     provenance: {
-      incident: "Bearer incident-secret C:\\Users\\Hunter\\private.txt hunter@example.com \ud83d\udea8",
+      incident: "Bearer incident-secret C:\\Users\\Hunter\\private.txt hunter@example.com username=Hunter ghp_1234567890abcdef \ud83d\udea8",
       date: "2026-07-18",
       source: "local",
     },
     match: { chokepoint: "shell", command: "git status" },
     action: {
       type: action,
-      message: "Authorization: Bearer message-secret /home/hunter/private token=secret-value",
+      message: "Authorization: Bearer message-secret /home/hunter/private token=secret-value AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
       override: "malicious command",
     },
     enabled: true,
@@ -28,7 +28,7 @@ test("block receipt is four scrubbed lines with generated one-time override", ()
   expect(receipt).toContain("BLOCKED  guard: receipt-block  class: A");
   expect(receipt).toContain("date: 2026-07-18");
   expect(receipt).toContain("fix: vibebloat allow receipt-block --once");
-  expect(receipt).not.toMatch(/incident-secret|message-secret|secret-value|Hunter|hunter@example|private\.txt|malicious|\ud83d\udea8/i);
+  expect(receipt).not.toMatch(/incident-secret|message-secret|secret-value|Hunter|hunter@example|private\.txt|malicious|ghp_|AAAA|\ud83d\udea8/i);
 });
 
 test("warning receipt permits work and uses safe disable remediation", () => {
