@@ -75,7 +75,7 @@ function fixture(overrides: Partial<OnboardingCoordinatorOptions> = {}) {
         return [incident];
       },
     },
-    installBindings: async (guards) => { calls.push(`bind:${guards.map(({ id }) => id).join(",")}`); },
+    installBindings: async (guards, environmentIds) => { calls.push(`bind:${guards.map(({ id }) => id).join(",")}:${environmentIds.join(",")}`); },
     cwd: root,
     ...overrides,
   };
@@ -107,7 +107,7 @@ test("side effects stay ordered behind permission, confirmation, consent, and re
   await coordinator.install();
   expect(coordinator.prove()).toBeTrue();
 
-  expect(calls).toEqual(["discover", "verify-scrubbers", "load:hermes-history", "model", "bind:stash-untracked"]);
+  expect(calls).toEqual(["discover", "verify-scrubbers", "load:hermes-history", "model", "bind:stash-untracked:hermes"]);
   expect(coordinator.snapshot()).toMatchObject({ phase: "complete", installedGuardIds: ["stash-untracked"] });
 });
 

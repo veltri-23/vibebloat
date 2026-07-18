@@ -86,7 +86,7 @@ export interface OnboardingCoordinatorOptions {
   verifyScrubbers(): Promise<{ presidio: readonly string[]; gitleaks: readonly string[] } | void> | { presidio: readonly string[]; gitleaks: readonly string[] } | void;
   loadHistory(sourceIds: readonly string[], authorization: { confirmed: true; scrubbersVerified: true }): Promise<HistoryChunk[]>;
   scan: Omit<ScanOptions<IncidentManifest>, "publish">;
-  installBindings(guards: readonly Guard[]): Promise<void> | void;
+  installBindings(guards: readonly Guard[], environmentIds: readonly string[]): Promise<void> | void;
   environment?: NodeJS.ProcessEnv;
   cwd?: string;
   resume?: OnboardingCheckpoint;
@@ -344,7 +344,9 @@ export class OnboardingCoordinator {
     if (!scope) throw new Error("Onboarding scope is missing.");
     const home = guardHomeForScope(scope, this.options.environment, this.options.cwd);
     const guardDirectory = join(home, "guards");
-    await this.options.installBindings(guards);
+    if (!this.#discovery) throw new Error("Onboarding discovery is missing before binding install.");
+    const environmentIds = unique(this.#discovery.environments.map(({ id }) => id));
+    await this.options.installBindings(guards, environmentIds);
     applyAtomicFilePlans([
       ...guards.map((guard) => ({ path: join(guardDirectory, `${guard.id}.json`), content: `${JSON.stringify(guard)}\n` })),
       {
