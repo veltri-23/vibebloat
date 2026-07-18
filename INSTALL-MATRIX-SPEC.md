@@ -12,6 +12,8 @@
 - Explicit permission is required: `vibebloat install --yes`.
 - Keep existing agent configuration valid. The installer refuses unsafe Hermes
   config shapes instead of overwriting them.
+- VibeBloat runs first in supported PreToolUse and Git-hook chains, then leaves
+  every pre-existing hook in its original relative order.
 
 ## Native agents
 
@@ -26,6 +28,12 @@ The current CLI configures Claude Code and Codex with:
 ```
 vibebloat install --yes
 ```
+
+For Claude Code and Codex, the installer inserts the VibeBloat PreToolUse entry
+before existing entries. Re-running install is idempotent and does not reorder the
+remaining chain. Fallback Git hooks keep the shebang first, then VibeBloat, then
+the original hook body. OpenClaw extension order is host-owned; installation must
+not claim first position unless the host reports it.
 
 OpenClaw has a packaged runtime extension but no separate CLI install flag yet.
 Do not claim it is installed until the host loads the extension.

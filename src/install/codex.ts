@@ -26,5 +26,9 @@ export function withCodexPreToolUseHook(config: string, command: string): string
 
   const encodedCommand = tomlString(command);
   if (next.includes(`command = ${encodedCommand}`)) return next;
-  return `${next.trimEnd()}\n\n[[hooks.PreToolUse]]\nmatcher = "Bash|apply_patch"\n\n[[hooks.PreToolUse.hooks]]\ntype = "command"\ncommand = ${encodedCommand}\n`;
+  const hook = `[[hooks.PreToolUse]]\nmatcher = "Bash|apply_patch"\n\n[[hooks.PreToolUse.hooks]]\ntype = "command"\ncommand = ${encodedCommand}\n\n`;
+  const firstHook = next.search(/^\[\[hooks\.PreToolUse\]\]\s*$/m);
+  return firstHook < 0
+    ? `${next.trimEnd()}\n\n${hook.trimEnd()}\n`
+    : `${next.slice(0, firstHook)}${hook}${next.slice(firstHook)}`;
 }

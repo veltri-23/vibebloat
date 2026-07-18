@@ -10,7 +10,7 @@ export function withClaudePreToolUseHook(settings: ClaudeSettings, command: stri
     ...settings,
     hooks: {
       ...settings.hooks,
-      PreToolUse: [...preToolUse, { matcher: "Bash|Write|Edit", hooks: [{ type: "command", command }] }],
+      PreToolUse: [{ matcher: "Bash|Write|Edit", hooks: [{ type: "command", command }] }, ...preToolUse],
     },
   };
 }

@@ -9,7 +9,7 @@ afterEach(() => {
   for (const directory of tempDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
-test("git hook install appends once without replacing an existing hook", () => {
+test("git hook install runs first after the shebang without replacing an existing hook", () => {
   const directory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-git-"));
   tempDirectories.push(directory);
   const hookPath = join(directory, "pre-commit");
@@ -18,5 +18,5 @@ test("git hook install appends once without replacing an existing hook", () => {
   installGitHook(hookPath, "bun vibebloat hook");
   installGitHook(hookPath, "bun vibebloat hook");
 
-  expect(readFileSync(hookPath, "utf8")).toBe("#!/bin/sh\necho existing\n# vibebloat:start\nbun vibebloat hook\n# vibebloat:end\n");
+  expect(readFileSync(hookPath, "utf8")).toBe("#!/bin/sh\n# vibebloat:start\nbun vibebloat hook\n# vibebloat:end\necho existing\n");
 });

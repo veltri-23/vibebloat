@@ -15,3 +15,10 @@ test("Codex hook install creates missing feature section", () => {
   expect(installed).toContain("[features]\nplugin_hooks = true");
   expect(installed).toContain('command = "C:\\\\Tools\\\\vibebloat hook --agent=codex"');
 });
+
+test("Codex installs VibeBloat before an existing PreToolUse chain", () => {
+  const existing = '[[hooks.PreToolUse]]\nmatcher = "Bash"\n\n[[hooks.PreToolUse.hooks]]\ntype = "command"\ncommand = "existing hook"\n';
+  const installed = withCodexPreToolUseHook(existing, "vibebloat hook --agent=codex");
+
+  expect(installed.indexOf('command = "vibebloat hook --agent=codex"')).toBeLessThan(installed.indexOf('command = "existing hook"'));
+});

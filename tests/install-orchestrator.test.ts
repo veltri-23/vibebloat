@@ -18,7 +18,7 @@ test("installer changes configs only after explicit permission", () => {
   expect(readFileSync(codex, "utf8")).toContain("vibebloat hook --agent=codex");
 });
 
-test("installer wires verified shim and append-only hooks without starting a watcher", () => {
+test("installer wires verified shim and ordered hooks without starting a watcher", () => {
   const directory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-install-"));
   tempDirectories.push(directory);
   const claude = join(directory, "claude.json"); const codex = join(directory, "config.toml");
@@ -34,5 +34,5 @@ test("installer wires verified shim and append-only hooks without starting a wat
     },
   })).toBeUndefined();
 
-  expect(readFileSync(hook, "utf8")).toBe("#!/bin/sh\necho existing\n# vibebloat:start\nvibebloat hook\n# vibebloat:end\n");
+  expect(readFileSync(hook, "utf8")).toBe("#!/bin/sh\n# vibebloat:start\nvibebloat hook\n# vibebloat:end\necho existing\n");
 });
