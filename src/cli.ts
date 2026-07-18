@@ -23,6 +23,7 @@ import { OnboardingRunner, type RunnerState } from "./onboarding/runner";
 import { loadOnboardingState, saveOnboardingState } from "./onboarding/state";
 import { Runtime } from "./runtime";
 import { allowOnce, consumeAllowedOnce } from "./runtime/override";
+import { parseGuard } from "./schema";
 import { executeCommand } from "./scrub/command";
 import { ControlledScrubbersUnavailableError, resolveControlledScrubberCommands } from "./scrub/controlled-release";
 import { createLocalOnlySink } from "./scrub/local-sink";
@@ -477,7 +478,7 @@ const input = await Bun.stdin.text();
 if (mode === "eval") {
   try {
     const { guard, event } = JSON.parse(input) as { guard: Guard; event: Event };
-    process.stdout.write(`${JSON.stringify(match(guard, event))}\n`);
+    process.stdout.write(`${JSON.stringify(match(parseGuard(guard), event))}\n`);
     process.exit(0);
   } catch (error) {
     process.stderr.write(`WHAT failed: eval input could not be processed.\nWHY: ${error instanceof Error ? error.message : "unknown error"}\nFIX: provide a guard and event JSON object\n`);

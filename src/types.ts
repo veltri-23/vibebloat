@@ -16,6 +16,7 @@ export type Action =
   | (ActionBase & { type: "run-check"; check: string });
 
 export interface Guard {
+  schemaVersion?: 1;
   id: string;
   class: GuardClass;
   provenance: { incident: string; date: string; source: string };

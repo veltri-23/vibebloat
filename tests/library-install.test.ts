@@ -12,6 +12,7 @@ test("library refuses guard install without runner proof", () => {
   tempDirectories.push(directory);
   expect(() => installVerifiedGuard(directory, gitStashUntrackedGuard)).toThrow("proof");
   writeFileSync(join(directory, "proof.json"), JSON.stringify({ status: "pass" }));
+  expect(() => installVerifiedGuard(directory, { ...gitStashUntrackedGuard, schemaVersion: 2 } as never)).toThrow("schemaVersion must be 1");
   installVerifiedGuard(directory, gitStashUntrackedGuard);
   expect(JSON.parse(readFileSync(join(directory, "git-stash-u.json"), "utf8"))).toMatchObject({ id: "git-stash-u" });
 });

@@ -2,6 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadGuards } from "../src/guard-loader";
+import { gitStashUntrackedGuard, mcpConfigWrongFileGuard } from "../src/guards";
+import { match } from "../src/match";
 import { parseGuard } from "../src/schema";
 
 const validGuard = {
@@ -27,6 +29,27 @@ describe("guard schema", () => {
     expect(parseGuard(validGuard)).toEqual(validGuard);
   });
 
+  test("treats missing schema version and explicit v1 identically", () => {
+    const implicit = parseGuard(validGuard);
+    const explicit = parseGuard({ ...validGuard, schemaVersion: 1 });
+    const event = { chokepoint: "shell" as const, command: "git stash -u" };
+    expect(implicit.schemaVersion ?? 1).toBe(explicit.schemaVersion);
+    expect(match(implicit, event)).toEqual(match(explicit, event));
+  });
+
+  test("rejects unsupported schema versions", () => {
+    for (const schemaVersion of [0, 2, "1", null]) {
+      expect(() => parseGuard({ ...validGuard, schemaVersion })).toThrow("schemaVersion must be 1");
+    }
+  });
+
+  test("rejects unknown fields at every closed schema level", () => {
+    expect(() => parseGuard({ ...validGuard, executable: "payload" })).toThrow("top-level guard contains unknown field executable");
+    expect(() => parseGuard({ ...validGuard, provenance: { ...validGuard.provenance, transcript: "raw" } })).toThrow("provenance contains unknown field transcript");
+    expect(() => parseGuard({ ...validGuard, match: { ...validGuard.match, condition: "always" } })).toThrow("match contains unknown field condition");
+    expect(() => parseGuard({ ...validGuard, action: { ...validGuard.action, script: "run me" } })).toThrow("action contains unknown field script");
+  });
+
   test("rejects unknown action types and executable payloads", () => {
     expect(() => parseGuard({ ...validGuard, action: { ...validGuard.action, type: "shell-script", command: "rm -rf /" } })).toThrow();
   });
@@ -41,5 +64,27 @@ describe("guard schema", () => {
     tempDirectories.push(directory);
     writeFileSync(join(directory, "guard.json"), JSON.stringify(validGuard));
     expect(loadGuards(directory)).toEqual([validGuard]);
+  });
+
+  test("loads current built-in and community-compatible guard shapes", () => {
+    const communityGuard = { ...validGuard, id: "community-stash", tier: "community" };
+    expect([gitStashUntrackedGuard, mcpConfigWrongFileGuard, validGuard, communityGuard].map(parseGuard)).toEqual([
+      gitStashUntrackedGuard,
+      mcpConfigWrongFileGuard,
+      validGuard,
+      communityGuard,
+    ]);
+  });
+
+  test("eval rejects unsupported schema before matching", () => {
+    const result = Bun.spawnSync(["bun", "src/cli.ts", "eval"], {
+      cwd: import.meta.dir + "/..",
+      stdin: new TextEncoder().encode(JSON.stringify({
+        guard: { ...validGuard, schemaVersion: 2 },
+        event: { chokepoint: "shell", command: "git stash -u" },
+      })),
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain("schemaVersion must be 1");
   });
 });

@@ -69,6 +69,7 @@ A current community shell guard looks like:
 Community validation additionally requires:
 
 - `tier` is `community`.
+- `schemaVersion` is omitted for implicit v1 or is exactly `1`.
 - `confidence` is explicit; low-confidence guards use `warn`, never `block`.
 - `binds` is non-empty and contains only supported agent IDs.
 - Shell guards have `match.command`; file guards have `match.path`.

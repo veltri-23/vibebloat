@@ -2,6 +2,7 @@ import { mkdirSync, renameSync, watch, writeFileSync, type FSWatcher } from "nod
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { Runtime } from "../runtime";
+import { parseGuard } from "../schema";
 import type { Event, Guard } from "../types";
 import { guardHomeForScope, type GuardScope } from "../guard-home";
 import { claimCompileBudget, drainQueuedCompileJobs, enqueueCompileJob, type CompileTrigger, type QueueDrainResult } from "./budget";
@@ -39,12 +40,13 @@ export function watchGuardDirectory(directory: string, onChange: (path: string) 
 }
 
 export function compileLive(directory: string, guard: Guard, event: Event): { status: "pass" | "fail" } {
-  const verdict = new Runtime().evaluate([guard], event);
+  const validatedGuard = parseGuard(guard);
+  const verdict = new Runtime().evaluate([validatedGuard], event);
   if (!verdict.fired) {
     writeProof(directory, { status: "fail", cases: ["synthetic event did not fire"] });
     return { status: "fail" };
   }
-  replaceGuardAtomically(join(directory, `${guard.id}.json`), `${JSON.stringify(guard)}\n`);
+  replaceGuardAtomically(join(directory, `${validatedGuard.id}.json`), `${JSON.stringify(validatedGuard)}\n`);
   writeProof(directory, { status: "pass", cases: ["synthetic event fired"] });
   return { status: "pass" };
 }
