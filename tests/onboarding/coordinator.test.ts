@@ -201,6 +201,38 @@ test("checkpoint resumes without rereading history before scan", async () => {
   expect(await resumed.scan()).toMatchObject({ phase: "review", incidentCount: 1 });
 });
 
+test("interrupted onboarding scan resumes post-scrub without rereading history", async () => {
+  let modelCalls = 0;
+  const original = fixture({
+    scan: {
+      presidioCommand: presidioRedact,
+      gitleaksCommand: cleanScrubber,
+      localSink: createLocalOnlySink(join(tmpdir(), `vibebloat-onboarding-resume-${crypto.randomUUID()}`)),
+      modelPass: async () => { modelCalls += 1; throw new Error("model interrupted"); },
+    },
+  });
+  await reachPrivacy(original.coordinator);
+  original.coordinator.consent(true);
+  await expect(original.coordinator.scan()).rejects.toThrow("model interrupted");
+
+  const resumed = new OnboardingCoordinator({
+    ...original.options,
+    resume: original.coordinator.checkpoint(),
+    loadHistory: async () => { throw new Error("history must not be reread"); },
+    scan: {
+      ...original.options.scan,
+      modelPass: async (candidates) => {
+        modelCalls += 1;
+        expect(candidates[0]).toMatchObject({ frequency: 1, evidenceRefs: ["hermes:session-1:0:0"] });
+        return [incident];
+      },
+    },
+  });
+
+  expect(await resumed.scan()).toMatchObject({ phase: "review", incidentCount: 1 });
+  expect(modelCalls).toBe(2);
+});
+
 test("tampered checkpoint cannot restore unknown selected history", async () => {
   const original = fixture();
   await reachPrivacy(original.coordinator);

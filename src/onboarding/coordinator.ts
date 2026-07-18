@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { compileGuard } from "../compiler/codex-fill";
 import { guardHomeForScope, type GuardScope } from "../guard-home";
@@ -72,6 +73,7 @@ export interface OnboardingSnapshot {
 }
 
 export interface OnboardingCheckpoint extends OnboardingSnapshot {
+  scanRunId?: string;
   discovery?: OnboardingDiscovery;
   incidents: IncidentManifest[];
   approved: Array<{ incident: IncidentManifest; confidence: "high" | "low" }>;
@@ -104,6 +106,11 @@ function syntheticEvent(guard: Guard): Event {
 }
 
 function assertSafeIncident(incident: IncidentManifest): void {
+  const required = ["incident_id", "class", "chokepoint", "condition", "evidence_refs", "severity", "frequency", "recency"];
+  const allowed = new Set([...required, "command", "path"]);
+  if (required.some((key) => !(key in incident)) || Object.keys(incident).some((key) => !allowed.has(key))) {
+    throw new Error("Mined incident has an invalid schema.");
+  }
   const serialized = JSON.stringify(incident);
   if (rawSecret.test(serialized)) throw new Error("Mined incident contains unsanitized secret material.");
   if (email.test(serialized)) throw new Error("Mined incident contains personal data.");
@@ -111,6 +118,10 @@ function assertSafeIncident(incident: IncidentManifest): void {
   if (incident.path && absolutePath.test(incident.path)) throw new Error("Mined incident path must be repository-relative.");
   if (incident.evidence_refs.some((reference) => absolutePath.test(reference))) throw new Error("Mined incident evidence must not contain absolute paths.");
   compileGuard(incident, incident.severity >= 4 ? "high" : "low");
+}
+
+function assertSafeIncidents(incidents: readonly IncidentManifest[]): void {
+  incidents.forEach(assertSafeIncident);
 }
 
 function unique(values: readonly string[]): string[] {
@@ -144,10 +155,12 @@ export class OnboardingCoordinator {
   #approved: Array<{ incident: IncidentManifest; confidence: "high" | "low" }> = [];
   #installed: Guard[] = [];
   #cancelled = false;
+  #scanRunId = randomUUID();
 
   constructor(private readonly options: OnboardingCoordinatorOptions) {
     if (!options.resume) return;
     const checkpoint = structuredClone(options.resume);
+    if (checkpoint.scanRunId !== undefined && !/^[a-f0-9-]{36}$/.test(checkpoint.scanRunId)) throw new Error("Checkpoint scan identity is invalid.");
     if (checkpoint.discovery) assertSafeDiscovery(checkpoint.discovery);
     checkpoint.incidents.forEach(assertSafeIncident);
     checkpoint.approved.forEach(({ incident }) => assertSafeIncident(incident));
@@ -165,6 +178,7 @@ export class OnboardingCoordinator {
     this.#approved = checkpoint.approved;
     this.#installed = checkpoint.installed.map((guard) => parseGuard(JSON.stringify(guard)));
     this.#cancelled = checkpoint.cancelled;
+    if (checkpoint.scanRunId) this.#scanRunId = checkpoint.scanRunId;
   }
 
   snapshot(): OnboardingSnapshot {
@@ -184,6 +198,7 @@ export class OnboardingCoordinator {
   checkpoint(): OnboardingCheckpoint {
     return {
       ...this.snapshot(),
+      scanRunId: this.#scanRunId,
       discovery: this.discovery(),
       incidents: this.incidents(),
       approved: this.#approved.map(({ incident, confidence }) => ({
@@ -271,21 +286,27 @@ export class OnboardingCoordinator {
       this.#phase = "paused";
       return this.#save();
     }
-    const chunks = await this.options.loadHistory(this.#selectedSourceIds, { confirmed: true, scrubbersVerified: true });
     let mined: IncidentManifest[] = [];
-    const result = await scanHistory(chunks, {
-      ...this.options.scan,
-      ...(verifiedScrubbers ? {
-        presidioCommand: verifiedScrubbers.presidio,
-        gitleaksCommand: verifiedScrubbers.gitleaks,
-      } : {}),
-      modelPass: async (candidates, semanticContext) => {
-        const incidents = await this.options.scan.modelPass(candidates, semanticContext);
-        incidents.forEach(assertSafeIncident);
-        return incidents;
+    const scope = this.#scope;
+    if (!scope) throw new Error("Onboarding scope is missing.");
+    const checkpointDirectory = join(guardHomeForScope(scope, this.options.environment, this.options.cwd), "scan");
+    const result = await scanHistory(
+      () => this.options.loadHistory(this.#selectedSourceIds, { confirmed: true, scrubbersVerified: true }),
+      {
+        ...this.options.scan,
+        ...(verifiedScrubbers ? {
+          presidioCommand: verifiedScrubbers.presidio,
+          gitleaksCommand: verifiedScrubbers.gitleaks,
+        } : {}),
+        modelPass: async (candidates, semanticContext) => {
+          const incidents = await this.options.scan.modelPass(candidates, semanticContext);
+          assertSafeIncidents(incidents);
+          return incidents;
+        },
+        checkpoint: { directory: checkpointDirectory, identity: this.#scanRunId, validateIncidents: assertSafeIncidents },
+        publish: async (incidents) => { mined = incidents.map((incident) => ({ ...incident, evidence_refs: [...incident.evidence_refs] })); },
       },
-      publish: async (incidents) => { mined = incidents.map((incident) => ({ ...incident, evidence_refs: [...incident.evidence_refs] })); },
-    });
+    );
     if (result.status === "paused") {
       this.#incidents = [];
       this.#phase = "paused";

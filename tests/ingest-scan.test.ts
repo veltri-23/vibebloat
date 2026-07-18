@@ -220,3 +220,172 @@ test("semantic failures degrade to the unchanged model path", async () => {
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("production scan deduplicates cross-agent candidates before model pass", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vibebloat-scan-dedup-"));
+  let modeled: unknown[] = [];
+  try {
+    const result = await scanHistory([
+      { source: "claude-code", sessionId: "one", messageIndex: 1, chunkIndex: 0, role: "assistant", content: "git stash -u failed" },
+      { source: "codex", sessionId: "two", messageIndex: 4, chunkIndex: 0, role: "assistant", content: "git stash -u failed" },
+    ], {
+      presidioCommand: presidioRedact,
+      gitleaksCommand: gitleaksClean,
+      localSink: createLocalOnlySink(join(directory, "quarantine")),
+      modelPass: async (candidates) => { modeled = candidates; return []; },
+      publish: async () => {},
+    });
+
+    expect(result).toEqual({ status: "ingested" });
+    expect(modeled).toHaveLength(1);
+    expect(modeled[0]).toMatchObject({
+      frequency: 2,
+      evidenceRefs: ["claude-code:one:1:0", "codex:two:4:0"],
+    });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("interrupted scan resumes from scrubbed candidates without rereading history", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vibebloat-scan-resume-"));
+  let historyReads = 0;
+  let modelCalls = 0;
+  let published = 0;
+  const options = {
+    presidioCommand: presidioRedact,
+    gitleaksCommand: gitleaksClean,
+    localSink: createLocalOnlySink(join(directory, "quarantine")),
+    checkpoint: {
+      directory: join(directory, "checkpoint"),
+      identity: "resume-model",
+      validateIncidents: () => {},
+    },
+    modelPass: async () => {
+      modelCalls += 1;
+      if (modelCalls === 1) throw new Error("interrupted");
+      return [{ incident_id: "resumed" }];
+    },
+    publish: async () => { published += 1; },
+  };
+
+  try {
+    await expect(scanHistory(async () => {
+      historyReads += 1;
+      return [{ source: "hermes", sessionId: "one", messageIndex: 0, chunkIndex: 0, role: "user", content: "Bearer secret failed" }];
+    }, options)).rejects.toThrow("interrupted");
+
+    expect(await readFile(join(directory, "checkpoint", "ingested.json"), "utf8")).not.toContain("Bearer secret");
+    expect(historyReads).toBe(1);
+
+    expect(await scanHistory(async () => {
+      historyReads += 1;
+      throw new Error("history must not be reread");
+    }, options)).toEqual({ status: "ingested" });
+    expect({ historyReads, modelCalls, published }).toEqual({ historyReads: 1, modelCalls: 2, published: 1 });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("publish interruption resumes from validated incidents without rerunning model", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vibebloat-scan-publish-resume-"));
+  let historyReads = 0;
+  let modelCalls = 0;
+  let publishCalls = 0;
+  const options = {
+    presidioCommand: presidioRedact,
+    gitleaksCommand: gitleaksClean,
+    localSink: createLocalOnlySink(join(directory, "quarantine")),
+    checkpoint: {
+      directory: join(directory, "checkpoint"),
+      identity: "resume-publish",
+      validateIncidents: (incidents: readonly { incident_id: string }[]) => {
+        if (!incidents.every(({ incident_id }) => incident_id === "safe")) throw new Error("unsafe incidents");
+      },
+    },
+    modelPass: async () => { modelCalls += 1; return [{ incident_id: "safe" }]; },
+    publish: async () => {
+      publishCalls += 1;
+      if (publishCalls === 1) throw new Error("publish interrupted");
+    },
+  };
+
+  try {
+    await expect(scanHistory(async () => {
+      historyReads += 1;
+      return [{ source: "codex", sessionId: "one", messageIndex: 0, chunkIndex: 0, role: "assistant", content: "retry failed" }];
+    }, options)).rejects.toThrow("publish interrupted");
+
+    expect(await scanHistory(async () => {
+      historyReads += 1;
+      throw new Error("history must not be reread");
+    }, options)).toEqual({ status: "ingested" });
+    expect({ historyReads, modelCalls, publishCalls }).toEqual({ historyReads: 1, modelCalls: 1, publishCalls: 2 });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("legacy checkpoint warns and safely restarts from raw history", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vibebloat-scan-legacy-"));
+  const warnings: string[] = [];
+  let historyReads = 0;
+  try {
+    await Bun.write(join(directory, "ingested.json"), JSON.stringify({ sessions: 3 }));
+    const result = await scanHistory(async () => {
+      historyReads += 1;
+      return [{ source: "codex", sessionId: "one", messageIndex: 0, chunkIndex: 0, role: "assistant", content: "retry failed" }];
+    }, {
+      presidioCommand: presidioRedact,
+      gitleaksCommand: gitleaksClean,
+      localSink: createLocalOnlySink(join(directory, "quarantine")),
+      checkpoint: {
+        directory,
+        identity: "legacy-resume",
+        validateIncidents: () => {},
+        onLegacyResume: (stage) => { warnings.push(stage); },
+      },
+      modelPass: async () => [],
+      publish: async () => {},
+    });
+
+    expect(result).toEqual({ status: "ingested" });
+    expect(historyReads).toBe(1);
+    expect(warnings).toEqual(["ingested"]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("checkpoint from another onboarding run cannot skip current history", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vibebloat-scan-identity-"));
+  let historyReads = 0;
+  let modelCalls = 0;
+  const base = {
+    presidioCommand: presidioRedact,
+    gitleaksCommand: gitleaksClean,
+    localSink: createLocalOnlySink(join(directory, "quarantine")),
+    modelPass: async () => { modelCalls += 1; return [{ incident_id: "safe" }]; },
+    publish: async () => {},
+  };
+  const load = async () => {
+    historyReads += 1;
+    return [{ source: "codex" as const, sessionId: `run-${historyReads}`, messageIndex: 0, chunkIndex: 0, role: "assistant", content: "retry failed" }];
+  };
+
+  try {
+    await scanHistory(load, {
+      ...base,
+      checkpoint: { directory, identity: "first-run", validateIncidents: () => {} },
+    });
+    await scanHistory(load, {
+      ...base,
+      checkpoint: { directory, identity: "second-run", validateIncidents: () => {}, onLegacyResume: () => {} },
+    });
+
+    expect({ historyReads, modelCalls }).toEqual({ historyReads: 2, modelCalls: 2 });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
