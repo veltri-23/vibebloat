@@ -18,6 +18,7 @@ export async function ingestFailClosed<Incident>(rawPayload: string, options: In
   try {
     scrubbed = await scrubWithPresidio(rawPayload, options.presidio);
     scrubbed = await scrubWithGitleaks(scrubbed, options.gitleaks);
+    if (typeof scrubbed !== "string") throw new Error("Scrubber returned invalid payload");
   } catch {
     await options.storeLocal(rawPayload);
     return { status: "paused", message: "Scrub failed, ingest paused, fix and rerun" };

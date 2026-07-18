@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { ingestFailClosed } from "../../src/scrub/fail-closed";
+import { createGitleaksCommandScrubber } from "../../src/scrub/gitleaks";
+import { createPresidioCommandScrubber } from "../../src/scrub/presidio";
 
 const rawHermesHistory = '{"Authorization":"Bearer secret-token"}';
 
@@ -46,5 +48,54 @@ describe("CRITICAL: scrub failure closes ingestion", () => {
 
     expect(result).toEqual({ status: "ingested" });
     expect(calls).toEqual(["presidio", "gitleaks", '{"Authorization":"Bearer <redacted>"}', "safe"]);
+  });
+
+  test("halts when a scrubber returns a malformed payload", async () => {
+    const { options, counts } = setup("presidio");
+    options.presidio = async () => undefined as unknown as string;
+
+    await expect(ingestFailClosed(rawHermesHistory, options)).resolves.toEqual({
+      status: "paused",
+      message: "Scrub failed, ingest paused, fix and rerun",
+    });
+    expect(counts()).toEqual({ modeled: 0, published: 0, local: [rawHermesHistory] });
+  });
+});
+
+describe("command scrubbers", () => {
+  test("sends Presidio payload via stdin and accepts only JSON payload output", async () => {
+    const scrub = createPresidioCommandScrubber(["presidio-wrapper", "--json"], async (command, input) => {
+      expect(command).toEqual(["presidio-wrapper", "--json"]);
+      expect(JSON.parse(input)).toEqual({ payload: rawHermesHistory });
+      return { exitCode: 0, stdout: '{"payload":"safe"}', stderr: "" };
+    });
+
+    await expect(scrub(rawHermesHistory)).resolves.toBe("safe");
+  });
+
+  test("executes a command directly without a shell", async () => {
+    const scrub = createPresidioCommandScrubber([
+      "bun",
+      "-e",
+      "Bun.stdin.text().then((input) => console.log(input))",
+    ]);
+
+    await expect(scrub(rawHermesHistory)).resolves.toBe(rawHermesHistory);
+  });
+
+  test("fails closed on Gitleaks findings or malformed command output", async () => {
+    const findings = createGitleaksCommandScrubber(["gitleaks-wrapper"], async () => ({
+      exitCode: 0,
+      stdout: '{"payload":"safe","findings":[{"rule":"token"}]}',
+      stderr: "",
+    }));
+    const malformed = createGitleaksCommandScrubber(["gitleaks-wrapper"], async () => ({
+      exitCode: 0,
+      stdout: "not-json",
+      stderr: "",
+    }));
+
+    await expect(findings(rawHermesHistory)).rejects.toThrow("Gitleaks returned an unsafe result");
+    await expect(malformed(rawHermesHistory)).rejects.toThrow("Gitleaks returned invalid JSON");
   });
 });
