@@ -7,7 +7,7 @@ import { loadGuards } from "./guard-loader";
 import { forgetEmail } from "./growth/email-capture";
 import { canonicalGuardId, gitStashUntrackedGuard, mcpConfigWrongFileGuard } from "./guards";
 import { runPreToolUse } from "./hooks";
-import { closeWatcherOnSignals, watchGuardedWrites } from "./install/fs-guard";
+import { closeWatcherOnSignals, hasUnenforceableFileGuard, watchGuardedWrites } from "./install/fs-guard";
 import { installNativeHooks } from "./install/orchestrator";
 import { installHermesHook, preflightHermesHook } from "./install/hermes";
 import type { Shell } from "./install/shim";
@@ -350,11 +350,14 @@ if (mode === "watch") {
   }
   try {
     await new Promise<void>((resolve) => {
-      const watcher = watchGuardedWrites(directory, runtimeGuards(), (path, response) => {
+      const guards = runtimeGuards();
+      const watcher = watchGuardedWrites(directory, guards, (path, response) => {
         process.stderr.write(`WHAT detected: guarded write at ${path}.\nWHY: ${response.stderr ?? "filesystem guard matched after the write."}\nFIX: use a native pre-write guard.\n`);
       }, new Runtime(disabledGuards()));
       closeWatcherOnSignals(watcher, process, resolve);
-      process.stdout.write(`Watching guarded writes in ${directory}. Press Ctrl+C to stop.\n`);
+      process.stdout.write(hasUnenforceableFileGuard(guards)
+        ? `Watching guarded writes in ${directory}. File guards report after writes; native hooks enforce before writes. Press Ctrl+C to stop.\n`
+        : `Watching guarded writes in ${directory}. Press Ctrl+C to stop.\n`);
     });
     process.exit(0);
   } catch (error) {

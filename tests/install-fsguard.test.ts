@@ -1,14 +1,44 @@
-import { expect, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { mcpConfigWrongFileGuard } from "../src/guards";
 import { closeWatcherOnSignals, evaluateFsWrite, hasUnenforceableFileGuard, watchGuardedWrites } from "../src/install/fs-guard";
+
+const temporaryDirectories: string[] = [];
+
+afterEach(() => {
+  for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
+});
 
 test("filesystem fallback blocks wrong MCP config write", () => {
   expect(evaluateFsWrite([mcpConfigWrongFileGuard], "C:/repo/.mcp.json")).toMatchObject({ exitCode: 2 });
 });
 
-test("filesystem watcher refuses guards it cannot enforce before writes", () => {
+test("filesystem watcher observes block guards without claiming pre-write enforcement", () => {
   expect(hasUnenforceableFileGuard([mcpConfigWrongFileGuard])).toBe(true);
-  expect(() => watchGuardedWrites(import.meta.dir, [mcpConfigWrongFileGuard], () => {})).toThrow("cannot enforce active file guards");
+  const watcher = watchGuardedWrites(import.meta.dir, [mcpConfigWrongFileGuard], () => {});
+  watcher.close();
+});
+
+test("filesystem watcher reports a guarded write after the filesystem event", async () => {
+  const directory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-fs-guard-"));
+  temporaryDirectories.push(directory);
+
+  const response = await new Promise<{ path: string; exitCode: number }>((resolve, reject) => {
+    let timeout: ReturnType<typeof setTimeout>;
+    const watcher = watchGuardedWrites(directory, [mcpConfigWrongFileGuard], (path, detected) => {
+      watcher.close();
+      clearTimeout(timeout);
+      resolve({ path, exitCode: detected.exitCode });
+    });
+    timeout = setTimeout(() => {
+      watcher.close();
+      reject(new Error("fs.watch did not report the guarded write"));
+    }, 1_000);
+    writeFileSync(join(directory, ".mcp.json"), "{}");
+  });
+
+  expect(response).toEqual({ path: ".mcp.json", exitCode: 2 });
 });
 
 test("filesystem watcher closes once when signaled", () => {

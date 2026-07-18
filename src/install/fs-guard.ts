@@ -17,9 +17,6 @@ export function hasUnenforceableFileGuard(guards: Guard[]): boolean {
 }
 
 export function watchGuardedWrites(directory: string, guards: Guard[], onDetected: (path: string, response: HookResponse) => void, runtime = new Runtime()): FSWatcher {
-  if (hasUnenforceableFileGuard(guards)) {
-    throw new Error("fs.watch observes writes after they occur and cannot enforce active file guards");
-  }
   return watch(directory, { persistent: true }, (_eventType, filename) => {
     if (!filename) return;
     const response = evaluateFsWrite(guards, filename.toString(), runtime);
