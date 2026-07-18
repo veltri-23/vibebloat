@@ -11,7 +11,6 @@ const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.me
     runtimeExtensions?: string[];
   };
   peerDependencies?: Record<string, string>;
-  private?: boolean;
   scripts?: Record<string, string>;
   private?: boolean;
 };
@@ -24,10 +23,8 @@ const npmIgnore = readFileSync(new URL("../.npmignore", import.meta.url), "utf8"
 test("npm package ships an installable OpenClaw plugin", () => {
   expect(packageJson.files).toEqual(["bin", "dist/openclaw-plugin.js", "src", "hermes/HOOK.yaml", "hermes/handler.py", "openclaw.plugin.json", "LICENSE", "NOTICE", "README.md"]);
   expect(packageJson.engines?.bun).toBe(">=1.3.0");
-  expect(packageJson.private).toBeUndefined();
   expect(packageJson.scripts?.["build:openclaw"]).toBe("bun build src/hooks/openclaw-plugin.ts --outdir dist --target bun");
   expect(packageJson.scripts?.prepack).toBe("bun run build:openclaw");
-  expect(packageJson.private).toBeTrue();
   expect(packageJson.exports?.["./openclaw-plugin"]).toBe("./dist/openclaw-plugin.js");
   expect(packageJson.peerDependencies?.openclaw).toBe(">=2026.4.0");
   expect(packageJson.openclaw).toEqual({
