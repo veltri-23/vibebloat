@@ -582,7 +582,10 @@ async function runProductionReturningScan(
   gate: "R1" | "R2" | "R4",
 ): Promise<{ status: "ingested" | "paused"; chunksScanned: number; incidentsFound: number }> {
   const sourceIds = state.coordinator?.selectedSourceIds;
-  if (!sourceIds?.length) throw new Error("Returning scan cursor cannot be used because the original history selection is unavailable.");
+  if (!sourceIds?.length) {
+    const action = gate === "R1" ? "since-last-run problem scan" : gate === "R2" ? "targeted project or tool scan" : "catch-up scan";
+    throw new Error(`${action} is unavailable because no durable returning-scan cursor exists.`);
+  }
   const base = process.env.USERPROFILE ?? process.env.HOME ?? ".";
   const homes = agentHomes();
   const catalog = discoverLocalHistory({

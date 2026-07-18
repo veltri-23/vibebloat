@@ -43,7 +43,7 @@ export interface CatchUpResult {
     auditWarnings: AuditWarning[];
   };
   daily: DailyCommandResult;
-  incrementalScan: ReturningIncrementalScanResult;
+  incrementalScan: ReturningIncrementalScanResult | { status: "blocked"; reason: "No durable returning-scan cursor exists." };
 }
 
 export interface ProblemScanResult {
@@ -112,7 +112,14 @@ export async function runReturningService(
     },
   });
   const daily = runDailyStrengtheningCommand({ ...options.dailyOptions, now });
-  const incrementalScan = await runIncrementalScan(options, "R4");
+  let incrementalScan: CatchUpResult["incrementalScan"];
+  try {
+    incrementalScan = await runIncrementalScan(options, "R4");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (!/no durable returning-scan cursor exists/i.test(message)) throw error;
+    incrementalScan = { status: "blocked", reason: "No durable returning-scan cursor exists." };
+  }
   return {
     kind: "catch-up",
     complete: incrementalScan.status === "ingested",
