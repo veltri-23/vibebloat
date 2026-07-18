@@ -16,6 +16,7 @@ export interface OnboardingState {
   reviewDecisions?: GuardReviewDecision[];
   returningConversations?: ReturningConversation[];
   preferences?: OnboardingPreferences;
+  pendingSourceIds?: string[];
 }
 
 export interface ReturningConversation {

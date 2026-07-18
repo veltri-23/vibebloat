@@ -943,7 +943,7 @@ if (mode === "init") {
   let runner = new OnboardingRunner(state as RunnerState, onboardingRunnerContext(coordinatorCheckpoint, state));
   const answerIndex = process.argv.indexOf("--answer");
   if (answerIndex < 0) {
-    process.stdout.write(`${JSON.stringify({ ...runner.snapshot(), runnerSource, prompt: runner.current() })}\n`);
+    process.stdout.write(`${JSON.stringify({ ...runner.snapshot(), runnerSource, prompt: runner.current(), ...(coordinator.discovery() ? { discovery: coordinator.discovery() } : {}) })}\n`);
     process.exit(0);
   }
   const answer = process.argv[answerIndex + 1] ?? "";
@@ -1003,12 +1003,20 @@ if (mode === "init") {
     if (validChoice && before.gate === "B1" && next.gate === "D1") coordinator.confirmEnvironments(true);
     if (validChoice && before.gate === "B1.missing") addMissingEnvironment(coordinator, effectiveAnswer);
     if (validChoice && before.gate === "B1.ignore") ignoreEnvironments(coordinator, effectiveAnswer);
+    if (validChoice && before.gate === "D1" && next.gate === "D1") {
+      const requested = argumentAssignment("--sources")?.split(",").map((id) => id.trim()).filter(Boolean);
+      const known = new Set((coordinator.discovery()?.sources ?? []).map(({ id }) => id));
+      if (!requested || requested.length === 0) throw new Error("D1 source adjustment requires --sources=<discovered-id,...>.");
+      if (new Set(requested).size !== requested.length || requested.some((id) => !known.has(id))) throw new Error("D1 source adjustment contains an unknown or duplicate source.");
+      state.pendingSourceIds = requested;
+    }
     if (validChoice && before.gate === "D1" && next.gate !== "D1") {
       const sources = coordinator.discovery()?.sources ?? [];
       const selected = effectiveAnswer.trim().toLowerCase().includes("everything")
         ? sources.map(({ id }) => id)
-        : sources.filter(({ stale }) => !stale).map(({ id }) => id);
+        : state.pendingSourceIds ?? sources.filter(({ stale }) => !stale).map(({ id }) => id);
       coordinator.selectSources(selected);
+      delete state.pendingSourceIds;
     }
     if (validChoice && before.gate === "F1") coordinator.consent(true);
 
@@ -1047,7 +1055,13 @@ if (mode === "init") {
       runner = new OnboardingRunner(next, onboardingRunnerContext(coordinatorCheckpoint, { ...state, gate: next.gate }));
       next = runner.advanceAutomaticGates();
     }
-    saveOnboardingState(home, { ...next, coordinator: coordinatorCheckpoint, reviewDecisions: state.reviewDecisions, preferences: state.preferences });
+    saveOnboardingState(home, {
+      ...next,
+      coordinator: coordinatorCheckpoint,
+      reviewDecisions: state.reviewDecisions,
+      preferences: state.preferences,
+      ...(state.pendingSourceIds ? { pendingSourceIds: state.pendingSourceIds } : {}),
+    });
   } catch (error) {
     if (error instanceof ControlledScrubbersUnavailableError) {
       process.stderr.write("WHAT failed: onboarding scan blocked before history read.\nWHY: Verified package-controlled scrubber assets are unavailable.\nFIX: install a signed VibeBloat release, then rerun vibebloat init\n");
@@ -1062,7 +1076,7 @@ if (mode === "init") {
     process.stderr.write(`WHAT failed: onboarding setup stopped.\nWHY: ${reason}\nFIX: ${modelVariable ? `set ${modelVariable} to a JSON command array, then rerun vibebloat init --answer ${effectiveAnswer}` : "vibebloat init --answer Yes"}\n`);
     process.exit(1);
   }
-  process.stdout.write(`${JSON.stringify({ ...next, runnerSource, prompt: runner.current(), ...(assistResponse ? { assist: assistResponse } : {}) })}\n`);
+  process.stdout.write(`${JSON.stringify({ ...next, ...(state.pendingSourceIds ? { pendingSourceIds: state.pendingSourceIds } : {}), runnerSource, prompt: runner.current(), ...(coordinator.discovery() ? { discovery: coordinator.discovery() } : {}), ...(assistResponse ? { assist: assistResponse } : {}) })}\n`);
   process.exit(0);
 }
 

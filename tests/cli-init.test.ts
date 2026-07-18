@@ -271,3 +271,30 @@ test("manual steady-state choices can finish without fake effect receipts", () =
   expect(result.exitCode).toBe(0);
   expect(JSON.parse(result.stdout.toString())).toMatchObject({ gate: "END" });
 });
+
+test("D1 adjustment persists only validated discovered source ids", () => {
+  const home = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-init-"));
+  temporaryDirectories.push(home);
+  const checkpoint = {
+    phase: "triage", scope: "repo", environmentConfirmed: true, consented: false,
+    selectedSourceIds: [], incidentCount: 0, approvedIncidentIds: [], installedGuardIds: [], cancelled: false,
+    scanRunId: "00000000-0000-4000-8000-000000000001",
+    discovery: {
+      environments: [{ id: "claude-code", label: "Claude Code" }, { id: "codex", label: "Codex" }],
+      sources: [
+        { id: "claude-code", environmentId: "claude-code", label: "Claude history", lastActive: "2026-07-17T00:00:00.000Z", stale: false },
+        { id: "codex", environmentId: "codex", label: "Codex history", lastActive: "2026-07-17T00:00:00.000Z", stale: false },
+      ],
+    },
+    incidents: [], approved: [], installed: [],
+  };
+  writeFileSync(join(home, "onboarding.json"), JSON.stringify({ gate: "D1", scope: "repo", answers: {}, coordinator: checkpoint }));
+  const adjusted = init(home, "--answer", "Let me adjust", "--sources=codex");
+  expect(adjusted.exitCode).toBe(0);
+  expect(JSON.parse(adjusted.stdout.toString())).toMatchObject({ gate: "D1", pendingSourceIds: ["codex"] });
+  const applied = init(home, "--answer", "Use these");
+  expect(applied.exitCode).toBe(0);
+  expect(JSON.parse(readFileSync(join(home, "onboarding.json"), "utf8"))).toMatchObject({
+    coordinator: { selectedSourceIds: ["codex"] },
+  });
+});
