@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import packageMetadata from "../package.json";
 import { createFiringRecorder, readAndPruneFirings, readLastFiredSummaries } from "./audit/firings";
 import { disableGuard, disabledGuardIds } from "./cli/disable";
@@ -411,6 +411,12 @@ function createProductionOnboardingCoordinator(
 ): OnboardingCoordinator {
   const base = process.env.USERPROFILE ?? process.env.HOME ?? ".";
   const homes = agentHomes();
+  const detectedEnvironments = [
+    { id: "claude-code", label: "Claude Code", present: existsSync(dirname(homes.claudePath)) },
+    { id: "codex", label: "Codex", present: existsSync(dirname(homes.codexPath)) },
+    { id: "hermes", label: "Hermes", present: existsSync(homes.hermesHome) },
+    { id: "openclaw", label: "OpenClaw", present: existsSync(process.env.OPENCLAW_HOME ?? join(base, ".openclaw")) },
+  ].filter(({ present }) => present).map(({ id, label }) => ({ id, label }));
   let catalog: LocalHistoryCatalog | undefined;
   const historyCatalog = () => catalog ??= discoverLocalHistory({
     homeDirectory: base,
@@ -426,8 +432,10 @@ function createProductionOnboardingCoordinator(
     setupBindings: onboardingBindingSetup,
     discover: async () => {
       const sources = historyCatalog().sources;
+      const environments = new Map(detectedEnvironments.map((environment) => [environment.id, environment]));
+      for (const { id, label } of sources) environments.set(id, { id, label });
       return {
-        environments: sources.map(({ id, label }) => ({ id, label })),
+        environments: [...environments.values()],
         sources: sources.map((source) => ({
           id: source.id,
           environmentId: source.id,

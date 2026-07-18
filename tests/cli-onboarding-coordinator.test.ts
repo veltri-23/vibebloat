@@ -76,3 +76,43 @@ test("production onboarding coordinates discovery and fails closed before histor
     coordinator: { phase: "paused", incidentCount: 0, installedGuardIds: [] },
   });
 });
+
+test("production onboarding discovers installed agents without requiring history files", () => {
+  const root = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-environments-"));
+  roots.push(root);
+  const repository = join(root, "repo");
+  const home = join(root, "state");
+  const claudeHome = join(root, ".claude");
+  const codexHome = join(root, ".codex");
+  const hermesHome = join(root, ".hermes");
+  const openClawHome = join(root, ".openclaw");
+  for (const directory of [repository, home, claudeHome, codexHome, hermesHome, openClawHome]) mkdirSync(directory, { recursive: true });
+  expect(Bun.spawnSync(["git", "init", "-q"], { cwd: repository }).exitCode).toBe(0);
+  writeFileSync(join(home, "onboarding.json"), JSON.stringify({ gate: "F0", scope: "repo", answers: {} }));
+
+  const result = invoke(repository, {
+    USERPROFILE: root,
+    HOME: root,
+    VIBEBLOAT_HOME: home,
+    CLAUDE_CONFIG_DIR: claudeHome,
+    CODEX_HOME: codexHome,
+    HERMES_HOME: hermesHome,
+    OPENCLAW_HOME: openClawHome,
+  }, "Yes");
+
+  expect(result.exitCode).toBe(0);
+  expect(JSON.parse(readFileSync(join(home, "onboarding.json"), "utf8"))).toMatchObject({
+    gate: "B1",
+    coordinator: {
+      discovery: {
+        environments: [
+          { id: "claude-code", label: "Claude Code" },
+          { id: "codex", label: "Codex" },
+          { id: "hermes", label: "Hermes" },
+          { id: "openclaw", label: "OpenClaw" },
+        ],
+        sources: [],
+      },
+    },
+  });
+});
