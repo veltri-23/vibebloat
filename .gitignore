@@ -1,5 +1,6 @@
 node_modules/
-.vibebloat/
+.vibebloat/*
+!.vibebloat/sync.md
 __pycache__/
 *.pyc
 dist/
