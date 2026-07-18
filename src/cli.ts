@@ -141,7 +141,7 @@ if (mode === "watch") {
   try {
     await new Promise<void>((resolve) => {
       const watcher = watchGuardedWrites(directory, runtimeGuards(), (path, response) => {
-        process.stderr.write(`WHAT blocked: guarded write at ${path}.\nWHY: ${response.stderr ?? "filesystem guard denied write."}\nFIX: change write or disable guard.\n`);
+        process.stderr.write(`WHAT detected: guarded write at ${path}.\nWHY: ${response.stderr ?? "filesystem guard matched after the write."}\nFIX: use a native pre-write guard.\n`);
       }, new Runtime(disabledGuardIds()));
       closeWatcherOnSignals(watcher, process, resolve);
       process.stdout.write(`Watching guarded writes in ${directory}. Press Ctrl+C to stop.\n`);

@@ -12,11 +12,18 @@ export function evaluateFsWrite(guards: Guard[], path: string, runtime = new Run
   return runFileGuard(guards, { chokepoint: "file", path }, runtime);
 }
 
-export function watchGuardedWrites(directory: string, guards: Guard[], onBlocked: (path: string, response: HookResponse) => void, runtime = new Runtime()): FSWatcher {
+export function hasUnenforceableFileGuard(guards: Guard[]): boolean {
+  return guards.some((guard) => guard.enabled && guard.match.chokepoint === "file" && guard.action.type !== "warn");
+}
+
+export function watchGuardedWrites(directory: string, guards: Guard[], onDetected: (path: string, response: HookResponse) => void, runtime = new Runtime()): FSWatcher {
+  if (hasUnenforceableFileGuard(guards)) {
+    throw new Error("fs.watch observes writes after they occur and cannot enforce active file guards");
+  }
   return watch(directory, { persistent: true }, (_eventType, filename) => {
     if (!filename) return;
     const response = evaluateFsWrite(guards, filename.toString(), runtime);
-    if (response.exitCode === 2) onBlocked(filename.toString(), response);
+    if (response.exitCode === 2) onDetected(filename.toString(), response);
   });
 }
 
