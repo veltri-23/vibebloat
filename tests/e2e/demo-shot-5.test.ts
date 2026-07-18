@@ -13,7 +13,7 @@ function run(command: string[], cwd: string, env: Record<string, string | undefi
   return Bun.spawnSync(command, { cwd, env, stdout: "pipe", stderr: "pipe" });
 }
 
-test("Shot 5: installed command hook and shell shim block stash without touching untracked files", () => {
+test("Shot 5: incident compiles into an installed guard that blocks the retry", () => {
   const directory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-shot5-"));
   temporaryDirectories.push(directory);
   const repository = join(directory, "repo");
@@ -31,6 +31,23 @@ test("Shot 5: installed command hook and shell shim block stash without touching
   const launcher = join(repository, "launch.cmd");
   writeFileSync(launcher, "echo safe\n");
   expect(run([git, "status", "--porcelain"], repository).stdout.toString()).toContain("?? launch.cmd");
+
+  const incidentPath = join(directory, "git-clean-incident.json");
+  writeFileSync(incidentPath, JSON.stringify({
+    incident_id: "no-git-clean",
+    class: "A",
+    chokepoint: "shell",
+    command: "git clean",
+    condition: "untracked operational files are present",
+    evidence_refs: ["demo:burn:1"],
+    severity: 5,
+    frequency: 1,
+    recency: "2026-07-18",
+  }));
+  const compiled = run(["bun", cliPath, "compile", incidentPath], repository, { ...process.env, VIBEBLOAT_HOME: home });
+  expect(compiled.exitCode).toBe(0);
+  expect(JSON.parse(compiled.stdout.toString())).toMatchObject({ status: "pass" });
+  expect(existsSync(join(home, "guards", "no-git-clean.json"))).toBe(true);
 
   const command = `bun ${JSON.stringify(cliPath)} hook`;
   installNativeHooks({
@@ -52,20 +69,20 @@ test("Shot 5: installed command hook and shell shim block stash without touching
   const hook = Bun.spawnSync(["bun", cliPath, "hook"], {
     cwd: repository,
     env: { ...process.env, VIBEBLOAT_HOME: home },
-    stdin: new Blob([JSON.stringify({ tool_input: { command: "git stash -u" } })]),
+    stdin: new Blob([JSON.stringify({ tool_input: { command: "git clean -fd" } })]),
     stdout: "pipe",
     stderr: "pipe",
   });
   expect(hook.exitCode).toBe(2);
-  expect(hook.stderr.toString()).toContain("07-15 this deleted untracked files");
+  expect(hook.stderr.toString()).toContain("VibeBloat found no-git-clean in 1 incident.");
 
-  const shim = run([sh, join(shimDirectory, "git"), "stash", "-u"], repository, {
+  const shim = run([sh, join(shimDirectory, "git"), "clean", "-fd"], repository, {
     ...process.env,
     BUN_EXECUTABLE: process.execPath.replaceAll("\\", "/"),
     VIBEBLOAT_HOME: home,
   });
   expect(shim.exitCode).toBe(2);
-  expect(shim.stderr.toString()).toContain("07-15 this deleted untracked files");
+  expect(shim.stderr.toString()).toContain("VibeBloat found no-git-clean in 1 incident.");
   expect(existsSync(launcher)).toBe(true);
   expect(run([git, "status", "--porcelain"], repository).stdout.toString()).toContain("?? launch.cmd");
 });
