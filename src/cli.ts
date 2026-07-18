@@ -27,6 +27,7 @@ import { createLocalOnlySink } from "./scrub/local-sink";
 import type { Event, Guard } from "./types";
 
 const guards: Guard[] = [gitStashUntrackedGuard, mcpConfigWrongFileGuard];
+const guardIdPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const mode = process.argv[2] ?? "init";
 function guardScope(): "repo" | "machine" {
   return loadOnboardingState(onboardingHome())?.scope ?? "machine";
@@ -139,6 +140,18 @@ function isMatchableIncidentManifest(incident: IncidentManifest | undefined): in
   return incident.chokepoint === "shell"
     ? Boolean(incident.command?.trim())
     : Boolean(incident.path?.trim());
+}
+
+function assertCompilableIncident(incident: IncidentManifest | undefined): asserts incident is MatchableIncidentManifest {
+  if (!isMatchableIncidentManifest(incident)) throw new Error("incident file must contain one safe, matchable incident manifest");
+  if (!guardIdPattern.test(incident.incident_id)) throw new Error("incident id must use lower-case kebab-case");
+  const canonicalId = canonicalGuardId(incident.incident_id);
+  if (canonicalId === "proof" || guards.some((guard) => guard.id === canonicalId)) {
+    throw new Error("incident id conflicts with a reserved guard id");
+  }
+  if (guardDirectories().flatMap(loadGuards).some((guard) => canonicalGuardId(guard.id) === canonicalId)) {
+    throw new Error("incident id conflicts with an installed guard");
+  }
 }
 
 function hasRawBearerToken(value: unknown): boolean {
@@ -366,7 +379,8 @@ if (mode === "compile") {
   try {
     const source: unknown = JSON.parse(readFileSync(incidentPath, "utf8"));
     const incident = parseIncidentManifest(source);
-    if (!isMatchableIncidentManifest(incident) || hasRawBearerToken(source)) throw new Error("incident file must contain one safe, matchable incident manifest");
+    if (hasRawBearerToken(source)) throw new Error("incident file must contain one safe, matchable incident manifest");
+    assertCompilableIncident(incident);
 
     const scope = guardScope();
     const guard = compileGuard(incident, incident.severity >= 4 ? "high" : "low");

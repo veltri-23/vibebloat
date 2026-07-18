@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { guardedBeforeToolCall } from "../../src/hooks/openclaw-plugin";
@@ -17,20 +17,25 @@ function createLearnedGuardHome(): { root: string; guardHome: string } {
   const root = mkdtempSync(join(tmpdir(), "vibebloat-cross-agent-"));
   temporaryDirectories.push(root);
   const guardHome = join(root, "guard-home");
-  const guardDirectory = join(guardHome, "guards");
-  mkdirSync(guardDirectory, { recursive: true });
-  writeFileSync(join(guardDirectory, "no-publish.json"), JSON.stringify({
-    id: "no-publish",
+  const incidentPath = join(root, "incident.json");
+  writeFileSync(incidentPath, JSON.stringify({
+    incident_id: "no-publish",
     class: "A",
-    provenance: { incident: "test learned guard", date: "2026-07-18", source: "test" },
-    match: { chokepoint: "shell", command: "npm publish" },
-    action: {
-      type: "block",
-      message: "no-publish is blocked.",
-      override: "vibebloat allow no-publish --once",
-    },
-    enabled: true,
+    chokepoint: "shell",
+    command: "npm publish",
+    condition: "test learned guard",
+    evidence_refs: ["test"],
+    severity: 5,
+    frequency: 1,
+    recency: "2026-07-18",
   }));
+  const result = Bun.spawnSync({
+    cmd: [process.execPath, cliPath, "compile", incidentPath],
+    cwd: root,
+    env: { ...process.env, VIBEBLOAT_HOME: guardHome },
+  });
+  if (result.exitCode !== 0) throw new Error(result.stderr.toString());
+  if (!existsSync(join(guardHome, "guards", "proof.json"))) throw new Error("compile receipt missing");
   return { root, guardHome };
 }
 
@@ -58,19 +63,19 @@ test("same learned guard denies Claude Code, Codex, OpenClaw, and Hermes", () =>
 
   const claude = runCli(guardHome, ["hook"]);
   expect(claude.exitCode).toBe(2);
-  expect(claude.stderr.toString()).toContain("no-publish is blocked.");
+  expect(claude.stderr.toString()).toContain("VibeBloat found no-publish in 1 incident.");
 
   const codex = runCli(guardHome, ["hook", "--agent=codex"]);
   expect(codex.exitCode).toBe(0);
   expect(JSON.parse(codex.stdout.toString())).toMatchObject({
-    hookSpecificOutput: { permissionDecision: "deny", permissionDecisionReason: "no-publish is blocked." },
+    hookSpecificOutput: { permissionDecision: "deny", permissionDecisionReason: "VibeBloat found no-publish in 1 incident." },
   });
 
   expect(guardedBeforeToolCall(
     { toolName: "exec", params: { command: "npm publish" } },
     { VIBEBLOAT_HOME: guardHome },
     root,
-  )).toMatchObject({ block: true, blockReason: "no-publish is blocked." });
+  )).toMatchObject({ block: true, blockReason: "VibeBloat found no-publish in 1 incident." });
 
   const hermesScript = [
     "import asyncio, importlib.util, json, sys",
@@ -90,5 +95,5 @@ test("same learned guard denies Claude Code, Codex, OpenClaw, and Hermes", () =>
     },
   });
   expect(hermes.exitCode).toBe(0);
-  expect(JSON.parse(hermes.stdout.toString())).toEqual({ decision: "deny", message: "no-publish is blocked." });
+  expect(JSON.parse(hermes.stdout.toString())).toEqual({ decision: "deny", message: "VibeBloat found no-publish in 1 incident." });
 });
