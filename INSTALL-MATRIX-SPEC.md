@@ -73,19 +73,24 @@ Do not use the retired `--hermes-hooks-dir` or `--hermes-config` flags. Verify
 the three canonical files exist, then start Hermes without safe mode; Hermes
 safe mode deliberately skips all user shell hooks.
 
-## Fallback git shim
+## Universal fallback
 
-The optional fallback needs both absolute paths:
+Optional universal fallback needs both absolute paths:
 
 ```
 vibebloat install --yes --fallback-shim-dir <absolute-shim-dir> --fallback-git <absolute-git-executable>
 ```
 
-Current installer verifies the shim directory before writing the shim. Prepare
-that directory and place it first on PATH in fresh `bash`, `zsh`, `fish`, and
-PowerShell sessions before invoking the command; a missing shell or a later PATH
-entry stops the fallback install. After install, `command -v git` (POSIX) or
-`Get-Command git` (PowerShell) must resolve from the shim directory.
+Installer inspects each fresh shell PATH without modifying it. Prepare shim
+directory and place it first on PATH in fresh `bash`, `zsh`, `fish`, and
+PowerShell sessions before invoking command; missing shell or later PATH entry
+stops fallback install. Successful fallback install writes owned POSIX/Windows
+Git shims and launches token-bound repository filesystem guard. Its atomic
+receipt lives at `.vibebloat/receipts/fs-guard.json`.
+
+`vibebloat uninstall --yes` cooperatively stops exact receipt-bound watcher
+before removing owned integrations. Foreign or unverifiable PID stops uninstall
+before config mutation; VibeBloat never kills by PID alone.
 
 ## Verification
 

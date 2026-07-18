@@ -4,14 +4,18 @@ on:
   pull_request:
     paths:
       - src/doctor/sigstore.ts
+      - src/updater/**
       - tests/doctor-sigstore.test.ts
+      - tests/updater-coordinator.test.ts
       - .github/workflows/release-verification.yml
       - release/**
   push:
     branches: [main]
     paths:
       - src/doctor/sigstore.ts
+      - src/updater/**
       - tests/doctor-sigstore.test.ts
+      - tests/updater-coordinator.test.ts
       - .github/workflows/release-verification.yml
       - release/**
   workflow_dispatch:
@@ -30,8 +34,8 @@ jobs:
       - name: Require Cosign
         run: cosign version
       - name: Verify release contract tests
-        run: bun test tests/doctor-sigstore.test.ts
-      - name: Verify controlled release artifact
+        run: bun test tests/doctor-sigstore.test.ts tests/updater-coordinator.test.ts
+      - name: Verify controlled release artifact and guard manifest
         if: github.event_name == 'workflow_dispatch'
         env:
           RELEASE_METADATA: release/metadata.json
@@ -39,9 +43,18 @@ jobs:
           test -f "$RELEASE_METADATA"
           bun -e '
             import { readFileSync } from "node:fs";
-            import { parseReleaseMetadata, verifySigstore } from "./src/doctor/sigstore.ts";
-            const metadata = parseReleaseMetadata(readFileSync(process.env.RELEASE_METADATA, "utf8"));
-            const publicKey = readFileSync(metadata.publicKey);
-            const result = verifySigstore(metadata, publicKey, (command) => Bun.spawnSync(command, { stdout: "inherit", stderr: "inherit" }).exitCode ?? 1);
-            if (!result.verified) throw new Error(result.message);
+            import { coordinateUpdate } from "./src/updater/coordinator.ts";
+            const metadataText = readFileSync(process.env.RELEASE_METADATA, "utf8");
+            const metadata = JSON.parse(metadataText);
+            coordinateUpdate({
+              binaryPath: metadata.artifact,
+              communityGuardDirectory: "release/current-community",
+              releaseDirectory: ".",
+              metadataText,
+              pinnedPublicKey: readFileSync(metadata.publicKey),
+              currentVersion: "0.0.0",
+              run: (command) => Bun.spawnSync(command, { stdout: "inherit", stderr: "inherit" }).exitCode ?? 1,
+              doctor: () => true,
+              apply: false,
+            });
           '
