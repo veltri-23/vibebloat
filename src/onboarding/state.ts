@@ -5,6 +5,7 @@ import { replaceGuardAtomically } from "../compiler/live-compile";
 export interface OnboardingState {
   gate: string;
   answers: Record<string, string>;
+  cancelled?: boolean;
 }
 
 export function saveOnboardingState(directory: string, state: OnboardingState): void {
