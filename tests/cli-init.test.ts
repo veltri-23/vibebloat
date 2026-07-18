@@ -241,3 +241,33 @@ test("B1 missing and ignore revisions persist without storing local paths", () =
   stored = JSON.parse(readFileSync(join(home, "onboarding.json"), "utf8"));
   expect(stored.coordinator.discovery.environments).not.toContainEqual({ id: "cursor", label: "Cursor" });
 });
+
+test("unverified onboarding effects fail closed without advancing", () => {
+  const cases = [
+    ["F6", "Yes", "Skip"],
+    ["N1", "Star", "Maybe later"],
+    ["N2", "Yes, notify me (uses your email)", "Skip"],
+    ["O1", "Yes", "Manual only"],
+    ["O2", "Yes", "No"],
+    ["O3", "Auto-update with rollback", "Just let me know (recommended)"],
+  ] as const;
+  for (const [gate, answer, fallback] of cases) {
+    const home = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-init-"));
+    temporaryDirectories.push(home);
+    writeFileSync(join(home, "onboarding.json"), JSON.stringify({ gate, scope: "repo", answers: {} }));
+    const result = init(home, "--answer", answer);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain("WHAT failed: onboarding effect was not activated.");
+    expect(result.stderr.toString()).toContain(`FIX: vibebloat init --answer ${fallback}`);
+    expect(JSON.parse(readFileSync(join(home, "onboarding.json"), "utf8"))).toMatchObject({ gate });
+  }
+});
+
+test("manual steady-state choices can finish without fake effect receipts", () => {
+  const home = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-init-"));
+  temporaryDirectories.push(home);
+  writeFileSync(join(home, "onboarding.json"), JSON.stringify({ gate: "O3", scope: "repo", answers: {} }));
+  const result = init(home, "--answer", "Just let me know (recommended)");
+  expect(result.exitCode).toBe(0);
+  expect(JSON.parse(result.stdout.toString())).toMatchObject({ gate: "END" });
+});

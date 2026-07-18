@@ -35,6 +35,7 @@ import type { HistoryChunk } from "./ingest/types";
 import { serializeModelCommandInput } from "./mine/model-command-input";
 import { detectRunnerDetails, parentProcessCommand, parseRunnerOverride, type RunnerDetectionSource } from "./onboarding/detect-runner";
 import { answerAssist } from "./onboarding/assist";
+import { validateOnboardingEffectRequirements, type EffectGateId } from "./onboarding/effect-requirements";
 import { isGateChoice, type OnboardingContext } from "./onboarding/gates";
 import { OnboardingCoordinator, reviewDecisionForChoice, type GuardReviewDecision, type OnboardingCheckpoint } from "./onboarding/coordinator";
 import { lookupMarkdownAnswer } from "./onboarding/markdown-help";
@@ -61,6 +62,22 @@ const gitHookCommands = {
   "pre-push": "vibebloat git-hook pre-push",
 } as const;
 const guardIdPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const effectGateFallback: Record<EffectGateId, string> = {
+  F6: "Skip",
+  N1: "Maybe later",
+  N2: "Skip",
+  O1: "Manual only",
+  O2: "No",
+  O3: "Just let me know (recommended)",
+};
+const effectGates = new Set<EffectGateId>(Object.keys(effectGateFallback) as EffectGateId[]);
+
+class OnboardingEffectUnavailableError extends Error {
+  constructor(readonly gate: EffectGateId, missing: readonly string[]) {
+    super(`selected ${gate} effect lacks verified evidence: ${missing.join(", ")}`);
+  }
+}
+
 const requestedMode = process.argv[2];
 const mode = requestedMode ?? (loadOnboardingState(onboardingHome())?.gate === "END" ? "onboard" : "init");
 function guardScope(): "repo" | "machine" {
@@ -964,6 +981,11 @@ if (mode === "init") {
   try {
     const validChoice = isGateChoice(before.gate, effectiveAnswer) && !next.cancelled;
     if (validChoice) {
+      if (effectGates.has(before.gate as EffectGateId)) {
+        const gate = before.gate as EffectGateId;
+        const requirement = validateOnboardingEffectRequirements(gate, effectiveAnswer);
+        if (!requirement.ok) throw new OnboardingEffectUnavailableError(gate, requirement.missing);
+      }
       const preferences = applyOnboardingPreference(state.preferences, before.gate, effectiveAnswer);
       if (before.gate === "F2" && preferences.modelRoute) modelCommandFromEnvironment(preferences.modelRoute);
       if ((before.gate === "G-empty" || before.gate === "I-zero") && preferences.starterPack) {
@@ -1029,6 +1051,10 @@ if (mode === "init") {
   } catch (error) {
     if (error instanceof ControlledScrubbersUnavailableError) {
       process.stderr.write("WHAT failed: onboarding scan blocked before history read.\nWHY: Verified package-controlled scrubber assets are unavailable.\nFIX: install a signed VibeBloat release, then rerun vibebloat init\n");
+      process.exit(1);
+    }
+    if (error instanceof OnboardingEffectUnavailableError) {
+      process.stderr.write(`WHAT failed: onboarding effect was not activated.\nWHY: ${error.message}.\nFIX: vibebloat init --answer ${effectGateFallback[error.gate]}\n`);
       process.exit(1);
     }
     const reason = error instanceof Error ? error.message : "unknown error";
