@@ -92,17 +92,18 @@ if (upstreamHermesSource && upstreamHermesPython) test("installed Hermes bridge 
   const directory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-hermes-upstream-"));
   tempDirectories.push(directory);
   installHermesHook({ permitted: true, hermesHome: directory, pythonExecutable: upstreamHermesPython });
+  const upstreamScript = [
+    "import json",
+    "from agent import shell_hooks",
+    "from hermes_cli.config import load_config",
+    "from hermes_cli.plugins import get_plugin_manager, get_pre_tool_call_directive",
+    "shell_hooks.reset_for_tests()",
+    "registered = shell_hooks.register_from_config(load_config(), accept_hooks=False)",
+    "decision, message = get_pre_tool_call_directive('terminal', {'command': 'git stash -u'})",
+    "print(json.dumps({'registered': len(registered), 'has_pre_tool_hook': get_plugin_manager().has_hook('pre_tool_call'), 'decision': decision, 'message': message}))",
+  ].join("; ");
   const result = Bun.spawnSync({
-    cmd: [upstreamHermesPython, "-c", [
-      "import json",
-      "from agent import shell_hooks",
-      "from hermes_cli.config import load_config",
-      "from hermes_cli.plugins import get_plugin_manager, get_pre_tool_call_directive",
-      "shell_hooks.reset_for_tests()",
-      "registered = shell_hooks.register_from_config(load_config(), accept_hooks=False)",
-      "decision, message = get_pre_tool_call_directive('terminal', {'command': 'git stash -u'})",
-      "print(json.dumps({'registered': len(registered), 'has_pre_tool_hook': get_plugin_manager().has_hook('pre_tool_call'), 'decision': decision, 'message': message}))",
-    ].join("; ")],
+    cmd: [upstreamHermesPython, "-c", upstreamScript],
     env: { ...process.env, HERMES_HOME: directory, PYTHONPATH: upstreamHermesSource, VIBEBLOAT_CLI: createVibeBloatCli(directory) },
   });
 
@@ -112,6 +113,20 @@ if (upstreamHermesSource && upstreamHermesPython) test("installed Hermes bridge 
     has_pre_tool_hook: true,
     decision: "block",
     message: "07-15 this deleted untracked files. Use git stash -u -- <path> or commit first.",
+  });
+
+  const handlerPath = join(directory, "hooks", "vibebloat", "handler.py");
+  writeFileSync(handlerPath, `${readFileSync(handlerPath, "utf8")}\n`);
+  const tampered = Bun.spawnSync({
+    cmd: [upstreamHermesPython, "-c", upstreamScript],
+    env: { ...process.env, HERMES_HOME: directory, PYTHONPATH: upstreamHermesSource, VIBEBLOAT_CLI: createVibeBloatCli(directory) },
+  });
+  expect(tampered.exitCode).toBe(0);
+  expect(JSON.parse(tampered.stdout.toString())).toMatchObject({
+    registered: 1,
+    has_pre_tool_hook: true,
+    decision: "block",
+    message: "VibeBloat hook integrity check failed.",
   });
 });
 
