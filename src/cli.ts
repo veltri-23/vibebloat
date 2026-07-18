@@ -7,6 +7,8 @@ import { forgetEmail } from "./growth/email-capture";
 import { gitStashUntrackedGuard, mcpConfigWrongFileGuard } from "./guards";
 import { runPreToolUse } from "./hooks";
 import { installNativeHooks } from "./install/orchestrator";
+import { OnboardingRunner, type RunnerState } from "./onboarding/runner";
+import { loadOnboardingState, saveOnboardingState } from "./onboarding/state";
 import { Runtime } from "./runtime";
 import type { Event, Guard } from "./types";
 
@@ -74,6 +76,39 @@ if (mode === "install") {
   }
 }
 
+if (mode === "init") {
+  const home = homeDirectory();
+  const stored = loadOnboardingState(home);
+  const state: RunnerState = stored
+    ? { gate: stored.gate as RunnerState["gate"], answers: stored.answers, cancelled: stored.cancelled }
+    : { gate: "A0", answers: {} };
+  const runner = new OnboardingRunner(state);
+  const answerIndex = process.argv.indexOf("--answer");
+  if (answerIndex < 0) {
+    process.stdout.write(`${JSON.stringify({ ...runner.snapshot(), prompt: runner.current() })}\n`);
+    process.exit(0);
+  }
+  const before = runner.snapshot();
+  const next = runner.choose(process.argv[answerIndex + 1] ?? "");
+  try {
+    if (before.gate === "F0" && next.gate === "B1") {
+      const base = process.env.USERPROFILE ?? process.env.HOME ?? ".";
+      installNativeHooks({
+        permitted: true,
+        claudePath: join(process.env.CLAUDE_CONFIG_DIR ?? join(base, ".claude"), "settings.json"),
+        codexPath: join(process.env.CODEX_HOME ?? join(base, ".codex"), "config.toml"),
+        command: "vibebloat hook",
+      });
+    }
+    saveOnboardingState(home, next);
+  } catch (error) {
+    process.stderr.write(`WHAT failed: onboarding setup stopped.\nWHY: ${error instanceof Error ? error.message : "unknown error"}\nFIX: vibebloat init --answer Yes\n`);
+    process.exit(1);
+  }
+  process.stdout.write(`${JSON.stringify({ ...next, prompt: runner.current() })}\n`);
+  process.exit(0);
+}
+
 if (mode === "disable") {
   try {
     disableGuard(process.argv[3] ?? "");
@@ -114,5 +149,5 @@ if (mode === "hook") {
   process.exit(response.exitCode);
 }
 
-process.stderr.write("WHAT failed: expected eval, hook, disable, doctor, install, or email.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
+process.stderr.write("WHAT failed: expected eval, hook, disable, doctor, init, install, or email.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
 process.exit(1);
