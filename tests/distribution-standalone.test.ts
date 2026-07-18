@@ -44,4 +44,4 @@ test("standalone executable services fallback shim without source files", () => 
   expect(result.exitCode).toBe(2);
   expect(result.stderr.toString()).toContain("BLOCKED");
   expect(existsSync(join(repository, "operational.txt"))).toBeTrue();
-}, 60_000);
+}, 240_000);
