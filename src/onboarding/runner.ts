@@ -1,5 +1,6 @@
 import { answerAssist, type AssistContext, type AssistResponse } from "./assist";
 import { autoAdvances, canonicalGateChoice, getGate, isGateChoice, nextFirstRunGate, type GateChoice, type GateId, type OnboardingContext } from "./gates";
+import type { GuardScope } from "../guard-home";
 
 export function nextGateBatch<Gate>(orderedGates: Gate[], offset: number, maximum = 3): Gate[] {
   if (maximum < 1 || maximum > 3) throw new Error("Onboarding gate batch must contain one to three gates.");
@@ -9,6 +10,7 @@ export function nextGateBatch<Gate>(orderedGates: Gate[], offset: number, maximu
 export interface RunnerState {
   gate: GateId;
   answers: Record<string, string>;
+  scope?: GuardScope;
   cancelled?: boolean;
 }
 
@@ -64,7 +66,9 @@ export class OnboardingRunner {
     if (typeof choice === "string" && choice.trim().toLowerCase() === "cancel") return this.cancel();
     if (!isGateChoice(this.state.gate, choice)) return this.snapshot();
     const next = nextFirstRunGate(this.state.gate, choice, this.context);
-    this.state.answers[this.state.gate] = canonicalGateChoice(this.state.gate, choice);
+    const gate = this.state.gate;
+    this.state.answers[gate] = canonicalGateChoice(gate, choice);
+    if (gate === "A1") this.state.scope = this.state.answers[gate] === "Just this project" ? "repo" : "machine";
     if (next === "CANCELLED") return this.cancel();
     else if (next) this.state.gate = next;
     return this.snapshot();

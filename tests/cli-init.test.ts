@@ -16,8 +16,9 @@ test("init renders exact first gate and persists each explicit answer", () => {
   temporaryDirectories.push(home);
   expect(JSON.parse(init(home).stdout.toString())).toMatchObject({ gate: "A0", prompt: { question: expect.stringContaining("VibeBloat") } });
   expect(JSON.parse(init(home, "--answer", "Yes").stdout.toString())).toMatchObject({ gate: "A1" });
-  expect(JSON.parse(init(home, "--answer", "Just this project").stdout.toString())).toMatchObject({ gate: "F0" });
-  expect(JSON.parse(readFileSync(join(home, "onboarding.json"), "utf8"))).toMatchObject({ gate: "F0", answers: { A0: "Yes", A1: "Just this project" } });
+  expect(JSON.parse(init(home, "--answer", "Just this project").stdout.toString())).toMatchObject({ gate: "F0", scope: "repo" });
+  expect(JSON.parse(readFileSync(join(home, "onboarding.json"), "utf8"))).toMatchObject({ gate: "F0", scope: "repo", answers: { A0: "Yes", A1: "Just this project" } });
+  expect(JSON.parse(init(home, "--answer", "Yes").stdout.toString())).toMatchObject({ gate: "B1", scope: "repo" });
 });
 
 test("init does not mutate setup before F0 consent", () => {

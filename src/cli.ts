@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { disableGuard, disabledGuardIds } from "./cli/disable";
 import { runDoctor } from "./doctor/checks";
+import { globalGuardHome, guardDirectories, guardHomeForScope, guardHomes, onboardingHome } from "./guard-home";
 import { loadGuards } from "./guard-loader";
 import { forgetEmail } from "./growth/email-capture";
 import { gitStashUntrackedGuard, mcpConfigWrongFileGuard } from "./guards";
@@ -23,14 +24,19 @@ import type { Event, Guard } from "./types";
 const guards: Guard[] = [gitStashUntrackedGuard, mcpConfigWrongFileGuard];
 const mode = process.argv[2];
 
-function homeDirectory(): string {
-  return process.env.VIBEBLOAT_HOME ?? join(process.env.USERPROFILE ?? process.env.HOME ?? ".", ".vibebloat");
+function guardScope(): "repo" | "machine" {
+  return loadOnboardingState(onboardingHome())?.scope ?? "machine";
+}
+
+function disabledGuards(): Set<string> {
+  return new Set(guardHomes().flatMap((home) => [...disabledGuardIds(home)]));
 }
 
 function runtimeGuards(): Guard[] {
-  const installed = loadGuards(join(homeDirectory(), "guards"));
+  const installed = guardDirectories().flatMap(loadGuards);
   const builtInIds = new Set(guards.map((guard) => guard.id));
-  const duplicate = installed.find((guard) => builtInIds.has(guard.id));
+  const seenIds = new Set(builtInIds);
+  const duplicate = installed.find((guard) => seenIds.has(guard.id) || !seenIds.add(guard.id));
   if (duplicate) throw new Error(`Installed guard duplicates built-in id: ${duplicate.id}`);
   return [...guards, ...installed];
 }
@@ -103,11 +109,10 @@ async function runModelCommand(command: readonly string[], candidates: HistoryCh
 }
 
 if (mode === "doctor") {
-  const home = homeDirectory();
   const claudeHome = process.env.CLAUDE_CONFIG_DIR ?? join(process.env.USERPROFILE ?? process.env.HOME ?? ".", ".claude");
   const codexHome = process.env.CODEX_HOME ?? join(process.env.USERPROFILE ?? process.env.HOME ?? ".", ".codex");
   const findings = runDoctor({
-    guardDirectory: join(home, "guards"),
+    guardDirectories: guardDirectories(),
     hookConfigs: { claude: configText(join(claudeHome, "settings.json")), codex: configText(join(codexHome, "config.toml")) },
   });
   if (findings.length === 0) {
@@ -119,7 +124,7 @@ if (mode === "doctor") {
 }
 
 if (mode === "email" && process.argv[3] === "--forget") {
-  forgetEmail(homeDirectory());
+  forgetEmail(process.env.VIBEBLOAT_HOME ?? globalGuardHome());
   process.stdout.write("Email removed.\n");
   process.exit(0);
 }
@@ -155,10 +160,10 @@ if (mode === "install") {
 }
 
 if (mode === "init") {
-  const home = homeDirectory();
+  const home = onboardingHome();
   const stored = loadOnboardingState(home);
   const state: RunnerState = stored
-    ? { gate: stored.gate as RunnerState["gate"], answers: stored.answers, cancelled: stored.cancelled }
+    ? { gate: stored.gate as RunnerState["gate"], answers: stored.answers, scope: stored.scope, cancelled: stored.cancelled }
     : { gate: "A0", answers: {} };
   const runner = new OnboardingRunner(state);
   const answerIndex = process.argv.indexOf("--answer");
@@ -191,7 +196,7 @@ if (mode === "init") {
 
 if (mode === "disable") {
   try {
-    disableGuard(process.argv[3] ?? "");
+    disableGuard(process.argv[3] ?? "", guardHomeForScope(guardScope()));
     process.stdout.write(`Disabled guard: ${process.argv[3]}\n`);
     process.exit(0);
   } catch (error) {
@@ -210,7 +215,7 @@ if (mode === "watch") {
     await new Promise<void>((resolve) => {
       const watcher = watchGuardedWrites(directory, runtimeGuards(), (path, response) => {
         process.stderr.write(`WHAT detected: guarded write at ${path}.\nWHY: ${response.stderr ?? "filesystem guard matched after the write."}\nFIX: use a native pre-write guard.\n`);
-      }, new Runtime(disabledGuardIds()));
+      }, new Runtime(disabledGuards()));
       closeWatcherOnSignals(watcher, process, resolve);
       process.stdout.write(`Watching guarded writes in ${directory}. Press Ctrl+C to stop.\n`);
     });
@@ -239,7 +244,7 @@ if (mode === "scan") {
     const result = await scanHistory(parsed, {
       presidioCommand,
       gitleaksCommand,
-      localSink: createLocalOnlySink(join(homeDirectory(), "failed-ingest")),
+      localSink: createLocalOnlySink(join(process.env.VIBEBLOAT_HOME ?? globalGuardHome(), "failed-ingest")),
       modelPass: async (candidates) => {
         candidateCount = candidates.length;
         return runModelCommand(modelCommand, candidates);
@@ -270,7 +275,7 @@ const input = await Bun.stdin.text();
 if (mode === "eval") {
   try {
     const { guard, event } = JSON.parse(input) as { guard: Guard; event: Event };
-    process.stdout.write(`${JSON.stringify(new Runtime(disabledGuardIds()).evaluate([guard], event))}\n`);
+    process.stdout.write(`${JSON.stringify(new Runtime(disabledGuards()).evaluate([guard], event))}\n`);
     process.exit(0);
   } catch (error) {
     process.stderr.write(`WHAT failed: eval input could not be processed.\nWHY: ${error instanceof Error ? error.message : "unknown error"}\nFIX: provide a guard and event JSON object\n`);
@@ -281,7 +286,7 @@ if (mode === "eval") {
 if (mode === "hook") {
   let response;
   try {
-    response = runPreToolUse(runtimeGuards(), JSON.parse(input), new Runtime(disabledGuardIds()));
+    response = runPreToolUse(runtimeGuards(), JSON.parse(input), new Runtime(disabledGuards()));
   } catch (error) {
     response = { exitCode: 2 as const, stderr: `Guard runtime failed closed: ${error instanceof Error ? error.message : "unknown error"}` };
   }

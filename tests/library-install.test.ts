@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { installVerifiedGuard } from "../src/library/install";
+import { installVerifiedGuard, installVerifiedGuardForScope } from "../src/library/install";
 import { gitStashUntrackedGuard } from "../src/guards";
 
 const tempDirectories: string[] = [];
@@ -14,4 +14,16 @@ test("library refuses guard install without runner proof", () => {
   writeFileSync(join(directory, "proof.json"), JSON.stringify({ status: "pass" }));
   installVerifiedGuard(directory, gitStashUntrackedGuard);
   expect(JSON.parse(readFileSync(join(directory, "git-stash-untracked.json"), "utf8"))).toMatchObject({ id: "git-stash-untracked" });
+});
+
+test("library install targets the selected repo guard home", () => {
+  const root = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-library-scope-"));
+  tempDirectories.push(root);
+  const project = join(root, "project");
+  const guards = join(project, ".vibebloat", "guards");
+  mkdirSync(guards, { recursive: true });
+  writeFileSync(join(guards, "proof.json"), JSON.stringify({ status: "pass" }));
+
+  installVerifiedGuardForScope("repo", gitStashUntrackedGuard, { USERPROFILE: join(root, "user") } as NodeJS.ProcessEnv, project);
+  expect(JSON.parse(readFileSync(join(guards, "git-stash-untracked.json"), "utf8"))).toMatchObject({ id: "git-stash-untracked" });
 });

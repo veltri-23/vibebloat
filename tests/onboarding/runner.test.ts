@@ -6,7 +6,7 @@ test("runner records a human choice without selecting later gates", () => {
   const runner = new OnboardingRunner({ gate: "A1", answers: {} });
   expect(runner.current().question).toBe("First: should I protect just this project, or watch your work everywhere on this machine?");
   expect(runner.choose("What does this change?")).toEqual({ gate: "A1", answers: {} });
-  expect(runner.choose("Just this project")).toEqual({ gate: "F0", answers: { A1: "Just this project" } });
+  expect(runner.choose("Just this project")).toEqual({ gate: "F0", scope: "repo", answers: { A1: "Just this project" } });
 });
 
 test("returning paths keep their locked menu and routes", () => {

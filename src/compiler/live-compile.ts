@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { Runtime } from "../runtime";
 import type { Event, Guard } from "../types";
+import { guardHomeForScope, type GuardScope } from "../guard-home";
 import { writeProof } from "./proof";
 
 export function replaceGuardAtomically(path: string, content: string): void {
@@ -34,4 +35,8 @@ export function compileLive(directory: string, guard: Guard, event: Event): { st
   replaceGuardAtomically(join(directory, `${guard.id}.json`), `${JSON.stringify(guard)}\n`);
   writeProof(directory, { status: "pass", cases: ["synthetic event fired"] });
   return { status: "pass" };
+}
+
+export function compileLiveForScope(scope: GuardScope, guard: Guard, event: Event, environment: NodeJS.ProcessEnv = process.env, cwd = process.cwd()): { status: "pass" | "fail" } {
+  return compileLive(join(guardHomeForScope(scope, environment, cwd), "guards"), guard, event);
 }

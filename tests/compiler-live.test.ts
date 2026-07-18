@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { gitStashUntrackedGuard } from "../src/guards";
-import { compileLive } from "../src/compiler/live-compile";
+import { compileLive, compileLiveForScope } from "../src/compiler/live-compile";
 
 const tempDirectories: string[] = [];
 
@@ -25,4 +25,16 @@ test("live compile refuses to install an unproven guard", () => {
 
   expect(compileLive(directory, gitStashUntrackedGuard, { chokepoint: "shell", command: "git status" })).toEqual({ status: "fail" });
   expect(() => readFileSync(join(directory, "git-stash-untracked.json"), "utf8")).toThrow();
+});
+
+test("live compile writes to the selected repo or machine guard home", () => {
+  const root = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-live-scope-"));
+  tempDirectories.push(root);
+  const environment = { USERPROFILE: join(root, "user") } as NodeJS.ProcessEnv;
+  const project = join(root, "project");
+
+  expect(compileLiveForScope("repo", gitStashUntrackedGuard, { chokepoint: "shell", command: "git stash -u" }, environment, project)).toEqual({ status: "pass" });
+  expect(readFileSync(join(project, ".vibebloat", "guards", "git-stash-untracked.json"), "utf8")).toContain("git-stash-untracked");
+  expect(compileLiveForScope("machine", gitStashUntrackedGuard, { chokepoint: "shell", command: "git stash -u" }, environment, project)).toEqual({ status: "pass" });
+  expect(readFileSync(join(root, "user", ".vibebloat", "guards", "git-stash-untracked.json"), "utf8")).toContain("git-stash-untracked");
 });
