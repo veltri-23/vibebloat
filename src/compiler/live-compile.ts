@@ -4,12 +4,18 @@ import { randomUUID } from "node:crypto";
 import { Runtime } from "../runtime";
 import type { Event, Guard } from "../types";
 import { guardHomeForScope, type GuardScope } from "../guard-home";
-import { claimCompileBudget, type CompileTrigger } from "./budget";
+import { claimCompileBudget, drainQueuedCompileJobs, enqueueCompileJob, type CompileTrigger, type QueueDrainResult } from "./budget";
 import { writeProof } from "./proof";
 
 export interface LiveCompileOptions {
   trigger: CompileTrigger;
   now?: Date;
+}
+
+export interface LiveCompileResult {
+  status: "pass" | "fail" | "queued";
+  warning?: string;
+  queueId?: string;
 }
 
 export function replaceGuardAtomically(path: string, content: string): void {
@@ -50,9 +56,26 @@ export function compileLiveForScope(
   environment: NodeJS.ProcessEnv = process.env,
   cwd = process.cwd(),
   options: LiveCompileOptions = { trigger: "session-end" },
-): { status: "pass" | "fail" | "queued"; warning?: string } {
+): LiveCompileResult {
   const home = guardHomeForScope(scope, environment, cwd);
   const budget = claimCompileBudget(home, options.trigger, options.now);
-  if (budget.status === "queued") return budget;
+  if (budget.status === "queued") {
+    const job = enqueueCompileJob(home, { guard, event, trigger: options.trigger }, options.now);
+    return { ...budget, warning: `${budget.warning} Job ${job.id} is stored in the local compile queue.`, queueId: job.id };
+  }
   return compileLive(join(home, "guards"), guard, event);
+}
+
+export function drainQueuedLiveCompilesForScope(
+  scope: GuardScope,
+  environment: NodeJS.ProcessEnv = process.env,
+  cwd = process.cwd(),
+  now = new Date(),
+): QueueDrainResult {
+  const home = guardHomeForScope(scope, environment, cwd);
+  return drainQueuedCompileJobs(home, (job) => {
+    const budget = claimCompileBudget(home, job.trigger, now);
+    if (budget.status === "queued") return "queued";
+    return compileLive(join(home, "guards"), job.guard, job.event).status === "pass" ? "completed" : "failed";
+  });
 }
