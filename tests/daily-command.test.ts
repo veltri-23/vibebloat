@@ -122,3 +122,26 @@ test("daily command rejects redirected guard reads before writing proposals", ()
   })).toThrow("Daily path is unsafe.");
   expect(existsSync(join(home, "daily", "proposals.json"))).toBeFalse();
 });
+
+test("daily CLI emits only local safe report metadata", () => {
+  const root = temporaryRoot();
+  const home = join(root, "home");
+  mkdirSync(join(home, "guards"), { recursive: true });
+  writeFileSync(join(home, "guards", "proof.json"), "{}\n");
+
+  const result = Bun.spawnSync(["bun", "src/cli.ts", "daily"], {
+    cwd: join(import.meta.dir, ".."),
+    env: { ...process.env, VIBEBLOAT_HOME: home, USERPROFILE: root, HOME: root },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  expect(result.exitCode).toBe(0);
+  const report = JSON.parse(result.stdout.toString()) as Record<string, unknown>;
+  expect(report.schemaVersion).toBe(1);
+  expect(report.scope).toBe("machine");
+  expect(report).not.toHaveProperty("proposalPath");
+  expect(result.stdout.toString()).not.toContain(root);
+  expect(result.stderr.toString()).toBe("");
+  expect(existsSync(join(home, "daily", "proposals.json"))).toBeTrue();
+});

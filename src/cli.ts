@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 import { isAbsolute, join, resolve } from "node:path";
 import { createFiringRecorder, readAndPruneFirings, readLastFiredSummaries } from "./audit/firings";
 import { disableGuard, disabledGuardIds } from "./cli/disable";
+import { formatDailyStrengtheningFailure, runDailyStrengtheningCommand } from "./cli/daily";
+import { summarizeRules } from "./cli/rules";
 import { installationState, readInstalledAtByGuard, runDoctor } from "./doctor/checks";
 import { globalGuardHome, guardDirectories, guardHomeForScope, guardHomes, onboardingHome } from "./guard-home";
 import { loadGuards } from "./guard-loader";
@@ -1046,6 +1048,29 @@ if (mode === "git-hook") {
   process.exit(response.exitCode);
 }
 
+if (mode === "daily") {
+  try {
+    if (process.argv.length !== 3) throw new Error("unexpected daily arguments");
+    const { report } = runDailyStrengtheningCommand({ scope: guardScope() });
+    process.stdout.write(`${JSON.stringify(report)}\n`);
+    process.exit(0);
+  } catch {
+    process.stderr.write(formatDailyStrengtheningFailure());
+    process.exit(1);
+  }
+}
+
+if (mode === "rules") {
+  try {
+    if (process.argv.length !== 3) throw new Error("unexpected rules arguments");
+    process.stdout.write(`${JSON.stringify(summarizeRules(runtimeGuards(), disabledGuards()))}\n`);
+    process.exit(0);
+  } catch {
+    process.stderr.write(`${formatGuardRuntimeFailure("rule listing stopped")}\n`);
+    process.exit(1);
+  }
+}
+
 const input = await Bun.stdin.text();
 
 if (mode === "eval") {
@@ -1087,5 +1112,5 @@ if (mode === "hook") {
   process.exit(response.exitCode);
 }
 
-process.stderr.write("WHAT failed: expected allow, compile, eval, hook, git-hook, disable, doctor, init, install, uninstall, scan, stats, sync, watch, or email.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
+process.stderr.write("WHAT failed: expected allow, compile, eval, hook, git-hook, disable, doctor, init, install, uninstall, scan, stats, sync, watch, daily, rules, or email.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
 process.exit(1);
