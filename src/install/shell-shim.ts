@@ -1,5 +1,6 @@
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
+import { shellShimOwnershipLine } from "./shell-shim-ownership";
 
 export interface GitShellShimOptions {
   shimDirectory: string;
@@ -31,8 +32,8 @@ export function installGitShellShim(options: GitShellShimOptions): string {
   const sourcePath = options.runtimePath.replaceAll("\\", "/");
   const gitPath = options.gitExecutable.replaceAll("\\", "/");
   const bunPath = bunExecutable.replaceAll("\\", "/");
-  writeFileSync(shimPath, `#!/bin/sh\nexec ${shellQuote(bunPath)} ${shellQuote(sourcePath)} ${shellQuote(gitPath)} "$@"\n`);
+  writeFileSync(shimPath, `#!/bin/sh\n${shellShimOwnershipLine(realGit)}\nexec ${shellQuote(bunPath)} ${shellQuote(sourcePath)} ${shellQuote(gitPath)} "$@"\n`);
   chmodSync(shimPath, 0o755);
-  writeFileSync(windowsShimPath, `@echo off\r\nsetlocal\r\n${commandQuote(bunPath)} ${commandQuote(sourcePath)} ${commandQuote(gitPath)} %*\r\nexit /b %ERRORLEVEL%\r\n`);
+  writeFileSync(windowsShimPath, `@echo off\r\n${shellShimOwnershipLine(realGit, true)}\r\nsetlocal\r\n${commandQuote(bunPath)} ${commandQuote(sourcePath)} ${commandQuote(gitPath)} %*\r\nexit /b %ERRORLEVEL%\r\n`);
   return shimPath;
 }
