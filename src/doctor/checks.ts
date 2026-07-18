@@ -74,7 +74,8 @@ export function installationState(options: DoctorOptions): InstallationState {
   const hasOwnedData = (options.dataHomes ?? []).some((home) => ownedDataNames.some((name) => existsSync(join(home, name))));
   const hasVibeBloatHook = Object.values(options.hookConfigs).some((config) => config?.includes("vibebloat") === true);
   if (!hasProof && !hasGuardData && !hasOwnedData && !hasVibeBloatHook) return "not-installed";
-  if (hasProof && hasChokepoint("claude-code", options.hookConfigs) && hasChokepoint("codex", options.hookConfigs)) return "installed";
+  const installedAgents = options.installedAgents ?? ["claude-code", "codex"];
+  if (hasProof && installedAgents.length > 0 && installedAgents.every((agent) => hasChokepoint(agent, options.hookConfigs))) return "installed";
   return "partial";
 }
 
@@ -134,9 +135,12 @@ export function runDoctor(options: DoctorOptions): DoctorFinding[] {
   const guardDirectories = options.guardDirectories ?? (options.guardDirectory ? [options.guardDirectory] : []);
   const hasProof = guardDirectories.some((directory) => existsSync(join(directory, "proof.json")));
   if (options.requireProof !== false && !hasProof) findings.push({ status: "error", check: "proof", message: "No runner-written proof marker found." });
-  if (!hasChokepoint("claude-code", options.hookConfigs)) findings.push({ status: "error", check: "claude-hook", message: "Claude Code hook is missing." });
-  if (!hasChokepoint("codex", options.hookConfigs)) findings.push({ status: "error", check: "codex-hook", message: "Codex hook is missing." });
   const installedAgents = options.installedAgents ?? ["claude-code", "codex"];
+  const agentNames: Record<GuardAgent, string> = { "claude-code": "Claude Code", codex: "Codex", hermes: "Hermes", openclaw: "OpenClaw" };
+  const agentChecks: Record<GuardAgent, string> = { "claude-code": "claude-hook", codex: "codex-hook", hermes: "hermes-hook", openclaw: "openclaw-hook" };
+  for (const agent of installedAgents) {
+    if (!hasChokepoint(agent, options.hookConfigs)) findings.push({ status: "error", check: agentChecks[agent], message: `${agentNames[agent]} hook is missing.` });
+  }
   const missingByAgent = new Map<GuardAgent, string[]>();
   for (const guard of options.guards ?? []) {
     if (!guard.enabled) continue;

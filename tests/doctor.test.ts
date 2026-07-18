@@ -71,6 +71,21 @@ test("doctor reports missing chokepoints for explicit and empty bindings", () =>
   }).some((finding) => finding.check === "guard-bind" && finding.message.includes("openclaw"))).toBeFalse();
 });
 
+test("doctor requires only the explicitly installed agent bindings", () => {
+  const root = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-doctor-selected-"));
+  tempDirectories.push(root);
+  const guards = join(root, "guards");
+  mkdirSync(guards, { recursive: true });
+  writeFileSync(join(guards, "proof.json"), "{}\n");
+  const options = {
+    guardDirectories: [guards],
+    installedAgents: ["hermes" as const],
+    hookConfigs: { claude: "", codex: "", hermes: "vibebloat-hermes-pre-tool-call" },
+  };
+  expect(installationState(options)).toBe("installed");
+  expect(runDoctor(options).filter(({ status }) => status === "error")).toEqual([]);
+});
+
 test("doctor distinguishes clean absence from partial installation residue", () => {
   const root = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-doctor-state-"));
   tempDirectories.push(root);

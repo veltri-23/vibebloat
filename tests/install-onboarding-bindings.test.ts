@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { installOnboardingBindings, type OnboardingBindingInstallOptions } from "../src/install/onboarding-bindings";
+import { installOnboardingBindings, readOnboardingBindingReceipt, type OnboardingBindingInstallOptions } from "../src/install/onboarding-bindings";
 
 const temporaryDirectories: string[] = [];
 const pythonExecutable = Bun.which("python") ?? Bun.which("python3");
@@ -63,6 +63,9 @@ test("selected Claude and Codex hooks plus Git baseline are exactly verified and
   });
   const persisted = readFileSync(join(value.repository, ".vibebloat", "receipts", "onboarding-bindings.json"), "utf8");
   expect(JSON.parse(persisted)).toEqual(receipt);
+  expect(readOnboardingBindingReceipt(value.repository)).toEqual(receipt);
+  writeFileSync(join(value.repository, ".vibebloat", "receipts", "onboarding-bindings.json"), JSON.stringify({ ...receipt, environments: [{ id: "codex", mechanism: "claude-pre-tool-use" }] }));
+  expect(readOnboardingBindingReceipt(value.repository)).toBeUndefined();
   expect(persisted).not.toContain(value.root);
   expect(persisted).not.toContain("vibebloat hook");
 });

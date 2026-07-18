@@ -63,6 +63,12 @@ export interface OnboardingBindingReceipt {
   verifiedAt: string;
 }
 
+const mechanismForEnvironment = (id: string): BindingMechanism => id === "claude-code" ? "claude-pre-tool-use"
+  : id === "codex" ? "codex-pre-tool-use"
+    : id === "hermes" ? "hermes-digest-bound-hook"
+      : id === "openclaw" ? "openclaw-host-registration"
+        : "shell-git-fs-fallback";
+
 interface NativePlans {
   plans: AtomicFilePlan[];
   claude?: { path: string; content: string };
@@ -220,11 +226,7 @@ function installAndVerifyFallback(repository: string, fallback: FallbackBindingO
 function receiptFor(selected: readonly string[], verifiedAt: Date): OnboardingBindingReceipt {
   const environments = selected.map((id): OnboardingBindingReceipt["environments"][number] => ({
     id,
-    mechanism: id === "claude-code" ? "claude-pre-tool-use"
-      : id === "codex" ? "codex-pre-tool-use"
-        : id === "hermes" ? "hermes-digest-bound-hook"
-          : id === "openclaw" ? "openclaw-host-registration"
-            : "shell-git-fs-fallback",
+    mechanism: mechanismForEnvironment(id),
   }));
   return {
     schemaVersion: 1,
@@ -234,6 +236,30 @@ function receiptFor(selected: readonly string[], verifiedAt: Date): OnboardingBi
     gitBaseline: "verified",
     verifiedAt: verifiedAt.toISOString(),
   };
+}
+
+export function readOnboardingBindingReceipt(repository: string): OnboardingBindingReceipt | undefined {
+  if (!isAbsolute(repository)) return undefined;
+  const path = join(resolve(repository), ".vibebloat", "receipts", "onboarding-bindings.json");
+  try {
+    if (!existsSync(path) || lstatSync(path).isSymbolicLink() || !statSync(path).isFile()) return undefined;
+    const value: unknown = JSON.parse(readFileSync(path, "utf8"));
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const receipt = value as Record<string, unknown>;
+    if (receipt.schemaVersion !== 1 || receipt.owner !== "vibebloat" || receipt.kind !== "onboarding-bindings" || receipt.gitBaseline !== "verified") return undefined;
+    if (typeof receipt.verifiedAt !== "string" || !Number.isFinite(Date.parse(receipt.verifiedAt)) || !Array.isArray(receipt.environments)) return undefined;
+    const ids: string[] = [];
+    for (const entry of receipt.environments) {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return undefined;
+      const item = entry as Record<string, unknown>;
+      if (typeof item.id !== "string" || !identifier.test(item.id) || item.mechanism !== mechanismForEnvironment(item.id)) return undefined;
+      ids.push(item.id);
+    }
+    if (new Set(ids).size !== ids.length) return undefined;
+    return value as OnboardingBindingReceipt;
+  } catch {
+    return undefined;
+  }
 }
 
 export function installOnboardingBindings(options: OnboardingBindingInstallOptions): OnboardingBindingReceipt {

@@ -17,7 +17,7 @@ import { closeWatcherOnSignals, fsGuardReceiptPath, hasUnenforceableFileGuard, i
 import { discoverCurrentRepoGitHookPaths, installCurrentRepoGitHooks, planGitHook, type GitHookName } from "./install/git-hooks";
 import { installNativeHooks } from "./install/orchestrator";
 import { installHermesHook, preflightHermesHook } from "./install/hermes";
-import { installOnboardingBindings } from "./install/onboarding-bindings";
+import { installOnboardingBindings, readOnboardingBindingReceipt } from "./install/onboarding-bindings";
 import { installStarterGuardPack } from "./install/starter-pack";
 import { verifyShellPaths, type Shell } from "./install/shim";
 import { compileGuard } from "./compiler/codex-fill";
@@ -530,7 +530,17 @@ function currentDoctorOptions() {
   const homes = agentHomes();
   const hermesConfig = configText(join(homes.hermesHome, "config.yaml"));
   const hermesEvidence = hermesHookEvidence(homes.hermesHome, hermesConfig);
-  const installedAgents = verifiedInstalledAgents(hermesEvidence.expected);
+  const bindingReceipt = readOnboardingBindingReceipt(resolve(process.cwd()));
+  const receiptAgents = bindingReceipt?.environments.map(({ id }) => id)
+    .filter((id): id is GuardAgent => id === "claude-code" || id === "codex" || id === "hermes" || id === "openclaw");
+  const claudeConfig = configText(homes.claudePath);
+  const codexConfig = configText(homes.codexPath);
+  const detectedAgents: GuardAgent[] = [
+    ...(claudeConfig.includes("vibebloat") ? ["claude-code" as const] : []),
+    ...(codexConfig.includes("vibebloat") && /plugin_hooks\s*=\s*true/.test(codexConfig) ? ["codex" as const] : []),
+    ...(hermesEvidence.expected ? ["hermes" as const] : []),
+  ];
+  const installedAgents = receiptAgents ?? (detectedAgents.length > 0 ? detectedAgents : ["claude-code", "codex"]);
   const directories = guardDirectories();
   const loadedGuards = runtimeGuards();
   const fallbackShimDirectory = argumentValue("--fallback-shim-dir");
@@ -546,9 +556,10 @@ function currentDoctorOptions() {
     ...(fallbackShimDirectory ? { fallbackPathHealthy: fallbackPathIsHealthy(resolve(fallbackShimDirectory)) } : {}),
     ...(fallbackShimDirectory || filesystemGuardHealth !== "absent" ? { filesystemGuardHealth } : {}),
     hookConfigs: {
-      claude: configText(homes.claudePath),
-      codex: configText(homes.codexPath),
+      claude: claudeConfig,
+      codex: codexConfig,
       hermes: hermesEvidence.verifiedConfig,
+      ...(receiptAgents?.includes("openclaw") ? { openclaw: "vibebloat-openclaw-host-registration" } : {}),
     },
   };
   return {
