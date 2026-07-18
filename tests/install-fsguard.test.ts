@@ -10,7 +10,7 @@ afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
-test("filesystem fallback blocks wrong MCP config write", () => {
+test("filesystem guard evaluation identifies wrong MCP config writes", () => {
   expect(evaluateFsWrite([mcpConfigWrongFileGuard], "C:/repo/.mcp.json")).toMatchObject({ exitCode: 2 });
 });
 
