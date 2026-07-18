@@ -61,3 +61,35 @@ test("raw Bearer output pauses before model or publish and persists only to loca
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("hybrid background queue receives only scrubbed candidates", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vibebloat-scrub-"));
+  const history = Array.from({ length: 1_502 }, (_, index) => ({
+    source: "hermes" as const,
+    sessionId: `session-${index}`,
+    messageIndex: 0,
+    chunkIndex: 0,
+    role: "user",
+    content: index === 0 ? "Bearer secret failed" : "failed",
+  }));
+  let queued = "";
+  try {
+    const result = await scanHistory(history, {
+      presidioCommand: presidioRedact,
+      gitleaksCommand: gitleaksClean,
+      localSink: createLocalOnlySink(directory),
+      modelPass: async () => [],
+      publish: async () => {},
+      hybrid: {
+        backgroundOptIn: true,
+        queueBackground: async ({ candidates }) => { queued = candidates.map((candidate) => candidate.content).join("\n"); },
+      },
+    });
+
+    expect(result).toEqual({ status: "ingested" });
+    expect(queued).toContain("Bearer <redacted> failed");
+    expect(queued).not.toContain("Bearer secret failed");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
