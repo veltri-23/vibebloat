@@ -18,6 +18,7 @@ import { discoverCurrentRepoGitHookPaths, installCurrentRepoGitHooks, planGitHoo
 import { installNativeHooks } from "./install/orchestrator";
 import { installHermesHook, preflightHermesHook } from "./install/hermes";
 import { installOnboardingBindings } from "./install/onboarding-bindings";
+import { installStarterGuardPack } from "./install/starter-pack";
 import { verifyShellPaths, type Shell } from "./install/shim";
 import { compileGuard } from "./compiler/codex-fill";
 import { compileLiveForScope, drainQueuedLiveCompilesForScope } from "./compiler/live-compile";
@@ -923,6 +924,10 @@ if (mode === "init") {
     if (validChoice) {
       const preferences = applyOnboardingPreference(state.preferences, before.gate, effectiveAnswer);
       if (before.gate === "F2" && preferences.modelRoute) modelCommandFromEnvironment(preferences.modelRoute);
+      if ((before.gate === "G-empty" || before.gate === "I-zero") && preferences.starterPack) {
+        const scope = next.scope ?? state.scope ?? "machine";
+        installStarterGuardPack(join(guardHomeForScope(scope), "guards"));
+      }
       state.preferences = preferences;
     }
     if (before.gate === "F1" && next.cancelled && coordinator.snapshot().phase === "privacy") coordinator.cancel();

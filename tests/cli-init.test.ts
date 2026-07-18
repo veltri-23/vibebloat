@@ -193,3 +193,29 @@ test("init can recommend and apply without skipping the gate", () => {
     assist: { appliedOption: expect.any(String) },
   });
 });
+
+test("empty-history starter choice installs the preventive pack before advancing", () => {
+  const home = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-init-"));
+  temporaryDirectories.push(home);
+  writeFileSync(join(home, "onboarding.json"), JSON.stringify({ gate: "G-empty", scope: "repo", answers: {} }));
+  const result = init(home, "--answer", "Yes");
+  expect(result.exitCode).toBe(0);
+  expect(JSON.parse(result.stdout.toString())).toMatchObject({ gate: "N1" });
+  expect(JSON.parse(readFileSync(join(home, "onboarding.json"), "utf8"))).toMatchObject({ preferences: { starterPack: true } });
+  for (const id of ["starter-git-stash-untracked", "starter-rm-recursive-force", "starter-git-force-push", "starter-git-reset-hard"]) {
+    expect(existsSync(join(home, "guards", `${id}.json`))).toBeTrue();
+  }
+});
+
+test("starter pack collision keeps onboarding on its current gate", () => {
+  const home = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-init-"));
+  temporaryDirectories.push(home);
+  require("node:fs").mkdirSync(join(home, "guards"), { recursive: true });
+  writeFileSync(join(home, "onboarding.json"), JSON.stringify({ gate: "I-zero", scope: "repo", answers: {} }));
+  writeFileSync(join(home, "guards", "starter-rm-recursive-force.json"), "local collision\n");
+  const result = init(home, "--answer", "Yes");
+  expect(result.exitCode).toBe(1);
+  expect(result.stderr.toString()).toContain("Starter guard conflicts with existing local guard");
+  expect(JSON.parse(readFileSync(join(home, "onboarding.json"), "utf8"))).toMatchObject({ gate: "I-zero" });
+  expect(existsSync(join(home, "guards", "starter-git-stash-untracked.json"))).toBeFalse();
+});
