@@ -74,6 +74,8 @@ test("shell launcher persists work and returns without running the compiler", ()
   const root = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-live-launch-"));
   temporaryDirectories.push(root);
   const project = join(root, "project");
+  expect(() => launchLiveCompileProposal(incident(), { cwd: project })).toThrow("command is missing");
+  expect(existsSync(join(project, ".vibebloat", "live-proposal-queue"))).toBeFalse();
   let launched: readonly string[] | undefined;
   launchLiveCompileProposal(incident(), {
     cwd: project,
@@ -84,6 +86,14 @@ test("shell launcher persists work and returns without running the compiler", ()
   expect(launched).toEqual([process.execPath, join(project, "cli.ts"), "live-compile-worker", "live-git-clean-untracked", "repo"]);
   expect(existsSync(join(project, ".vibebloat", "live-proposal-queue", "live-git-clean-untracked.json"))).toBeTrue();
   expect(existsSync(join(project, ".vibebloat", "live-proposals"))).toBeFalse();
+
+  const standalone = join(root, "standalone");
+  launchLiveCompileProposal(incident(), {
+    cwd: standalone,
+    cliCommand: [join(root, "vibebloat.exe")],
+    launch: (command) => { launched = command; },
+  });
+  expect(launched).toEqual([join(root, "vibebloat.exe"), "live-compile-worker", "live-git-clean-untracked", "repo"]);
 });
 
 test("forged live incident content fails before budget or proposal writes", () => {

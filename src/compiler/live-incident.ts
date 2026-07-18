@@ -80,7 +80,8 @@ export interface ScheduleLiveProposalOptions extends LiveProposalOptions {
 }
 
 export interface LaunchLiveProposalOptions extends LiveProposalOptions {
-  cliPath: string;
+  cliPath?: string;
+  cliCommand?: readonly string[];
   launch?: (command: readonly string[], options: { cwd: string; env: NodeJS.ProcessEnv }) => void;
 }
 
@@ -429,8 +430,14 @@ export function launchLiveCompileProposal(incident: IncidentManifest, options: L
   const environment = options.environment ?? process.env;
   const cwd = options.cwd ?? process.cwd();
   const home = guardHomeForScope(scope, environment, cwd);
+  const baseCommand = options.cliCommand
+    ? [...options.cliCommand]
+    : options.cliPath
+      ? [process.execPath, options.cliPath]
+      : [];
+  if (baseCommand.length === 0) throw new Error("Live compiler command is missing.");
   persistRequest(home, incident);
-  const command = [process.execPath, options.cliPath, "live-compile-worker", incident.incident_id, scope];
+  const command = [...baseCommand, "live-compile-worker", incident.incident_id, scope];
   if (options.launch) {
     options.launch(command, { cwd, env: environment });
     return;

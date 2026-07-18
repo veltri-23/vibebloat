@@ -7,6 +7,7 @@ const typeAssignment = "nodeSubclass.prototype.type = typeName;";
 const result = await Bun.build({
   entrypoints: [resolve(root, "src/cli.ts")],
   compile: { outfile: resolve(root, "dist/vibebloat") },
+  define: { VIBEBLOAT_STANDALONE: "true" },
   plugins: [{
     name: "tree-sitter-standalone",
     setup(build) {

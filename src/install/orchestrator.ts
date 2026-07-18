@@ -10,6 +10,7 @@ export interface FallbackInstallOptions {
   shimDirectory: string;
   readPath: (shell: Shell, probe: string) => string;
   gitExecutable?: string;
+  selfCommand?: readonly string[];
 }
 
 export interface InstallOptions {
@@ -39,7 +40,9 @@ export function installNativeHooks(options: InstallOptions): void {
   if (!fallback) return;
   if (fallback.gitExecutable) installGitShellShim({
     shimDirectory: fallback.shimDirectory,
-    runtimePath: fileURLToPath(new URL("../hooks/shell-shim-cli.ts", import.meta.url)),
     gitExecutable: fallback.gitExecutable,
+    ...(fallback.selfCommand
+      ? { selfCommand: fallback.selfCommand }
+      : { runtimePath: fileURLToPath(new URL("../hooks/shell-shim-cli.ts", import.meta.url)) }),
   });
 }

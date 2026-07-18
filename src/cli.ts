@@ -17,6 +17,8 @@ import type { Shell } from "./install/shim";
 import { compileGuard } from "./compiler/codex-fill";
 import { compileLiveForScope, drainQueuedLiveCompilesForScope } from "./compiler/live-compile";
 import { approveLiveCompileProposal, authorizeHumanLiveCompileApproval, drainQueuedLiveProposalsForScope, processQueuedLiveProposal, reviewLiveCompileProposal } from "./compiler/live-incident";
+import { runShellShimCommand } from "./hooks/shell-shim-handler";
+import { cliSelfCommand } from "./self-command";
 import { createCodebaseMemorySemanticAdapter } from "./ingest/codebase-memory-semantic";
 import { createLocalSemanticAdapter } from "./ingest/local-semantic";
 import { scanHistory } from "./ingest/scan";
@@ -411,6 +413,7 @@ if (mode === "install") {
           shimDirectory: fallbackShimDirectory,
           gitExecutable: fallbackGitExecutable,
           readPath: readFallbackShellPath,
+          selfCommand: cliSelfCommand(),
         },
       } : {}),
     });
@@ -757,6 +760,11 @@ if (mode === "live-compile-worker") {
     result = processQueuedLiveProposal(incidentId, { scope });
   }
   process.exit(result.status === "failed" ? 1 : 0);
+}
+
+if (mode === "shell-shim") {
+  const [gitExecutable, ...arguments_] = process.argv.slice(3);
+  process.exit(runShellShimCommand(gitExecutable, arguments_, { cliCommand: cliSelfCommand() }));
 }
 
 if (mode === "git-hook") {
