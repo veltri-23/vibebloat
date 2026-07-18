@@ -16,9 +16,13 @@ import { installHermesHook, preflightHermesHook } from "./install/hermes";
 import type { Shell } from "./install/shim";
 import { compileGuard } from "./compiler/codex-fill";
 import { compileLiveForScope, drainQueuedLiveCompilesForScope } from "./compiler/live-compile";
+import { createCodebaseMemorySemanticAdapter } from "./ingest/codebase-memory-semantic";
+import { createLocalSemanticAdapter } from "./ingest/local-semantic";
 import { scanHistory } from "./ingest/scan";
+import type { UntrustedSemanticContext } from "./ingest/semantic-context";
 import { rankIncidents, type IncidentManifest } from "./ingest/rank";
 import type { HistoryChunk } from "./ingest/types";
+import { serializeModelCommandInput } from "./mine/model-command-input";
 import { detectRunnerDetails, parentProcessCommand, parseRunnerOverride, type RunnerDetectionSource } from "./onboarding/detect-runner";
 import { isGateChoice } from "./onboarding/gates";
 import { OnboardingRunner, type RunnerState } from "./onboarding/runner";
@@ -34,6 +38,10 @@ import type { Event, Guard, GuardAgent } from "./types";
 import { uninstallVibeBloat } from "./uninstall";
 
 const guards: Guard[] = [gitStashUntrackedGuard, mcpConfigWrongFileGuard];
+const gitHookCommands = {
+  "pre-commit": "vibebloat git-hook pre-commit",
+  "pre-push": "vibebloat git-hook pre-push",
+} as const;
 const guardIdPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const mode = process.argv[2] ?? "init";
 function guardScope(): "repo" | "machine" {
@@ -197,8 +205,12 @@ function hasRawBearerToken(value: unknown): boolean {
   return /\bbearer\s+(?!<redacted>)\S+/i.test(JSON.stringify(value));
 }
 
-async function runModelCommand(command: readonly string[], candidates: HistoryChunk[]): Promise<IncidentManifest[]> {
-  const result = await executeCommand(command, JSON.stringify({ candidates }));
+async function runModelCommand(
+  command: readonly string[],
+  candidates: HistoryChunk[],
+  semanticContext?: UntrustedSemanticContext,
+): Promise<IncidentManifest[]> {
+  const result = await executeCommand(command, serializeModelCommandInput(candidates, semanticContext));
   if (result.exitCode !== 0) throw new Error("model command failed");
   const incidents: unknown = JSON.parse(result.stdout);
   if (!Array.isArray(incidents) || hasRawBearerToken(incidents)) {
@@ -298,8 +310,8 @@ if (mode === "install") {
   }
   try {
     const gitHookPaths = discoverCurrentRepoGitHookPaths(process.cwd());
-    planGitHook(gitHookPaths["pre-commit"], "vibebloat git-hook pre-commit");
-    planGitHook(gitHookPaths["pre-push"], "vibebloat git-hook pre-push");
+    planGitHook(gitHookPaths["pre-commit"], gitHookCommands["pre-commit"]);
+    planGitHook(gitHookPaths["pre-push"], gitHookCommands["pre-push"]);
     const fallbackShimDirectory = argumentValue("--fallback-shim-dir");
     const fallbackGitExecutable = argumentValue("--fallback-git");
     if (Boolean(fallbackShimDirectory) !== Boolean(fallbackGitExecutable)) {
@@ -323,10 +335,7 @@ if (mode === "install") {
       } : {}),
     });
     if (hermesHome && hermesPython) installHermesHook({ permitted: true, hermesHome, pythonExecutable: hermesPython });
-    installCurrentRepoGitHooks(process.cwd(), {
-      "pre-commit": "vibebloat git-hook pre-commit",
-      "pre-push": "vibebloat git-hook pre-push",
-    });
+    installCurrentRepoGitHooks(process.cwd(), gitHookCommands);
     process.stdout.write(fallbackShimDirectory
       ? `Native hooks, Git hooks, and fallback git shims installed. Add ${fallbackShimDirectory} first on PATH in each shell, then run: vibebloat doctor\n`
       : "Native hooks and Git hooks installed. Run: vibebloat doctor\n");
@@ -425,12 +434,16 @@ if (mode === "init") {
   try {
     if (before.gate === "F0" && next.gate === "B1") {
       const base = process.env.USERPROFILE ?? process.env.HOME ?? ".";
+      const gitHookPaths = discoverCurrentRepoGitHookPaths(process.cwd());
+      planGitHook(gitHookPaths["pre-commit"], gitHookCommands["pre-commit"]);
+      planGitHook(gitHookPaths["pre-push"], gitHookCommands["pre-push"]);
       installNativeHooks({
         permitted: true,
         claudePath: join(process.env.CLAUDE_CONFIG_DIR ?? join(base, ".claude"), "settings.json"),
         codexPath: join(process.env.CODEX_HOME ?? join(base, ".codex"), "config.toml"),
         command: "vibebloat hook",
       });
+      installCurrentRepoGitHooks(process.cwd(), gitHookCommands);
     }
     if (isGateChoice(before.gate, answer) && !next.cancelled) next = runner.advanceAutomaticGates();
     saveOnboardingState(home, next);
@@ -506,15 +519,23 @@ if (mode === "scan") {
     const parsed: unknown = JSON.parse(readFileSync(historyPath, "utf8"));
     if (!Array.isArray(parsed) || !parsed.every(isHistoryChunk)) throw new Error("history file must contain valid history chunks");
 
+    const scanHome = process.env.VIBEBLOAT_HOME ?? globalGuardHome();
     let candidateCount = 0;
     let incidents: IncidentManifest[] = [];
     const result = await scanHistory(parsed, {
       presidioCommand: scrubbers.presidio,
       gitleaksCommand: scrubbers.gitleaks,
-      localSink: createLocalOnlySink(join(process.env.VIBEBLOAT_HOME ?? globalGuardHome(), "failed-ingest")),
-      modelPass: async (candidates) => {
+      localSink: createLocalOnlySink(join(scanHome, "failed-ingest")),
+      semantic: {
+        repoRoot: resolve(process.cwd()),
+        coordinator: {
+          primary: createCodebaseMemorySemanticAdapter(),
+          local: createLocalSemanticAdapter({ home: scanHome }),
+        },
+      },
+      modelPass: async (candidates, semanticContext) => {
         candidateCount = candidates.length;
-        return runModelCommand(modelCommand, candidates);
+        return runModelCommand(modelCommand, candidates, semanticContext);
       },
       publish: async (mined) => { incidents = mined; },
     });
