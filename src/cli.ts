@@ -9,7 +9,7 @@ import { canonicalGuardId, gitStashUntrackedGuard, mcpConfigWrongFileGuard } fro
 import { runPreToolUse } from "./hooks";
 import { closeWatcherOnSignals, watchGuardedWrites } from "./install/fs-guard";
 import { installNativeHooks } from "./install/orchestrator";
-import { installHermesHook } from "./install/hermes";
+import { installHermesHook, preflightHermesHook } from "./install/hermes";
 import type { Shell } from "./install/shim";
 import { compileGuard } from "./compiler/codex-fill";
 import { compileLiveForScope } from "./compiler/live-compile";
@@ -225,6 +225,7 @@ if (mode === "install") {
     if (fallbackShimDirectory && (!isAbsolute(fallbackShimDirectory) || !isAbsolute(fallbackGitExecutable!))) {
       throw new Error("fallback paths must be absolute");
     }
+    if (hermesHome && hermesPython) preflightHermesHook({ permitted: true, hermesHome, pythonExecutable: hermesPython });
     installNativeHooks({
       permitted: true,
       claudePath: join(claudeHome, "settings.json"),

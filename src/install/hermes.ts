@@ -9,7 +9,17 @@ export interface HermesHookInstallOptions {
   sourceDirectory?: string;
 }
 
-export function installHermesHook(options: HermesHookInstallOptions): void {
+interface HermesHookPreflight {
+  source: string;
+  handlerSource: string;
+  handlerDigest: string;
+}
+
+export function preflightHermesHook(options: HermesHookInstallOptions): void {
+  resolveHermesHookPreflight(options);
+}
+
+function resolveHermesHookPreflight(options: HermesHookInstallOptions): HermesHookPreflight {
   if (!options.permitted) throw new Error("Explicit setup permission is required.");
   if (!isAbsolute(options.hermesHome)) throw new Error("Hermes home must be absolute.");
   if (!existsSync(options.hermesHome) || !statSync(options.hermesHome).isDirectory()) throw new Error("Hermes home must be an existing directory.");
@@ -17,13 +27,55 @@ export function installHermesHook(options: HermesHookInstallOptions): void {
     throw new Error("Hermes Python interpreter must be an existing absolute file.");
   }
   const source = options.sourceDirectory ?? join(import.meta.dir, "../../hermes");
+  const handlerSource = join(source, "handler.py");
+  const handlerDigest = createHash("sha256").update(readFileSync(handlerSource)).digest("hex");
+  assertPythonRuntime(options.pythonExecutable, handlerSource, handlerDigest, source);
+  return { source, handlerSource, handlerDigest };
+}
+
+function assertPythonRuntime(pythonExecutable: string, handlerSource: string, handlerDigest: string, source: string): void {
+  let runtime;
+  try {
+    runtime = Bun.spawnSync({
+      cmd: [pythonExecutable, "-c", "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)"],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+  } catch {
+    throw new Error("Hermes Python interpreter could not execute a Python runtime check.");
+  }
+  if (runtime.exitCode !== 0) throw new Error("Hermes Python interpreter failed the Python runtime check.");
+
+  const payload = JSON.stringify({ hook_event_name: "pre_tool_call", tool_name: "terminal", tool_input: { command: "echo vibebloat-preflight" } });
+  const unavailableCli = join(source, ".vibebloat-preflight-unavailable");
+  let handler;
+  try {
+    handler = Bun.spawnSync({
+      cmd: [pythonExecutable, handlerSource, `--vibebloat-handler-sha=${handlerDigest}`],
+      stdin: new TextEncoder().encode(payload),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, VIBEBLOAT_CLI: unavailableCli },
+    });
+  } catch {
+    throw new Error("Hermes Python interpreter could not invoke the VibeBloat handler.");
+  }
+  if (handler.exitCode !== 0) throw new Error("Hermes Python interpreter could not invoke the VibeBloat handler.");
+  try {
+    const result = JSON.parse(handler.stdout.toString()) as { decision?: unknown; reason?: unknown };
+    if (result.decision !== "block" || typeof result.reason !== "string") throw new Error("invalid");
+  } catch {
+    throw new Error("Hermes Python interpreter produced an invalid VibeBloat handler response.");
+  }
+}
+
+export function installHermesHook(options: HermesHookInstallOptions): void {
+  const { source, handlerSource, handlerDigest } = resolveHermesHookPreflight(options);
   const hooksDirectory = join(options.hermesHome, "hooks");
   const configPath = join(options.hermesHome, "config.yaml");
   const allowlistPath = join(options.hermesHome, "shell-hooks-allowlist.json");
   const destination = join(hooksDirectory, "vibebloat");
   const handlerPath = join(destination, "handler.py");
-  const handlerSource = join(source, "handler.py");
-  const handlerDigest = createHash("sha256").update(readFileSync(handlerSource)).digest("hex");
   const command = bridgeCommand(options.pythonExecutable, handlerPath, handlerDigest);
   const currentConfig = existsSync(configPath) ? readFileSync(configPath, "utf8") : "";
   const currentAllowlist = existsSync(allowlistPath) ? readFileSync(allowlistPath, "utf8") : "";
