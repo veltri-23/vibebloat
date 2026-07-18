@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { installGitShellShim } from "../src/install/shell-shim";
 import { shellPathProbe, verifyShellPaths } from "../src/install/shim";
@@ -36,16 +36,21 @@ test("installer writes interceptable POSIX and Windows git shims", () => {
     runtimePath: join(directory, "shell-shim-cli.ts"),
     gitExecutable: join(directory, "real-git.exe"),
   });
-  expect(readFileSync(posixShim, "utf8")).toContain('exec "${BUN_EXECUTABLE:-bun}"');
+  expect(readFileSync(posixShim, "utf8")).toContain(`exec '${process.execPath.replaceAll("\\", "/")}'`);
   const windowsShim = readFileSync(join(directory, "git.cmd"), "utf8");
-  expect(windowsShim).toContain('"%BUN_EXECUTABLE%"');
+  expect(windowsShim).toContain(`"${process.execPath.replaceAll("\\", "/")}"`);
+  expect(windowsShim).not.toContain("BUN_EXECUTABLE");
   expect(windowsShim).toContain("%*");
 });
 
-test("Windows git.cmd routes destructive stash through the fail-closed shim", () => {
+test("Windows git.cmd ignores hostile Bun environment and PATH before blocking destructive stash", () => {
   if (process.platform !== "win32") return;
   const directory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-shim-"));
   temporaryDirectories.push(directory);
+  const attackerDirectory = join(directory, "attacker");
+  const marker = join(directory, "attacker-ran");
+  mkdirSync(attackerDirectory);
+  writeFileSync(join(attackerDirectory, "bun.cmd"), `@echo off\r\necho PATH > "${marker}"\r\n`);
   const gitExecutable = Bun.which("git");
   expect(gitExecutable).toBeTruthy();
   installGitShellShim({
@@ -56,10 +61,16 @@ test("Windows git.cmd routes destructive stash through the fail-closed shim", ()
   const shimPath = join(directory, "git.cmd");
   const result = Bun.spawnSync([shimPath, "stash", "--all"], {
     cwd: directory,
-    env: { ...process.env, BUN_EXECUTABLE: process.execPath, VIBEBLOAT_HOME: join(directory, "home") },
+    env: {
+      ...process.env,
+      BUN_EXECUTABLE: `C:\\missing.exe" & echo ENV > "${marker}" & rem`,
+      PATH: `${attackerDirectory};${process.env.PATH ?? ""}`,
+      VIBEBLOAT_HOME: join(directory, "home"),
+    },
     stdout: "pipe",
     stderr: "pipe",
   });
   expect(result.exitCode).toBe(2);
   expect(result.stderr.toString()).toContain("07-15 this deleted untracked files");
+  expect(existsSync(marker)).toBeFalse();
 });
