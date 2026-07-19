@@ -33,7 +33,8 @@ test("a configured model does the mining for real", async () => {
   });
   expect(sawCandidates).toBeGreaterThan(0);
   expect(result.mined).toBe("model");
-  expect(result.incidents[0]!.incident_id).toBe("mined-live");
+  // Marked as sample even though the model invented the id.
+  expect(result.incidents[0]!.incident_id).toBe("sample-mined-live");
   expect(result.steps.find(({ label }) => label === "mine")!.detail).not.toContain("precomputed");
 });
 
@@ -85,4 +86,41 @@ test("a safe variant of the same command is not blocked", async () => {
   for (const allowed of result.allowed) {
     expect(allowed.exitCode).toBe(0);
   }
+});
+
+test("live-mined findings are marked as sample, not just the precomputed ones", async () => {
+  // The default path auto-detects an agent CLI and mines for real. Model-invented
+  // ids and conditions previously reached the screen with no marker at all.
+  const result = await runSampleDemo(async () => [{
+    incident_id: "docker-compose-down-volumes", class: "A", chokepoint: "shell",
+    command: "docker compose", args_contains: ["down", "-v"],
+    condition: "docker compose down -v destroyed the local dev database volume",
+    remediation: "Use docker compose down without -v.",
+    evidence_refs: ["sample-session-3:0"], severity: 5, frequency: 2, recency: "2026-07-19",
+  }]);
+
+  expect(result.mined).toBe("model");
+  for (const block of result.blocks) {
+    // Every line a judge could screenshot must say sample somewhere.
+    for (const line of block.receipt.split("\n")) {
+      expect(line.toLowerCase()).toContain("sample");
+    }
+  }
+});
+
+test("precomputed findings are marked on every receipt line too", async () => {
+  const result = await runSampleDemo();
+  for (const block of result.blocks) {
+    for (const line of block.receipt.split("\n")) {
+      expect(line.toLowerCase()).toContain("sample");
+    }
+  }
+});
+
+test("the cross-agent verdict is a real second evaluation", async () => {
+  const result = await runSampleDemo();
+  const first = result.blocks[0]!;
+  const parsed = JSON.parse(first.crossAgent!);
+  expect(parsed.hookSpecificOutput.permissionDecision).toBe("deny");
+  expect(parsed.hookSpecificOutput.permissionDecisionReason.toLowerCase()).toContain("sample");
 });

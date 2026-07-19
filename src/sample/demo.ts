@@ -4,6 +4,7 @@ import { rankIncidents, type IncidentManifest } from "../ingest/rank";
 import { prefilterCandidates } from "../ingest/prefilter";
 import { Runtime } from "../runtime";
 import { runPreToolUse } from "../hooks";
+import type { Guard } from "../types";
 
 import { builtinPresidioScrubber, builtinGitleaksScrubber } from "../scrub/builtin";
 import type { HistoryChunk } from "../ingest/types";
@@ -39,6 +40,19 @@ export interface DemoResult {
   incidents: IncidentManifest[];
 }
 
+/** A genuine second evaluation bound to Codex, so the deny is earned. */
+function codexDeny(guards: Guard[], payload: unknown): string | undefined {
+  const verdict = runPreToolUse(guards, payload, new Runtime(), "codex");
+  if (verdict.exitCode !== 2 || !verdict.stderr) return undefined;
+  return JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: verdict.stderr,
+    },
+  });
+}
+
 /**
  * The same command minus the flag that made it destructive, to show the guard
  * is precise rather than a blanket ban. Positional arguments are kept, so
@@ -52,6 +66,22 @@ function safeVariant(command: string | undefined, args: readonly string[] | unde
 }
 
 export type DemoMiner = (candidates: HistoryChunk[]) => Promise<IncidentManifest[]>;
+
+/**
+ * Stamps an incident as sample data on every field that reaches the screen.
+ *
+ * Applied to live-mined findings as well as precomputed ones. The default path
+ * auto-detects an agent CLI and mines for real, so the ids and prose in the
+ * block a judge would screenshot are model-invented and carried no marker at
+ * all -- and a live run dates them today, which reads as more authentic than
+ * the backdated fallback, not less. Marking only the input session ids was not
+ * enough: none of them appear in a receipt.
+ */
+function markAsSample(incident: IncidentManifest): IncidentManifest {
+  const id = incident.incident_id.startsWith("sample-") ? incident.incident_id : `sample-${incident.incident_id}`;
+  const condition = /^\[sample\]/i.test(incident.condition) ? incident.condition : `[sample] ${incident.condition}`;
+  return { ...incident, incident_id: id, condition };
+}
 
 /**
  * Runs the real pipeline over the sample corpus so someone with no history of
@@ -103,7 +133,7 @@ export async function runSampleDemo(miner?: DemoMiner): Promise<DemoResult> {
     });
   }
 
-  const ranked = rankIncidents(incidents);
+  const ranked = rankIncidents(incidents).map(markAsSample);
   const guards = ranked.map((incident) => compileGuard(incident, incident.severity >= 4 ? "high" : "low"));
   const receipts: string[] = [];
   const blocks: DemoBlock[] = [];
@@ -116,7 +146,7 @@ export async function runSampleDemo(miner?: DemoMiner): Promise<DemoResult> {
     const payload = event.chokepoint === "shell"
       ? { tool_input: { command: event.command } }
       : { tool_input: { file_path: event.path } };
-    const response = runPreToolUse(guards, payload, new Runtime());
+    const response = runPreToolUse(guards, payload, new Runtime(), "claude-code");
     if (response.exitCode !== 2 || !response.stderr) continue;
 
     const command = event.chokepoint === "shell" ? event.command! : `write ${event.path}`;
@@ -126,19 +156,15 @@ export async function runSampleDemo(miner?: DemoMiner): Promise<DemoResult> {
       exitCode: response.exitCode,
       receipt: response.stderr,
       // Codex takes a structured deny instead of exit 2: one guard, two wire
-      // formats, which is the cross-agent claim made concrete.
-      ...(index === 0 ? { crossAgent: JSON.stringify({
-        hookSpecificOutput: {
-          hookEventName: "PreToolUse",
-          permissionDecision: "deny",
-          permissionDecisionReason: response.stderr,
-        },
-      }) } : {}),
+      // formats. Evaluated a second time through the real entry point rather
+      // than re-wrapping the first verdict, so agent-scoped binding is
+      // genuinely exercised instead of assumed.
+      ...(index === 0 ? { crossAgent: codexDeny(guards, payload) } : {}),
     });
 
     const safe = safeVariant(guard.match.command, guard.match.argsContains ?? guard.match.argsAnyOf);
     if (safe && safe !== command) {
-      const safeResponse = runPreToolUse(guards, { tool_input: { command: safe } }, new Runtime());
+      const safeResponse = runPreToolUse(guards, { tool_input: { command: safe } }, new Runtime(), "claude-code");
       if (safeResponse.exitCode === 0) allowed.push({ command: safe, exitCode: 0 });
     }
   }
