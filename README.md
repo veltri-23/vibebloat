@@ -13,6 +13,19 @@ command blocklist.
 
 ## Try it
 
+The fastest way: open Vibebloat in a pre-configured GitHub Codespace and run
+init in the browser. No local install required.
+
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://github.com/codespaces/new?hide_repo_select=true&ref=task%2Fvibebloat-mvp&repo=veltri-23%2Fvibebloat)
+
+Once the Codespace boots, run in its terminal:
+
+```sh
+bun src/cli.ts init --pretty
+```
+
+Or install locally (after `npm publish` lands):
+
 ```sh
 npx vibebloat
 ```

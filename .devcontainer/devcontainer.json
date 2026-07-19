@@ -1,0 +1,25 @@
+{
+  "name": "VibeBloat",
+  "image": "mcr.microsoft.com/devcontainers/universal:2",
+  "features": {
+    "ghcr.io/jungtech/setup-bun@v1": {
+      "version": "1.3.14"
+    }
+  },
+  "onCreateCommand": "bash .devcontainer/setup.sh",
+  "postStartCommand": "bash .devcontainer/welcome.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": [],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash"
+      }
+    }
+  },
+  "portsAttributes": {
+    "3000": {
+      "label": "VibeBloat site (when running)",
+      "onAutoForward": "ignore"
+    }
+  }
+}
