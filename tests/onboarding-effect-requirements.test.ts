@@ -18,7 +18,6 @@ const requiredEffects: Array<{
     evidence: { subscriberCaptureValidated: true, starterPackInstalled: true },
     missing: ["subscriberCaptureValidated", "starterPackInstalled"],
   },
-  { gate: "N1", choice: "Star", evidence: { githubStarVerified: true }, missing: ["githubStarVerified"] },
   { gate: "N2", choice: "Yes, notify me (uses your email)", evidence: { subscriptionStored: true }, missing: ["subscriptionStored"] },
   { gate: "O1", choice: "Yes", evidence: { dailyScheduleVerified: true }, missing: ["dailyScheduleVerified"] },
   { gate: "O2", choice: "Yes", evidence: { agentCronVerified: true }, missing: ["agentCronVerified"] },
@@ -52,7 +51,9 @@ test("F6 requires both subscriber capture and starter pack receipts", () => {
 
 test("skip, manual, and notify choices need no effect evidence", () => {
   expect(validateOnboardingEffectRequirements("F6", "Skip").ok).toBe(true);
+  // The star ask has no effect to verify: nothing is withheld pending a star.
   expect(validateOnboardingEffectRequirements("N1", "Maybe later").ok).toBe(true);
+  expect(validateOnboardingEffectRequirements("N1", "Star it").ok).toBe(true);
   expect(validateOnboardingEffectRequirements("N2", "Skip").ok).toBe(true);
   expect(validateOnboardingEffectRequirements("O1", "Manual only").ok).toBe(true);
   expect(validateOnboardingEffectRequirements("O2", "No").ok).toBe(true);

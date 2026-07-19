@@ -89,6 +89,66 @@ const starterGuardValues = [
     binds: [],
     enabled: true,
   },
+  {
+    schemaVersion: 1,
+    id: "starter-git-checkout-discard",
+    class: "A",
+    provenance: {
+      incident: "Preventive starter-pack rule for git checkout . discarding uncommitted edits.",
+      date: "2026-07-18",
+      source: "vibebloat-starter-pack",
+    },
+    match: { chokepoint: "shell", command: "git checkout", argsContains: ["."] },
+    action: {
+      type: "block",
+      message: "Blocked git checkout . - it discards every uncommitted edit. Scope to git checkout -- <path>.",
+      override: "vibebloat allow starter-git-checkout-discard --once",
+    },
+    confidence: "high",
+    tier: "local",
+    binds: [],
+    enabled: true,
+  },
+  {
+    schemaVersion: 1,
+    id: "starter-git-clean-force",
+    class: "A",
+    provenance: {
+      incident: "Preventive starter-pack rule for forced git clean deleting untracked files.",
+      date: "2026-07-18",
+      source: "vibebloat-starter-pack",
+    },
+    match: { chokepoint: "shell", command: "git clean", argsAnyOf: ["-f", "-ff", "-fd", "-df", "-fdx", "-xdf", "-dfx", "-xfd", "--force"] },
+    action: {
+      type: "block",
+      message: "Blocked forced git clean - it deletes untracked files forever. Dry-run with git clean -n first.",
+      override: "vibebloat allow starter-git-clean-force --once",
+    },
+    confidence: "high",
+    tier: "local",
+    binds: [],
+    enabled: true,
+  },
+  {
+    schemaVersion: 1,
+    id: "starter-env-file-confirm",
+    class: "B",
+    provenance: {
+      incident: "Preventive starter-pack rule for agent writes to .env secret files.",
+      date: "2026-07-18",
+      source: "vibebloat-starter-pack",
+    },
+    match: { chokepoint: "file", path: ".env" },
+    action: {
+      type: "require-confirm",
+      message: "Paused a write to .env. Secrets live here - confirm the change is intentional.",
+      override: "vibebloat allow starter-env-file-confirm --once",
+    },
+    confidence: "high",
+    tier: "local",
+    binds: [],
+    enabled: true,
+  },
 ] as const;
 
 export interface StarterGuardPackInstallReport {

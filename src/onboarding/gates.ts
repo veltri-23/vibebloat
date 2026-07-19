@@ -58,7 +58,7 @@ const gates: Record<GateId, GatePrompt> = {
   "K-shim-only": { question: "Want me to also wire a native hook into Claude Code / Codex / Hermes / OpenClaw so the colored receipt shows up right in your agent's terminal? It's purely cosmetic — the shim already blocks. Skip if you'd rather not touch agent config.", options: ["Skip (recommended if you don't want to touch agent config)", "Wire them up"] },
   L1: { question: "Want to watch one in action? I'll have an agent try `[topIncidentCommand]` right now.", options: ["Yes", "Skip"] },
   M: { question: "All set. These tripwires head off roughly [hoursLost] hours of repeat cleanup, cost nothing to run, and work across [environmentList].", options: [] },
-  N1: { question: "VibeBloat is free. A GitHub star unlocks the community library — rules other developers have already built and shared — and installs a bonus pack of three guards on the spot. Star it?", options: ["Star", "Maybe later"] },
+  N1: { question: "VibeBloat is free and everything is already installed — nothing is held back. If it earned it, a GitHub star helps other developers find it. No pressure either way.", options: ["Star it", "Maybe later"] },
   N2: { question: "Working on a team? A shared rule library, CI checks, and a dashboard are coming. Want a heads-up when they land?", options: ["Yes, notify me (uses your email)", "Skip"] },
   O1: { question: "Want me to run a quick daily check that keeps your rules healthy and turns any new mistakes into tripwires automatically? (recommended)", options: ["Yes", "Manual only"] },
   O2: { question: "You run [hermesLabel] — want a daily background job to keep your rules current there too? (recommended)", options: ["Yes", "No"] },

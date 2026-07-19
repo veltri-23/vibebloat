@@ -312,7 +312,6 @@ test("B1 missing rejects unbounded custom directory input before it can be resca
 test("unverified onboarding effects fail closed without advancing", () => {
   const cases = [
     ["F6", "Yes", "Skip"],
-    ["N1", "Star", "Maybe later"],
     ["N2", "Yes, notify me (uses your email)", "Skip"],
     ["O1", "Yes", "Manual only"],
     ["O2", "Yes", "No"],
