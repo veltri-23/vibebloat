@@ -7,7 +7,7 @@ import type { Guard } from "../src/types";
 
 const project = join(import.meta.dir, "..");
 const roots: string[] = [];
-const unavailable = "WHAT failed: update trust check stopped.\nWHY: installed package lacks controlled release metadata or pinned public key.\nFIX: npx vibebloat@latest update\n";
+const unavailable = "WHAT failed: update was not applied.\nWHY: controlled release verification or guard diff validation failed.\nFIX: vibebloat update\n";
 
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -77,8 +77,8 @@ test("controlled command verifies both assets and preserves local guard bytes", 
   const localBytes = `${JSON.stringify(guard("local-proof", "local", "git status"))}  \n`;
   writeFileSync(binary, "old-binary");
   writeFileSync(join(dist, "candidate"), "new-binary");
-  writeFileSync(join(release, "candidate.sig"), "signature");
-  writeFileSync(join(release, "community.json.sig"), "signature");
+  writeFileSync(join(release, "candidate.bundle"), "{}");
+  writeFileSync(join(release, "community.json.bundle"), "{}");
   writeFileSync(join(release, "vibebloat.pub"), publicKey);
   writeFileSync(join(guards, "local-proof.json"), localBytes);
   writeFileSync(join(guards, "old-community.json"), `${JSON.stringify(guard("old-community", "community", "git pull"))}\n`);
@@ -91,11 +91,11 @@ test("controlled command verifies both assets and preserves local guard bytes", 
     schemaVersion: 1,
     version: "0.5.0",
     artifact: "dist/candidate",
-    signature: "release/candidate.sig",
+    bundle: "release/candidate.bundle",
     publicKey: "release/vibebloat.pub",
     publicKeySha256: fingerprintPublicKey(publicKey),
     communityGuardManifest: "release/community.json",
-    communityGuardManifestSignature: "release/community.json.sig",
+    communityGuardManifestBundle: "release/community.json.bundle",
   }));
 
   let commandCount = 0;

@@ -10,7 +10,7 @@ import { installationState, readInstalledAtByGuard, runDoctor } from "./doctor/c
 import { globalGuardHome, guardDirectories, guardHomeForScope, guardHomes, onboardingHome } from "./guard-home";
 import { loadGuards } from "./guard-loader";
 import { forgetEmail } from "./growth/email-capture";
-import { canonicalGuardId, gitStashUntrackedGuard, mcpConfigWrongFileGuard } from "./guards";
+import { canonicalGuardId, gitCheckoutDiscardGuard, gitCleanForceGuard, gitResetHardGuard, gitStashUntrackedGuard, mcpConfigWrongFileGuard, npxMcpHangGuard } from "./guards";
 import { formatGuardRuntimeFailure, hookResponseForVerdict, runPreToolUse } from "./hooks";
 import { match } from "./match";
 import { closeWatcherOnSignals, fsGuardReceiptPath, hasUnenforceableFileGuard, inspectPersistentFsGuard, launchPersistentFsGuard, stopPersistentFsGuard, waitForFsGuardLaunchReceipt, watchFsGuardStopRequests, watchGuardedWrites } from "./install/fs-guard";
@@ -60,7 +60,7 @@ import type { Event, Guard, GuardAgent } from "./types";
 import { uninstallVibeBloat } from "./uninstall";
 import { formatUpdateCommandFailure, formatUpdateCommandResult, parseUpdateArguments, runControlledUpdateCommand } from "./updater/command";
 
-const guards: Guard[] = [gitStashUntrackedGuard, mcpConfigWrongFileGuard];
+const guards: Guard[] = [gitStashUntrackedGuard, mcpConfigWrongFileGuard, gitResetHardGuard, gitCheckoutDiscardGuard, gitCleanForceGuard, npxMcpHangGuard];
 const gitHookCommands = {
   "pre-commit": "vibebloat git-hook pre-commit",
   "pre-push": "vibebloat git-hook pre-push",
@@ -86,6 +86,43 @@ const requestedMode = process.argv[2];
 const mode = requestedMode ?? (loadOnboardingState(onboardingHome())?.gate === "END" ? "onboard" : "init");
 function guardScope(): "repo" | "machine" {
   return loadOnboardingState(onboardingHome())?.scope ?? "machine";
+}
+
+function formatOnboardingPretty(payload: {
+  gate: string;
+  prompt: { question?: string; options?: readonly string[] };
+  discovery?: { environments?: Array<{ id?: string; displayName?: string }>; sources?: Array<{ id?: string }> };
+}): string {
+  const lines: string[] = [];
+  if (payload.gate === "A0") {
+    lines.push("Hey — I'm VibeBloat.");
+    lines.push("");
+    lines.push("I'll look through your past coding sessions, find the mistakes your AI keeps");
+    lines.push("making, and set up little tripwires so they can't happen again.");
+    lines.push("");
+    lines.push("One quick look now — about a minute — then I just run quietly in the background.");
+    lines.push("");
+    lines.push("Want to start?");
+  } else if (payload.prompt?.question) {
+    lines.push(payload.prompt.question.replace(/\[EST\]/g, "~1").replace(/\[\d[\d,.]*\]/g, (match) => match.replace(/[\[\]]/g, "")));
+  } else {
+    lines.push(`Gate ${payload.gate}.`);
+  }
+  const discovery = payload.discovery;
+  if (discovery && (discovery.environments?.length ?? 0) > 0) {
+    const names = (discovery.environments ?? [])
+      .map((env) => env.displayName ?? env.id ?? "")
+      .filter(Boolean);
+    if (names.length > 0) lines.push("", `Found: ${names.join(", ")}.`);
+  }
+  const options = payload.prompt?.options ?? [];
+  if (options.length > 0) {
+    lines.push("");
+    for (let index = 0; index < options.length; index += 1) {
+      lines.push(`  ${index + 1}. ${options[index]}`);
+    }
+  }
+  return lines.join("\n");
 }
 
 function disabledGuards(): Set<string> {
@@ -1084,8 +1121,14 @@ if (mode === "init") {
   const coordinator = createProductionOnboardingCoordinator(home, coordinatorCheckpoint, (checkpoint) => { coordinatorCheckpoint = checkpoint; }, state.preferences?.modelRoute);
   let runner = new OnboardingRunner(state as RunnerState, onboardingRunnerContext(coordinatorCheckpoint, state));
   const answerIndex = process.argv.indexOf("--answer");
+  const prettyMode = process.argv.includes("--pretty");
   if (answerIndex < 0) {
-    process.stdout.write(`${JSON.stringify({ ...runner.snapshot(), runnerSource, prompt: runner.current(), ...(coordinator.discovery() ? { discovery: coordinator.discovery() } : {}) })}\n`);
+    const payload = { ...runner.snapshot(), runnerSource, prompt: runner.current(), ...(coordinator.discovery() ? { discovery: coordinator.discovery() } : {}) };
+    if (prettyMode) {
+      process.stdout.write(`${formatOnboardingPretty(payload)}\n`);
+    } else {
+      process.stdout.write(`${JSON.stringify(payload)}\n`);
+    }
     process.exit(0);
   }
   const answer = process.argv[answerIndex + 1] ?? "";

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "version": "0.1.0",
+  "artifact": "dist/vibebloat-windows-x64.exe",
+  "bundle": "release/vibebloat-windows-x64.bundle",
+  "publicKey": "release/vibebloat.pub",
+  "publicKeySha256": "6deeeb73eb70c7fad0936b1c460bbdb10f785a37098bb06b2de57b9e58f06594"
+}

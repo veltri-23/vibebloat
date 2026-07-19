@@ -11,7 +11,7 @@ test("controlled scrubbers reject metadata that supplies its own key pin", () =>
       schemaVersion: 1,
       version: "0.1.0",
       artifact: "release/scrubber.exe",
-      signature: "release/scrubber.sig",
+      bundle: "release/scrubber.bundle",
       publicKey: "release/scrubber.pub",
       publicKeySha256: "a".repeat(64),
     }));

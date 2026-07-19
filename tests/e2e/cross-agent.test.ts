@@ -58,10 +58,10 @@ function createHermesCliWrapper(root: string): string {
   return wrapper;
 }
 
-function blockReceipt(guardId: string, incident: string, why: string): string {
+function blockReceipt(guardId: string, incident: string, why: string, date = "2026-07-18"): string {
   return [
     `BLOCKED  guard: ${guardId}  class: A`,
-    `incident: ${incident}  date: 2026-07-18`,
+    `incident: ${incident}  date: ${date}`,
     `why: ${why}`,
     `fix: vibebloat allow ${guardId} --once`,
   ].join("\n");
@@ -158,6 +158,6 @@ test("Hermes bridge resolves a repository Git alias before blocking a compiled g
   expect(hermes.exitCode).toBe(0);
   expect(JSON.parse(hermes.stdout.toString())).toEqual({
     decision: "deny",
-    message: blockReceipt("no-git-reset-hard", "test Hermes alias bridge", "VibeBloat found no-git-reset-hard in 1 incident."),
+    message: blockReceipt("git-reset-hard", "git reset --hard destroyed uncommitted work", "07-15 this destroyed uncommitted work. Use git stash first, or reset --soft to keep changes stag", "2026-07-15"),
   });
 });

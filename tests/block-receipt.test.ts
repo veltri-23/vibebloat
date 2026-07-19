@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { renderGuardReceipt } from "../src/block-receipt";
+import { isReceiptColorEnabled, renderGuardReceipt } from "../src/block-receipt";
 import { runPreToolUse } from "../src/hooks";
 import type { Guard } from "../src/types";
 
@@ -50,4 +50,24 @@ test("receipt boundary cannot inject extra lines through guard identity", () => 
   expect(receipt).toContain("guard: redacted  class: redacted");
   expect(receipt).toContain("date: 1970-01-01");
   expect(receipt).not.toContain("attacker");
+});
+
+test("receipt color follows the TTY signal of stdout", () => {
+  const stdout = process.stdout as { isTTY?: boolean };
+  const wasTTY = stdout.isTTY;
+  stdout.isTTY = true;
+  try {
+    expect(isReceiptColorEnabled()).toBe(true);
+    const block = renderGuardReceipt(guard("block"), "x")!;
+    const warn = renderGuardReceipt(guard("warn"), "x")!;
+    expect(block).toContain("\x1b[31mBLOCKED\x1b[0m");
+    expect(warn).toContain("\x1b[33mWARNING\x1b[0m");
+    expect(block).not.toMatch(/incident-secret|message-secret|secret-value/i);
+  } finally {
+    stdout.isTTY = wasTTY;
+  }
+  stdout.isTTY = false;
+  expect(isReceiptColorEnabled()).toBe(false);
+  const plain = renderGuardReceipt(guard("block"), "x")!;
+  expect(plain).not.toContain("\x1b[");
 });

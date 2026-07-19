@@ -2,6 +2,10 @@ import type { Guard } from "./types";
 
 const maximumFieldLength = 96;
 
+const ANSI_RESET = "\x1b[0m";
+const ANSI_RED = "\x1b[31m";
+const ANSI_YELLOW = "\x1b[33m";
+
 function scrub(value: string, fallback: string): string {
   const text = value
     .replace(/[\r\n\t]+/g, " ")
@@ -21,6 +25,11 @@ function scrub(value: string, fallback: string): string {
   return text || fallback;
 }
 
+export function isReceiptColorEnabled(): boolean {
+  if (typeof process === "undefined" || !process.stdout) return false;
+  return Boolean((process.stdout as { isTTY?: boolean }).isTTY);
+}
+
 export function renderGuardReceipt(guard: Guard, reason: string): string | undefined {
   if (guard.action.type !== "block" && guard.action.type !== "warn") return undefined;
   const status = guard.action.type === "block" ? "BLOCKED" : "WARNING";
@@ -32,8 +41,12 @@ export function renderGuardReceipt(guard: Guard, reason: string): string | undef
   const fix = guard.action.type === "block"
     ? `vibebloat allow ${guardId} --once`
     : `vibebloat disable ${guardId}`;
+  const colorOpen = isReceiptColorEnabled()
+    ? (guard.action.type === "block" ? ANSI_RED : ANSI_YELLOW)
+    : "";
+  const colorClose = colorOpen ? ANSI_RESET : "";
   return [
-    `${status}  guard: ${guardId}  class: ${guardClass}`,
+    `${colorOpen}${status}${colorClose}  guard: ${guardId}  class: ${guardClass}`,
     `incident: ${incident}  date: ${date}`,
     `why: ${why}`,
     `fix: ${fix}`,

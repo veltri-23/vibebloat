@@ -4,7 +4,7 @@ export interface ReleaseMetadata {
   schemaVersion: 1;
   version: string;
   artifact: string;
-  signature: string;
+  bundle: string;
   publicKey: string;
   publicKeySha256: string;
 }
@@ -45,7 +45,7 @@ export function parseReleaseMetadata(text: string): ReleaseMetadata {
     schemaVersion: 1,
     version: metadata.version,
     artifact: releasePath(metadata.artifact, "artifact"),
-    signature: releasePath(metadata.signature, "signature"),
+    bundle: releasePath(metadata.bundle, "bundle"),
     publicKey: releasePath(metadata.publicKey, "publicKey"),
     publicKeySha256: metadata.publicKeySha256,
   };
@@ -60,7 +60,7 @@ export function verifySigstore(metadata: ReleaseMetadata, publicKey: string | Ui
     return { verified: false, message: "Pinned public key fingerprint does not match release metadata." };
   }
 
-  const exitCode = run(["cosign", "verify-blob", "--key", metadata.publicKey, "--signature", metadata.signature, metadata.artifact]);
+  const exitCode = run(["cosign", "verify-blob", "--key", metadata.publicKey, "--bundle", metadata.bundle, metadata.artifact]);
   return exitCode === 0
     ? { verified: true, message: "Cosign verified controlled release artifact." }
     : { verified: false, message: `Cosign verification failed with exit code ${exitCode}.` };

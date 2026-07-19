@@ -6,18 +6,18 @@ const metadata = parseReleaseMetadata(JSON.stringify({
   schemaVersion: 1,
   version: "0.1.0",
   artifact: "dist/vibebloat",
-  signature: "dist/vibebloat.sig",
+  bundle: "release/vibebloat.bundle",
   publicKey: "release/vibebloat.pub",
   publicKeySha256: fingerprintPublicKey(publicKey),
 }));
 
-test("Sigstore verification uses pinned public key and detached signature", () => {
+test("Sigstore verification uses pinned public key and detached bundle", () => {
   let received: readonly string[] = [];
   expect(verifySigstore(metadata, publicKey, (command) => { received = command; return 0; })).toEqual({
     verified: true,
     message: "Cosign verified controlled release artifact.",
   });
-  expect(received).toEqual(["cosign", "verify-blob", "--key", "release/vibebloat.pub", "--signature", "dist/vibebloat.sig", "dist/vibebloat"]);
+  expect(received).toEqual(["cosign", "verify-blob", "--key", "release/vibebloat.pub", "--bundle", "release/vibebloat.bundle", "dist/vibebloat"]);
 });
 
 test("Sigstore verification stops before Cosign when pinned key fingerprint differs", () => {

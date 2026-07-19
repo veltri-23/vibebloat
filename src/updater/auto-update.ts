@@ -65,7 +65,7 @@ function resolveReleasePaths(metadata: ReleaseMetadata, releaseDirectory: string
   return {
     ...metadata,
     artifact: join(releaseDirectory, metadata.artifact),
-    signature: join(releaseDirectory, metadata.signature),
+    bundle: join(releaseDirectory, metadata.bundle),
     publicKey: join(releaseDirectory, metadata.publicKey),
   };
 }

@@ -46,3 +46,71 @@ export const mcpConfigWrongFileGuard: Guard = {
   },
   enabled: true,
 };
+
+export const gitResetHardGuard: Guard = {
+  id: "git-reset-hard",
+  class: "A",
+  provenance: {
+    incident: "git reset --hard destroyed uncommitted work",
+    date: "2026-07-15",
+    source: "claude-code",
+  },
+  match: { chokepoint: "shell", command: "git reset", argsContains: ["--hard"] },
+  action: {
+    type: "block",
+    message: "07-15 this destroyed uncommitted work. Use git stash first, or reset --soft to keep changes staged.",
+    override: "vibebloat allow git-reset-hard --once",
+  },
+  enabled: true,
+};
+
+export const gitCheckoutDiscardGuard: Guard = {
+  id: "git-checkout-discard",
+  class: "A",
+  provenance: {
+    incident: "git checkout -- . discarded unstaged edits from process memory",
+    date: "2026-07-15",
+    source: "codex",
+  },
+  match: { chokepoint: "shell", command: "git checkout", argsAnyOf: ["--", "."] },
+  action: {
+    type: "block",
+    message: "07-15 this discarded edits that existed only in process memory. Use git stash first or git restore --staged selectively.",
+    override: "vibebloat allow git-checkout-discard --once",
+  },
+  enabled: true,
+};
+
+export const gitCleanForceGuard: Guard = {
+  id: "git-clean-force",
+  class: "A",
+  provenance: {
+    incident: "git clean -fd removed an untracked script; agent went days without noticing",
+    date: "2026-07-15",
+    source: "claude-code",
+  },
+  match: { chokepoint: "shell", command: "git clean", argsAnyOf: ["-fd", "-df", "-f"] },
+  action: {
+    type: "block",
+    message: "07-15 this removed an untracked script silently. Use git clean -nd first to preview what would be deleted.",
+    override: "vibebloat allow git-clean-force --once",
+  },
+  enabled: true,
+};
+
+export const npxMcpHangGuard: Guard = {
+  id: "npx-mcp-hang",
+  class: "B",
+  provenance: {
+    incident: "npx/uvx used as MCP commands re-resolved deps each spawn and hung for minutes with zero output",
+    date: "2026-07-15",
+    source: "codex",
+  },
+  match: { chokepoint: "shell", command: "npx", argsAnyOf: ["-y", "--yes"] },
+  action: {
+    type: "warn",
+    message: "07-15 this hung the agent for minutes. Prefer pinned local installs over npx -y for MCP server commands.",
+    override: "vibebloat disable npx-mcp-hang",
+  },
+  enabled: true,
+};

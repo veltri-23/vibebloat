@@ -47,19 +47,19 @@ function fixture() {
   writeFileSync(join(community, "old-guard.json"), `${JSON.stringify(guard("old-guard"))}\n`);
   writeFileSync(join(local, "my-local.json"), Buffer.from([0, 1, 2, 3, 255]));
   writeFileSync(join(release, "candidate.exe"), "new-binary");
-  writeFileSync(join(release, "candidate.exe.sig"), "signature");
-  writeFileSync(join(release, "community.json.sig"), "signature");
+  writeFileSync(join(release, "candidate.exe.bundle"), "{}");
+  writeFileSync(join(release, "community.json.bundle"), "{}");
   writeFileSync(join(release, "vibebloat.pub"), publicKey);
   writeFileSync(join(release, "community.json"), JSON.stringify({ schemaVersion: 1, guards: [guard("new-guard", "git push")] }));
   const metadataText = JSON.stringify({
     schemaVersion: 1,
     version: "0.5.0",
     artifact: "candidate.exe",
-    signature: "candidate.exe.sig",
+    bundle: "candidate.exe.bundle",
     publicKey: "vibebloat.pub",
     publicKeySha256: fingerprintPublicKey(publicKey),
     communityGuardManifest: "community.json",
-    communityGuardManifestSignature: "community.json.sig",
+    communityGuardManifestBundle: "community.json.bundle",
   });
   return { root, release, community, local, binary, metadataText };
 }

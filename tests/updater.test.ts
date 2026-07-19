@@ -14,7 +14,7 @@ function metadata() {
     schemaVersion: 1,
     version: "0.1.0",
     artifact: "candidate.exe",
-    signature: "candidate.exe.sig",
+    bundle: "candidate.exe.bundle",
     publicKey: "vibebloat.pub",
     publicKeySha256: fingerprintPublicKey(publicKey),
   });
@@ -22,6 +22,7 @@ function metadata() {
 
 function writeRelease(directory: string, key = publicKey): void {
   writeFileSync(join(directory, "candidate.exe"), "new");
+  writeFileSync(join(directory, "candidate.exe.bundle"), "{}");
   writeFileSync(join(directory, "vibebloat.pub"), key);
 }
 

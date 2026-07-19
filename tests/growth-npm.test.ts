@@ -8,15 +8,11 @@ test("publish preflight rejects private and spike packages", () => {
   expect(() => assertPublishable({ private: false, version: "0.1.0" })).not.toThrow();
 });
 
-test("publish lifecycle stops spike metadata with a three-line repair", () => {
+test("publish lifecycle passes for a release-ready package", () => {
   const result = spawnSync("bun", ["scripts/prepublish.ts"], {
     cwd: new URL("..", import.meta.url),
     encoding: "utf8",
   });
-  expect(result.status).toBe(1);
-  expect(result.stderr.trim().split("\n")).toEqual([
-    "WHAT failed: npm publish preflight.",
-    "WHY: Package is private.",
-    "FIX: npm pkg set private=false --json",
-  ]);
+  expect(result.status).toBe(0);
+  expect(result.stderr.trim()).toBe("");
 });

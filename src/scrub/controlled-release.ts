@@ -13,7 +13,7 @@ export class ControlledScrubbersUnavailableError extends Error {
   }
 }
 
-const controlledScrubberPublicKeySha256: string | undefined = undefined;
+const controlledScrubberPublicKeySha256: string | undefined = "6deeeb73eb70c7fad0936b1c460bbdb10f785a37098bb06b2de57b9e58f06594";
 
 function containedAbsolutePath(root: string, value: string): string {
   const path = resolve(root, value);
@@ -36,14 +36,14 @@ export function resolveControlledScrubberCommands(
       throw new ControlledScrubbersUnavailableError();
     }
     const artifact = containedAbsolutePath(packageRoot, metadata.artifact);
-    const signature = containedAbsolutePath(packageRoot, metadata.signature);
+    const bundle = containedAbsolutePath(packageRoot, metadata.bundle);
     const publicKey = containedAbsolutePath(packageRoot, metadata.publicKey);
-    if (![artifact, signature, publicKey].every((path) => existsSync(path) && lstatSync(path).isFile())) {
+    if (![artifact, bundle, publicKey].every((path) => existsSync(path) && lstatSync(path).isFile())) {
       throw new ControlledScrubbersUnavailableError();
     }
 
     const verification = verifySigstore(
-      { ...metadata, artifact, signature, publicKey },
+      { ...metadata, artifact, bundle, publicKey },
       readFileSync(publicKey),
       (command) => Bun.spawnSync([...command], { stdout: "pipe", stderr: "pipe" }).exitCode ?? 1,
     );

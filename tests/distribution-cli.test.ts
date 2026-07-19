@@ -14,8 +14,8 @@ test("repository CLI package surface remains source-checkout only and runnable b
   expect(report).toEqual({
     entrypoint: "bin/vibebloat.js",
     issues: [],
-    releaseStatus: "development",
-    version: "0.0.0-spike",
+    releaseStatus: "public",
+    version: "0.1.0",
   });
 
   const result = Bun.spawnSync([process.execPath, join(import.meta.dir, "..", report.entrypoint!), "__distribution_probe__"], {

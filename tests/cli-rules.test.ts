@@ -50,7 +50,7 @@ test("rules CLI emits sorted safe metadata and fails closed on invalid guards", 
     const result = Bun.spawnSync(["bun", "src/cli.ts", "rules"], { cwd: join(import.meta.dir, ".."), env: environment, stdout: "pipe", stderr: "pipe" });
     expect(result.exitCode).toBe(0);
     const summaries = JSON.parse(result.stdout.toString()) as Array<Record<string, unknown>>;
-    expect(summaries.map(({ id }) => id)).toEqual(["git-stash-u", "mcp-config-wrong-file", "zeta-rule"]);
+    expect(summaries.map(({ id }) => id)).toEqual(["git-checkout-discard", "git-clean-force", "git-reset-hard", "git-stash-u", "mcp-config-wrong-file", "npx-mcp-hang", "zeta-rule"]);
     expect(summaries.find(({ id }) => id === "git-stash-u")?.enabled).toBeFalse();
     expect(summaries.find(({ id }) => id === "zeta-rule")?.binds).toEqual(["claude-code", "hermes"]);
     expect(result.stdout.toString()).not.toContain("private incident");

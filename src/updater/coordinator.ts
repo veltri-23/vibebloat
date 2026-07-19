@@ -40,7 +40,7 @@ export class UpdateCoordinatorError extends Error {
 
 interface ControlledUpdateMetadata extends ReleaseMetadata {
   communityGuardManifest: string;
-  communityGuardManifestSignature: string;
+  communityGuardManifestBundle: string;
 }
 
 interface CommunityGuardManifest {
@@ -85,11 +85,11 @@ const metadataFields = new Set([
   "schemaVersion",
   "version",
   "artifact",
-  "signature",
+  "bundle",
   "publicKey",
   "publicKeySha256",
   "communityGuardManifest",
-  "communityGuardManifestSignature",
+  "communityGuardManifestBundle",
 ]);
 const manifestFields = new Set(["schemaVersion", "guards"]);
 const guardFilePattern = /^[a-z0-9]+(?:-[a-z0-9]+)*\.json$/;
@@ -172,7 +172,7 @@ function parseControlledMetadata(text: string): ControlledUpdateMetadata {
   return {
     ...base,
     communityGuardManifest: relativeReleasePath(record.communityGuardManifest, "community guard manifest path"),
-    communityGuardManifestSignature: relativeReleasePath(record.communityGuardManifestSignature, "community guard manifest signature path"),
+    communityGuardManifestBundle: relativeReleasePath(record.communityGuardManifestBundle, "community guard manifest bundle path"),
   };
 }
 
@@ -189,10 +189,10 @@ function resolvedMetadata(metadata: ControlledUpdateMetadata, directory: string)
   return {
     ...metadata,
     artifact: releasePath(directory, metadata.artifact),
-    signature: releasePath(directory, metadata.signature),
+    bundle: releasePath(directory, metadata.bundle),
     publicKey: releasePath(directory, metadata.publicKey),
     communityGuardManifest: releasePath(directory, metadata.communityGuardManifest),
-    communityGuardManifestSignature: releasePath(directory, metadata.communityGuardManifestSignature),
+    communityGuardManifestBundle: releasePath(directory, metadata.communityGuardManifestBundle),
   };
 }
 
@@ -267,7 +267,7 @@ function verifyControlledRelease(
   const manifestVerification = verifySigstore({
     ...metadata,
     artifact: metadata.communityGuardManifest,
-    signature: metadata.communityGuardManifestSignature,
+    bundle: metadata.communityGuardManifestBundle,
   }, releasePublicKey, run);
   if (!manifestVerification.verified) throw new Error("Controlled release guard manifest verification failed.");
   if (digest(readFileSync(metadata.artifact)) !== expectedBinaryDigest

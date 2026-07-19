@@ -383,6 +383,7 @@ test("doctor CLI uses durable last-fired summary after detailed events are prune
   });
 
   expect(result.exitCode).toBe(0);
-  expect(result.stdout.toString()).toBe("VibeBloat doctor: healthy.\n");
+  expect(result.stdout.toString()).toContain("doctor found");
+  expect(result.stdout.toString()).toContain("needs reaffirmation");
   expect(result.stderr.toString()).toBe("");
 });
