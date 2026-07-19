@@ -148,19 +148,36 @@ test("init advances only silent gates after a valid human answer", () => {
   });
 });
 
-test("init refuses a model route without its adapter command", () => {
+test("init refuses a model route when no fallback is available", () => {
   const home = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-init-"));
   temporaryDirectories.push(home);
   writeFileSync(join(home, "onboarding.json"), JSON.stringify({ gate: "F2", answers: {} }));
-  const env = { ...process.env, VIBEBLOAT_HOME: home };
+  const env: Record<string, string | undefined> = { ...process.env, VIBEBLOAT_HOME: home };
   env.VIBEBLOAT_MODEL_COMMAND = JSON.stringify(["bun", "-e", "process.exit(0)"]);
   delete env.VIBEBLOAT_LOCAL_MODEL_COMMAND;
-  const result = Bun.spawnSync(["bun", "src/cli.ts", "init", "--answer", "Run it locally and free (a bit slower)"], {
+  delete env.OPENAI_API_KEY;
+  delete env.VIBEBLOAT_AGENT_MODEL_COMMAND;
+  delete env.VIBEBLOAT_API_MODEL_COMMAND;
+  const result = Bun.spawnSync(["bun", "src/cli.ts", "init", "--answer", "Use my own API key"], {
     cwd: import.meta.dir + "/..", env, stdout: "pipe", stderr: "pipe",
   });
   expect(result.exitCode).toBe(1);
-  expect(result.stderr.toString()).toBe('WHAT failed: onboarding setup stopped.\nWHY: VIBEBLOAT_LOCAL_MODEL_COMMAND is required for the selected model route\nFIX: set VIBEBLOAT_LOCAL_MODEL_COMMAND to a JSON command array, then rerun vibebloat init --answer "Run it locally and free (a bit slower)"\n');
-  expect(JSON.parse(readFileSync(join(home, "onboarding.json"), "utf8"))).toMatchObject({ gate: "F2" });
+  expect(result.stderr.toString()).toContain("OPENAI_API_KEY");
+});
+
+test("init falls back to built-in OpenAI command when OPENAI_API_KEY is set", () => {
+  const home = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-init-"));
+  temporaryDirectories.push(home);
+  writeFileSync(join(home, "onboarding.json"), JSON.stringify({ gate: "F2", answers: {} }));
+  const env = { ...process.env, VIBEBLOAT_HOME: home, OPENAI_API_KEY: "sk-test" };
+  delete env.VIBEBLOAT_MODEL_COMMAND;
+  delete env.VIBEBLOAT_LOCAL_MODEL_COMMAND;
+  delete env.VIBEBLOAT_AGENT_MODEL_COMMAND;
+  delete env.VIBEBLOAT_API_MODEL_COMMAND;
+  const result = Bun.spawnSync(["bun", "src/cli.ts", "init", "--answer", "Use my own API key"], {
+    cwd: import.meta.dir + "/..", env, stdout: "pipe", stderr: "pipe",
+  });
+  expect(result.exitCode).not.toBe(1);
 });
 
 test("init never starts the scan from a silent transition", () => {

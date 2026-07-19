@@ -142,22 +142,48 @@ function configText(path: string): string {
   return existsSync(path) ? readFileSync(path, "utf8") : "";
 }
 
-function modelCommandFromEnvironment(route?: ModelRoute): string[] {
-  const preferredName = route ? modelCommandEnvironmentName(route) : undefined;
-  const name = preferredName ?? "VIBEBLOAT_MODEL_COMMAND";
-  const value = process.env[name];
-  if (!value && preferredName) throw new Error(`${preferredName} is required for the selected model route`);
-  if (!value) throw new Error(`${name} is required`);
+function defaultOpenAiModelCommand(): string[] {
+  return [
+    "curl", "-fsS", "-X", "POST", "https://api.openai.com/v1/chat/completions",
+    "-H", "Content-Type: application/json",
+    "-H", `Authorization: Bearer ${process.env.OPENAI_API_KEY ?? ""}`,
+    "-d", "@-",
+  ];
+}
+
+function defaultLocalModelCommand(): string[] {
+  return ["ollama", "run", "llama3.1:8b"];
+}
+
+function parseModelCommandValue(name: string, value: string): string[] {
   let command: unknown;
   try {
     command = JSON.parse(value);
   } catch {
-    throw new Error(`${name} must be a JSON command array`);
+    command = value.split(/\s+/).filter(Boolean);
   }
   if (!Array.isArray(command) || command.length === 0 || command.some((part) => typeof part !== "string" || !part)) {
-    throw new Error(`${name} must be a non-empty JSON command array`);
+    throw new Error(`${name} must be a JSON array or shell-style command string`);
   }
-  return command;
+  return command as string[];
+}
+
+function modelCommandFromEnvironment(route?: ModelRoute): string[] {
+  const preferredName = route ? modelCommandEnvironmentName(route) : undefined;
+  const preferredValue = preferredName ? process.env[preferredName] : undefined;
+  if (preferredValue) return parseModelCommandValue(preferredName!, preferredValue);
+  if (preferredName) {
+    if (route === "api-key" && process.env.OPENAI_API_KEY) return defaultOpenAiModelCommand();
+    if (route === "local") return defaultLocalModelCommand();
+    throw new Error(`${preferredName} is required for the selected model route (or set OPENAI_API_KEY / install Ollama)`);
+  }
+  const explicit = process.env.VIBEBLOAT_MODEL_COMMAND;
+  if (explicit) return parseModelCommandValue("VIBEBLOAT_MODEL_COMMAND", explicit);
+  if (process.env.OPENAI_API_KEY) return defaultOpenAiModelCommand();
+  if (process.env.VIBEBLOAT_LOCAL_MODEL_COMMAND) {
+    return parseModelCommandValue("VIBEBLOAT_LOCAL_MODEL_COMMAND", process.env.VIBEBLOAT_LOCAL_MODEL_COMMAND);
+  }
+  throw new Error("No model available. Set OPENAI_API_KEY, install Ollama, or VIBEBLOAT_MODEL_COMMAND.");
 }
 
 function argumentValue(flag: string): string | undefined {
