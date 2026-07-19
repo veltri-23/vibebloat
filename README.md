@@ -11,6 +11,19 @@ Unlike `destructive_command_guard` (5k-star static blocker), VibeBloat learns
 *personalized* guards from your own repeated incidents — not a universal
 command blocklist.
 
+## See it work in 10 seconds
+
+No history, no API key, no install beyond the repo:
+
+```sh
+bun src/cli.ts demo
+```
+
+It runs the real pipeline — scrub, prefilter, mine, compile, block — over a
+labelled sample history and prints the guards it produced. With a model
+configured it mines those findings live; without one it uses the sample's
+precomputed findings and says so.
+
 ## Try it
 
 The fastest way: open Vibebloat in a pre-configured GitHub Codespace and run

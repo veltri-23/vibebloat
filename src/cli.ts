@@ -21,6 +21,8 @@ import { installOnboardingBindings, readOnboardingBindingReceipt } from "./insta
 import { DailySchedulerTargetUnavailableError, installVerifiedStandaloneDailyScheduler } from "./install/daily-scheduler";
 import { installStarterGuardPack } from "./install/starter-pack";
 import { starRepository } from "./growth/star-pack";
+import { runSampleDemo, type DemoMiner } from "./sample/demo";
+import { SAMPLE_LABEL } from "./sample/history";
 import { verifyShellPaths, type Shell } from "./install/shim";
 import { compileGuard } from "./compiler/codex-fill";
 import { syntheticEvent } from "./compiler/synthetic-event";
@@ -896,6 +898,40 @@ if (mode === "doctor") {
   }
 }
 
+if (mode === "demo") {
+  const useModel = !process.argv.includes("--no-model");
+  let miner: DemoMiner | undefined;
+  if (useModel) {
+    try {
+      const command = modelCommandFromEnvironment();
+      miner = async (candidates) => runModelCommand(command, candidates);
+    } catch {
+      miner = undefined; // No model configured: fall back and say so.
+    }
+  }
+
+  try {
+    const result = await runSampleDemo(miner);
+    const lines = [
+      SAMPLE_LABEL,
+      "",
+      ...result.steps.map((step) => `${step.label.padEnd(10)} ${step.detail}`),
+      "",
+      ...result.receipts.flatMap((receipt) => [receipt, ""]),
+      result.mined === "model"
+        ? "Those findings were mined live by your model, from the sample history above."
+        : "Those findings were precomputed for the sample. Configure a model and rerun to mine them live.",
+      "Run `vibebloat init` to do this against your own history.",
+    ];
+    process.stdout.write(`${lines.join("\n")}\n`);
+    process.exit(0);
+  } catch (error) {
+    const why = error instanceof Error ? error.message : "unknown error";
+    process.stderr.write(`WHAT failed: sample demo could not run.\nWHY: ${why}\nFIX: vibebloat demo --no-model\n`);
+    process.exit(1);
+  }
+}
+
 if (mode === "stats") {
   try {
     const audit = readAndPruneFirings(globalGuardHome());
@@ -1702,5 +1738,5 @@ if (mode === "__distribution_probe__") {
   process.exit(0);
 }
 
-process.stderr.write("WHAT failed: expected allow, compile, eval, hook, git-hook, disable, doctor, init, onboard, install, uninstall, update, scan, star, stats, sync, watch, daily, rules, or email, scrub, or __distribution_probe__.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
+process.stderr.write("WHAT failed: expected allow, compile, demo, eval, hook, git-hook, disable, doctor, init, onboard, install, uninstall, update, scan, star, stats, sync, watch, daily, rules, or email, scrub, or __distribution_probe__.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
 process.exit(1);
