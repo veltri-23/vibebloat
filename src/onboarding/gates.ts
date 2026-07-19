@@ -4,7 +4,7 @@ export type GateId =
   | "A0" | "A1" | "F0" | "B1" | "B1.missing" | "B1.ignore" | "D1" | "D1.1"
   | "E1" | "E1.1" | "E2" | "F1" | "F1b" | "F2" | "F2.1" | "F3" | "F4" | "F5" | "F6"
   | "SCAN" | "G-empty" | "I1" | "I-zero" | "J0" | "J1" | "J1-unsure" | "J-cluster" | "J2" | "J3"
-  | "K" | "K-conflict" | "L1" | "M" | "N1" | "N2" | "O1" | "O2" | "O3" | "END";
+  | "K" | "K-conflict" | "K-shim-only" | "L1" | "M" | "N1" | "N2" | "O1" | "O2" | "O3" | "END";
 
 export interface OnboardingContext {
   knowledgeToolsDetected?: boolean;
@@ -17,6 +17,8 @@ export interface OnboardingContext {
   reviewsRemaining?: number;
   reviewUncertain?: boolean;
   reviewOverlap?: boolean;
+  installShimOnly?: boolean;
+  installNativeHooks?: boolean;
 }
 
 export type GateChoice = string | number;
@@ -24,7 +26,7 @@ export type GateChoice = string | number;
 const gates: Record<GateId, GatePrompt> = {
   A0: { question: "Hey — I'm VibeBloat. I'll look through your past coding sessions, find the mistakes your AI keeps making, and set up little tripwires so they can't happen again. One quick look now — about [EST] minutes — then I just run quietly in the background. Want to start?", options: [] },
   A1: { question: "First: should I protect just this project, or watch your work everywhere on this machine?", options: ["Just this project", "Everywhere (recommended for solo devs)"] },
-  F0: { question: "To catch mistakes I need to add two small helpers — a shortcut that watches commands, and a git safety check. Both are easy to remove any time. Okay to set those up?", options: ["Yes", "Tell me more first"] },
+  F0: { question: "To catch mistakes I need to add two small helpers. Neither touches your agent config: (1) a `vibebloat` command on your PATH that runs first when any agent or terminal runs a command, and (2) a git pre-commit / pre-push check. Both are easy to remove any time. Okay to set those up?", options: ["Yes", "Shim only — skip the git hook", "Tell me more first"] },
   B1: { question: "Let me see what you're working with. I found these on your machine: [Claude Code, Codex, Cursor, Hermes]. Did I get them all?", options: ["That's everything", "You missed one", "Ignore some of these"] },
   "B1.missing": { question: "Which, and where is it?", options: [] },
   "B1.ignore": { question: "Which should I leave out?", options: [] },
@@ -53,6 +55,7 @@ const gates: Record<GateId, GatePrompt> = {
   J3: { question: "Want to share this rule with the community so it helps other devs? I only send the rule itself — never your code, file paths, or secrets.", options: ["Yes", "No", "Stop asking this time"] },
   K: { question: "", options: [] },
   "K-conflict": { question: "You've already got a [git pre-commit hook]. I'll add mine right alongside it — I won't touch yours.", options: ["Keep both (recommended)", "Let me handle it"] },
+  "K-shim-only": { question: "Want me to also wire a native hook into Claude Code / Codex / Hermes / OpenClaw so the colored receipt shows up right in your agent's terminal? It's purely cosmetic — the shim already blocks. Skip if you'd rather not touch agent config.", options: ["Skip (recommended if you don't want to touch agent config)", "Wire them up"] },
   L1: { question: "Want to watch one in action? I'll have an agent try `git stash -u` right now.", options: ["Yes", "Skip"] },
   M: { question: "All set. These tripwires block about [6.5] hours a [year] of repeat mistakes, cost nothing to run, and work across [Claude Code, Codex, Hermes].", options: [] },
   N1: { question: "VibeBloat is free. A GitHub star unlocks the community library — rules other developers have already built and shared — and installs a bonus pack of three guards on the spot. Star it?", options: ["Star", "Maybe later"] },
@@ -102,7 +105,9 @@ export function nextFirstRunGate(gate: GateId, choice: GateChoice, context: Onbo
   switch (gate) {
     case "A0": return "A1";
     case "A1": return "F0";
-    case "F0": return selected(choice, 0, "yes") ? "B1" : "F0";
+    case "F0":
+      if (selected(choice, 1, "shim")) return "B1";
+      return selected(choice, 0, "yes") ? "B1" : "F0";
     case "B1": return selected(choice, 0, "everything", "confirmed") ? "D1" : selected(choice, 1, "missing") ? "B1.missing" : "B1.ignore";
     case "B1.missing": case "B1.ignore": return "B1";
     case "D1":
@@ -131,7 +136,11 @@ export function nextFirstRunGate(gate: GateId, choice: GateChoice, context: Onbo
     case "J-cluster": return "J1";
     case "J2": return "J1";
     case "J3": return nextReview(context);
-    case "K": return context.hasHookConflict ? "K-conflict" : "L1";
+    case "K":
+      if (context.installShimOnly) return "K-shim-only";
+      return context.hasHookConflict ? "K-conflict" : "K-shim-only";
+    case "K-shim-only":
+      return context.installNativeHooks ? "K-conflict" : "L1";
     case "K-conflict": return "L1";
     case "L1": return "M";
     case "M": return "N1";
