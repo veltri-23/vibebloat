@@ -20,6 +20,7 @@ import { installHermesHook, preflightHermesHook } from "./install/hermes";
 import { installOnboardingBindings, readOnboardingBindingReceipt } from "./install/onboarding-bindings";
 import { DailySchedulerTargetUnavailableError, installVerifiedStandaloneDailyScheduler } from "./install/daily-scheduler";
 import { installStarterGuardPack } from "./install/starter-pack";
+import { claimStarPack, type StarPackClaimReport } from "./growth/star-pack";
 import { verifyShellPaths, type Shell } from "./install/shim";
 import { compileGuard } from "./compiler/codex-fill";
 import { compileLiveForScope, drainQueuedLiveCompilesForScope } from "./compiler/live-compile";
@@ -134,6 +135,19 @@ function argumentAssignment(flag: string): string | undefined {
   const prefix = `${flag}=`;
   const argument = process.argv.find((value) => value.startsWith(prefix));
   return argument?.slice(prefix.length);
+}
+
+function githubUsername(): string {
+  const fromArgument = argumentAssignment("--github-user") ?? process.env.VIBEBLOAT_GITHUB_USER;
+  if (fromArgument) return fromArgument;
+  const result = Bun.spawnSync(["git", "config", "--get", "github.user"], { stdout: "pipe", stderr: "ignore" });
+  const fromGitConfig = result.exitCode === 0 ? result.stdout.toString().trim() : "";
+  if (fromGitConfig) return fromGitConfig;
+  throw new Error("GitHub username unknown. Pass --github-user=<name> or set VIBEBLOAT_GITHUB_USER.");
+}
+
+async function claimStarPackForScope(scope: "repo" | "machine"): Promise<StarPackClaimReport> {
+  return claimStarPack(githubUsername(), join(guardHomeForScope(scope), "guards"));
 }
 
 function fsGuardCommand(repository: string): string[] {
@@ -873,6 +887,21 @@ if (mode === "email" && process.argv[3] === "--forget") {
   process.exit(0);
 }
 
+if (mode === "star") {
+  try {
+    const report = await claimStarPackForScope(guardScope());
+    process.stdout.write([
+      `STAR PACK UNLOCKED  ${report.guardIds.length} guards  repo: ${report.repository}  user: ${report.username}`,
+      ...report.guardIds.map((guardId) => `installed: ${guardId}`),
+    ].join("\n") + "\n");
+    process.exit(0);
+  } catch (error) {
+    const why = error instanceof Error ? error.message : "unknown error";
+    process.stderr.write(`WHAT failed: star pack was not installed.\nWHY: ${why}\nFIX: star the VibeBloat GitHub repo, then rerun vibebloat star --github-user=<name>\n`);
+    process.exit(1);
+  }
+}
+
 if (mode === "install") {
   const homes = agentHomes();
   if (process.argv[3] !== "--yes") {
@@ -1119,6 +1148,15 @@ if (mode === "init") {
             ? "O2 requires a verified standalone VibeBloat executable and a verified native scheduler receipt"
             : "O2 could not verify the standalone executable or native scheduler target";
           throw new OnboardingEffectUnavailableError("O2", ["agentCronVerified"], proof);
+        }
+      }
+      if (before.gate === "N1" && selectedEffectChoice === "Star") {
+        try {
+          await claimStarPackForScope(next.scope ?? state.scope ?? "machine");
+          effectEvidence.githubStarVerified = true;
+        } catch (error) {
+          const proof = error instanceof Error ? error.message : "GitHub star could not be verified";
+          throw new OnboardingEffectUnavailableError("N1", ["githubStarVerified"], proof);
         }
       }
       if (effectGates.has(before.gate as EffectGateId)) {
@@ -1522,5 +1560,5 @@ if (mode === "hook") {
   process.exit(response.exitCode);
 }
 
-process.stderr.write("WHAT failed: expected allow, compile, eval, hook, git-hook, disable, doctor, init, onboard, install, uninstall, update, scan, stats, sync, watch, daily, rules, or email.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
+process.stderr.write("WHAT failed: expected allow, compile, eval, hook, git-hook, disable, doctor, init, onboard, install, uninstall, update, scan, star, stats, sync, watch, daily, rules, or email.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
 process.exit(1);

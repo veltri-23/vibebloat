@@ -98,6 +98,9 @@ export function starterGuardPack(): Guard[] {
 }
 
 function syntheticEvent(guard: Guard): Event {
+  if (guard.match.chokepoint === "file") {
+    return { chokepoint: "file", path: guard.match.path };
+  }
   const required = guard.match.argsContains ?? [];
   const any = guard.match.argsAnyOf?.slice(0, 1) ?? [];
   return {
@@ -138,12 +141,15 @@ function preflightPlans(guardDirectory: string, guards: readonly Guard[]): Atomi
   });
 }
 
-export function installStarterGuardPack(guardDirectory: string): StarterGuardPackInstallReport {
-  const guards = starterGuardPack();
+export function installGuardPack(guards: readonly Guard[], guardDirectory: string): StarterGuardPackInstallReport {
   const plans = preflightPlans(guardDirectory, guards);
   applyAtomicFilePlans(plans);
   return {
     guardIds: guards.map(({ id }) => id),
     writtenPaths: plans.map(({ path }) => resolve(path)),
   };
+}
+
+export function installStarterGuardPack(guardDirectory: string): StarterGuardPackInstallReport {
+  return installGuardPack(starterGuardPack(), guardDirectory);
 }

@@ -55,7 +55,7 @@ const gates: Record<GateId, GatePrompt> = {
   "K-conflict": { question: "You've already got a [git pre-commit hook]. I'll add mine right alongside it — I won't touch yours.", options: ["Keep both (recommended)", "Let me handle it"] },
   L1: { question: "Want to watch one in action? I'll have an agent try `git stash -u` right now.", options: ["Yes", "Skip"] },
   M: { question: "All set. These tripwires block about [6.5] hours a [year] of repeat mistakes, cost nothing to run, and work across [Claude Code, Codex, Hermes].", options: [] },
-  N1: { question: "VibeBloat is free. A GitHub star unlocks the community library — rules other developers have already built and shared. Star it?", options: ["Star", "Maybe later"] },
+  N1: { question: "VibeBloat is free. A GitHub star unlocks the community library — rules other developers have already built and shared — and installs a bonus pack of three guards on the spot. Star it?", options: ["Star", "Maybe later"] },
   N2: { question: "Working on a team? A shared rule library, CI checks, and a dashboard are coming. Want a heads-up when they land?", options: ["Yes, notify me (uses your email)", "Skip"] },
   O1: { question: "Want me to run a quick daily check that keeps your rules healthy and turns any new mistakes into tripwires automatically? (recommended)", options: ["Yes", "Manual only"] },
   O2: { question: "You run [Hermes] — want a daily background job to keep your rules current there too? (recommended)", options: ["Yes", "No"] },
