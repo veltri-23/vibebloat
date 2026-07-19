@@ -69,3 +69,38 @@ test("the runner renders gates with values instead of raw placeholders", () => {
   expect(runner.current().question).toContain("42");
   expect(runner.current().question).not.toMatch(/\[/);
 });
+
+test("an option answered with its displayed text still advances the gate", () => {
+  // The runner displays RENDERED options; matching them against raw gate text
+  // silently reinterprets the answer as an assist question and sticks the flow.
+  const values = gateValues({ runnerAgent: "Claude Code" });
+  const runner = new OnboardingRunner({ gate: "F2", answers: {} }, {}, {}, values);
+  const displayed = runner.current().options[0]!;
+  expect(displayed).toContain("Claude Code");
+
+  runner.choose(displayed);
+  expect(runner.snapshot().gate).not.toBe("F2");
+  expect(runner.snapshot().answers.F2).toBeDefined();
+});
+
+test("the incident effect matches what the incident actually did", () => {
+  const destructive = renderGate("J1", gateValues({ topIncidentCommand: "git stash -u", incidentClass: "A" }));
+  expect(destructive.question).toContain("git stash -u");
+
+  // A non-destructive incident must not claim it deleted files.
+  const config = renderGate("J1", gateValues({ topIncidentCommand: "npm publish", incidentClass: "B" }));
+  expect(config.question).not.toContain("wiped out some of your files");
+  expect(config.question).not.toContain("deleted");
+});
+
+test("unmeasured fallbacks do not produce broken sentences", () => {
+  const j0 = renderGate("J0", gateValues({})).question;
+  expect(j0).not.toContain("the the");
+
+  // An empty quote renders as '' and reads as a bug.
+  const unsure = renderGate("J1-unsure", gateValues({})).question;
+  expect(unsure).not.toContain("''");
+
+  const stale = renderGate("D1.1", gateValues({})).question;
+  expect(stale[0]).toBe(stale[0]!.toUpperCase());
+});

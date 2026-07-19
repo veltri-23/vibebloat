@@ -34,6 +34,7 @@ import { createLocalSemanticAdapter, localSemanticIndexPath } from "./ingest/loc
 import { scanHistory } from "./ingest/scan";
 import type { UntrustedSemanticContext } from "./ingest/semantic-context";
 import { rankIncidents, type IncidentManifest } from "./ingest/rank";
+import { onboardingGateValues } from "./onboarding/gate-measurements";
 import type { HistoryChunk } from "./ingest/types";
 import { serializeModelCommandInput } from "./mine/model-command-input";
 import { detectRunnerDetails, parentProcessCommand, parseRunnerOverride, type RunnerDetectionSource } from "./onboarding/detect-runner";
@@ -516,33 +517,6 @@ function onboardingRunnerContext(
       : {}),
     reviewsRemaining: Math.max(1, incidentCount - reviewed + (state.gate === "J3" ? 1 : 0)),
   };
-}
-
-/**
- * Binds onboarding copy to what was actually measured on this machine. Fields
- * with no measurement are left undefined so gateValues renders a vague phrase
- * rather than a borrowed figure.
- */
-function onboardingGateValues(
-  checkpoint: OnboardingCheckpoint | undefined,
-  runnerAgent?: string,
-): Record<string, string | number> {
-  const incidents = checkpoint?.incidents ?? [];
-  const ranked = rankIncidents(incidents);
-  const top = ranked[0];
-  const environments = checkpoint?.discovery?.environments.map(({ label, id }) => label ?? id).filter(Boolean) ?? [];
-  const hermes = checkpoint?.discovery?.environments.find(({ id }) => id === "hermes" || id === "openclaw");
-  return gateValues({
-    ...(incidents.length > 0 ? {
-      incidentsFound: incidents.length,
-      confidentCount: incidents.filter(({ severity }) => severity >= 4).length,
-      uncertainCount: incidents.filter(({ severity }) => severity < 4).length,
-    } : {}),
-    ...(top ? { topIncidentDate: top.recency, ...(top.command ? { topIncidentCommand: top.command } : {}) } : {}),
-    ...(environments.length > 0 ? { environments } : {}),
-    ...(hermes ? { hermesLabel: hermes.label ?? hermes.id } : {}),
-    ...(runnerAgent ? { runnerAgent } : {}),
-  });
 }
 
 function verifiedMissingEnvironmentDirectory(path: string): string {
@@ -1204,7 +1178,7 @@ if (mode === "init") {
     : { gate: "A0", answers: {}, runner: runnerKind };
   let coordinatorCheckpoint = state.coordinator;
   const coordinator = createProductionOnboardingCoordinator(home, coordinatorCheckpoint, (checkpoint) => { coordinatorCheckpoint = checkpoint; }, state.preferences?.modelRoute);
-  let runner = new OnboardingRunner(state as RunnerState, onboardingRunnerContext(coordinatorCheckpoint, state), {}, onboardingGateValues(coordinatorCheckpoint, runnerSource));
+  let runner = new OnboardingRunner(state as RunnerState, onboardingRunnerContext(coordinatorCheckpoint, state), {}, onboardingGateValues(coordinatorCheckpoint));
   const answerIndex = process.argv.indexOf("--answer");
   const prettyMode = process.argv.includes("--pretty");
   if (answerIndex < 0) {
@@ -1346,7 +1320,7 @@ if (mode === "init") {
         saveOnboardingState(home, { ...scanState, coordinator: coordinatorCheckpoint, reviewDecisions: state.reviewDecisions });
         throw new ControlledScrubbersUnavailableError();
       }
-      runner = new OnboardingRunner(scanState, onboardingRunnerContext(coordinatorCheckpoint, { ...state, gate: scanState.gate }), {}, onboardingGateValues(coordinatorCheckpoint, runnerSource));
+      runner = new OnboardingRunner(scanState, onboardingRunnerContext(coordinatorCheckpoint, { ...state, gate: scanState.gate }), {}, onboardingGateValues(coordinatorCheckpoint));
       next = runner.advanceAutomaticGates();
     }
 
@@ -1354,11 +1328,11 @@ if (mode === "init") {
       const decisions: GuardReviewDecision[] = state.reviewDecisions ?? [];
       coordinator.review(decisions);
       await coordinator.install();
-      runner = new OnboardingRunner(next, onboardingRunnerContext(coordinatorCheckpoint, { ...state, gate: next.gate }), {}, onboardingGateValues(coordinatorCheckpoint, runnerSource));
+      runner = new OnboardingRunner(next, onboardingRunnerContext(coordinatorCheckpoint, { ...state, gate: next.gate }), {}, onboardingGateValues(coordinatorCheckpoint));
     }
     if (validChoice && before.gate === "L1") coordinator.prove();
     if (validChoice && !next.cancelled) {
-      runner = new OnboardingRunner(next, onboardingRunnerContext(coordinatorCheckpoint, { ...state, gate: next.gate }), {}, onboardingGateValues(coordinatorCheckpoint, runnerSource));
+      runner = new OnboardingRunner(next, onboardingRunnerContext(coordinatorCheckpoint, { ...state, gate: next.gate }), {}, onboardingGateValues(coordinatorCheckpoint));
       next = runner.advanceAutomaticGates();
     }
     saveOnboardingState(home, {

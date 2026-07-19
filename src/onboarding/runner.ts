@@ -77,9 +77,9 @@ export class OnboardingRunner {
 
   choose(choice: GateChoice): RunnerState {
     if (typeof choice === "string" && choice.trim().toLowerCase() === "cancel") return this.cancel();
-    if (!isGateChoice(this.state.gate, choice)) return this.snapshot();
+    if (!isGateChoice(this.state.gate, choice, this.values)) return this.snapshot();
     const gate = this.state.gate;
-    const canonical = canonicalGateChoice(gate, choice);
+    const canonical = canonicalGateChoice(gate, choice, this.values);
     const optionIndex = getGate(gate).options.indexOf(canonical);
     const next = nextFirstRunGate(gate, optionIndex >= 0 ? optionIndex : choice, this.context);
     this.state.answers[gate] = canonical;

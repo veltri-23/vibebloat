@@ -85,6 +85,8 @@ export interface OnboardingSnapshot {
   consented: boolean;
   selectedSourceIds: string[];
   incidentCount: number;
+  /** Distinct sessions read during the scan. Undefined until a scan has run. */
+  sessionsScanned?: number;
   approvedIncidentIds: string[];
   installedGuardIds: string[];
   cancelled: boolean;
@@ -174,6 +176,7 @@ export class OnboardingCoordinator {
   #consented = false;
   #selectedSourceIds: string[] = [];
   #incidents: IncidentManifest[] = [];
+  #sessionsScanned: number | undefined;
   #approved: Array<{ incident: IncidentManifest; confidence: "high" | "low" }> = [];
   #installed: Guard[] = [];
   #cancelled = false;
@@ -211,6 +214,7 @@ export class OnboardingCoordinator {
       consented: this.#consented,
       selectedSourceIds: [...this.#selectedSourceIds],
       incidentCount: this.#incidents.length,
+      ...(this.#sessionsScanned === undefined ? {} : { sessionsScanned: this.#sessionsScanned }),
       approvedIncidentIds: this.#approved.map(({ incident }) => incident.incident_id),
       installedGuardIds: this.#installed.map((guard) => guard.id),
       cancelled: this.#cancelled,
@@ -344,6 +348,9 @@ export class OnboardingCoordinator {
       this.#incidents = [];
       this.#phase = "paused";
       return this.#save();
+    }
+    if (loadedHistory) {
+      this.#sessionsScanned = new Set(loadedHistory.map((chunk) => `${chunk.source}:${chunk.sessionId}`)).size;
     }
     if (loadedHistory && this.options.incrementalCursor) {
       seedIncrementalCursor(

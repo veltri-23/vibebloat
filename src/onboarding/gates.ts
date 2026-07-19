@@ -45,11 +45,11 @@ const gates: Record<GateId, GatePrompt> = {
   F6: { question: "Want a free starter pack of rules every dev needs, plus a heads-up when I ship something big? Just your name, email, and what you're building — rare emails, no spam.", options: ["Yes", "Skip"] },
   SCAN: { question: "", options: [] },
   "G-empty": { question: "Looks like there's not much history here yet. I can start you with a pack of common safety rules and get smarter as you work. Want that?", options: ["Yes", "No"] },
-  I1: { question: "I read [sessionsScanned] [sessionNoun] and found [incidentsFound] [mistakeNoun] you've made more than once. Together they've cost you about [hoursLost] hours. Let's turn them into tripwires.", options: [] },
+  I1: { question: "I read [sessionsScanned] [sessionNoun] and found [incidentsFound] [mistakeNoun] you've made more than once. Going by how often each one hit you, that's roughly [hoursLost] hours of cleanup. Let's turn them into tripwires.", options: [] },
   "I-zero": { question: "Good news — I couldn't find mistakes you repeat. That's rare. Want a few common preventive rules anyway?", options: ["Yes", "No"] },
   J0: { question: "I've got [incidentsFound]. Want to go through them one at a time, or should I switch on the [confidentCount] I'm confident about and you just review the [uncertainCount] I'm unsure on?", options: ["One at a time", "Fast — turn on the confident ones, I'll review the rest"] },
-  J1: { question: "Here's one. Back on [topIncidentDate], `[topIncidentCommand]` wiped out some of your files. Want me to stop that from happening again? I'll step in only when it's actually risky, and you can always override it.", options: ["Yes, set it up", "Change it", "Skip", "That wasn't really a mistake"] },
-  "J1-unsure": { question: "Not sure about this one — was it a real mistake? '[quote]'", options: ["Yes", "No"] },
+  J1: { question: "Here's one. Back on [topIncidentDate], `[topIncidentCommand]` [incidentEffect]. Want me to stop that from happening again? I'll step in only when it's actually risky, and you can always override it.", options: ["Yes, set it up", "Change it", "Skip", "That wasn't really a mistake"] },
+  "J1-unsure": { question: "Not sure about this one — was it a real mistake? [quote]", options: ["Yes", "No"] },
   "J-cluster": { question: "A few of these overlap or could clash. Want me to combine them into one cleaner rule? (recommended)", options: ["Combine", "Keep separate"] },
   J2: { question: "Block or just warn? · What should it say when it steps in? · Which tools should it apply to? · On or off?", options: [] },
   J3: { question: "Want to share this rule with the community so it helps other devs? I only send the rule itself — never your code, file paths, or secrets.", options: ["Yes", "No", "Stop asking this time"] },
@@ -57,7 +57,7 @@ const gates: Record<GateId, GatePrompt> = {
   "K-conflict": { question: "You've already got a [conflictingHook]. I'll add mine right alongside it — I won't touch yours.", options: ["Keep both (recommended)", "Let me handle it"] },
   "K-shim-only": { question: "Want me to also wire a native hook into Claude Code / Codex / Hermes / OpenClaw so the colored receipt shows up right in your agent's terminal? It's purely cosmetic — the shim already blocks. Skip if you'd rather not touch agent config.", options: ["Skip (recommended if you don't want to touch agent config)", "Wire them up"] },
   L1: { question: "Want to watch one in action? I'll have an agent try `[topIncidentCommand]` right now.", options: ["Yes", "Skip"] },
-  M: { question: "All set. These tripwires block about [hoursLost] hours a year of repeat mistakes, cost nothing to run, and work across [environments].", options: [] },
+  M: { question: "All set. These tripwires head off roughly [hoursLost] hours of repeat cleanup, cost nothing to run, and work across [environmentList].", options: [] },
   N1: { question: "VibeBloat is free. A GitHub star unlocks the community library — rules other developers have already built and shared — and installs a bonus pack of three guards on the spot. Star it?", options: ["Star", "Maybe later"] },
   N2: { question: "Working on a team? A shared rule library, CI checks, and a dashboard are coming. Want a heads-up when they land?", options: ["Yes, notify me (uses your email)", "Skip"] },
   O1: { question: "Want me to run a quick daily check that keeps your rules healthy and turns any new mistakes into tripwires automatically? (recommended)", options: ["Yes", "Manual only"] },
@@ -70,18 +70,36 @@ export function getGate(gate: GateId): GatePrompt {
   return gates[gate];
 }
 
-/** A free-form ASSIST message must not accidentally choose a locked option. */
-export function isGateChoice(gate: GateId, choice: GateChoice): boolean {
+/**
+ * Options are shown to the user RENDERED, so an answer echoing the displayed
+ * text must match. Comparing against raw placeholder copy makes a real choice
+ * look like free-form text, which silently stalls the gate.
+ */
+function comparableOptions(gate: GateId, values: Record<string, string | number>): string[] {
   const prompt = getGate(gate);
-  if (prompt.options.length === 0) return true;
-  if (typeof choice === "number") return Number.isInteger(choice) && choice >= 0 && choice < prompt.options.length;
-  const value = choice.trim().toLowerCase();
-  return prompt.options.some((option, index) => option.toLowerCase() === value || value === String(index + 1) || value === String.fromCharCode(97 + index));
+  return prompt.options.map((option, index) => renderGate(gate, values).options[index] ?? option);
 }
 
-export function canonicalGateChoice(gate: GateId, choice: GateChoice): string {
+/** A free-form ASSIST message must not accidentally choose a locked option. */
+export function isGateChoice(gate: GateId, choice: GateChoice, values: Record<string, string | number> = {}): boolean {
+  const options = getGate(gate).options;
+  if (options.length === 0) return true;
+  if (typeof choice === "number") return Number.isInteger(choice) && choice >= 0 && choice < options.length;
+  const value = choice.trim().toLowerCase();
+  const rendered = comparableOptions(gate, values);
+  return options.some((option, index) =>
+    option.toLowerCase() === value
+    || rendered[index]?.toLowerCase() === value
+    || value === String(index + 1)
+    || value === String.fromCharCode(97 + index));
+}
+
+export function canonicalGateChoice(gate: GateId, choice: GateChoice, values: Record<string, string | number> = {}): string {
   const options = getGate(gate).options;
   if (typeof choice === "number") return options[choice] ?? String(choice);
+  const rendered = comparableOptions(gate, options.length > 0 ? values : {});
+  const displayed = rendered.findIndex((option) => option.toLowerCase() === choice.trim().toLowerCase());
+  if (displayed >= 0) return options[displayed]!;
   const index = /^[a-z]$/i.test(choice) ? choice.toLowerCase().charCodeAt(0) - 97 : Number(choice) - 1;
   return Number.isInteger(index) && options[index] ? options[index] : choice;
 }
@@ -184,6 +202,7 @@ export interface GateMeasurements {
   quote?: string;
   knowledgeTool?: string;
   hermesLabel?: string;
+  incidentClass?: string;
   runnerAgent?: string;
   conflictingHook?: string;
   scanPlan?: string;
@@ -210,6 +229,31 @@ function plural(count: number | undefined, singular: string, plural: string): st
   return count === 1 ? singular : plural;
 }
 
+/**
+ * What the incident actually did. A fixed "wiped out some of your files" is a
+ * false statement for anything but a destructive incident, which is the same
+ * fabrication as a borrowed number, just written in prose.
+ */
+function incidentEffect(guardClass: string | undefined): string {
+  switch (guardClass) {
+    case "A": return "destroyed work that wasn't saved anywhere";
+    case "B": return "broke a file or setting you depend on";
+    case "C": return "left your environment in a broken state";
+    case "D": return "produced a result that was quietly wrong";
+    default: return "caused a problem you had to undo";
+  }
+}
+
+/** "a, b and c" — a bare comma join reads as an unfinished list. */
+function joinReadable(items: readonly string[]): string {
+  if (items.length <= 1) return items[0] ?? "";
+  return `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
+}
+
+function capitalize(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
 function formatBytes(value: number | undefined): string {
   if (value === undefined) return "a fair amount";
   const units = ["B", "KB", "MB", "GB"];
@@ -227,24 +271,26 @@ function formatBytes(value: number | undefined): string {
  * of this onboarding is that the numbers are the user's own.
  */
 export function gateValues(measurements: GateMeasurements = {}): Record<string, string | number> {
-  const environments = measurements.environments?.length ? [...measurements.environments].join(", ") : "your agents";
+  const environmentNames = measurements.environments ?? [];
   return {
     sessionsScanned: formatCount(measurements.sessionsScanned, "your"),
     incidentsFound: formatCount(measurements.incidentsFound, "a few"),
-    confidentCount: formatCount(measurements.confidentCount, "the confident ones"),
-    uncertainCount: formatCount(measurements.uncertainCount, "the rest"),
+    confidentCount: formatCount(measurements.confidentCount, "ones"),
+    uncertainCount: formatCount(measurements.uncertainCount, "rest"),
     hoursLost: formatHours(measurements.hoursLost),
     estimatedMinutes: formatCount(measurements.estimatedMinutes, "a few"),
     deepScanMinutes: formatCount(measurements.deepScanMinutes, "a few"),
     historySize: formatBytes(measurements.historyBytes),
-    environments,
-    staleEnvironment: measurements.staleEnvironment ?? "one of these",
+    environments: environmentNames.length > 0 ? environmentNames.join(", ") : "your agents",
+    environmentList: environmentNames.length > 0 ? joinReadable(environmentNames) : "your agents",
+    incidentEffect: incidentEffect(measurements.incidentClass),
+    staleEnvironment: capitalize(measurements.staleEnvironment ?? "one of these"),
     staleDays: formatCount(measurements.staleDays, "many"),
     topIncidentDate: formatIncidentDate(measurements.topIncidentDate),
     sessionNoun: plural(measurements.sessionsScanned, "session", "sessions"),
     mistakeNoun: plural(measurements.incidentsFound, "mistake", "mistakes"),
     topIncidentCommand: measurements.topIncidentCommand ?? "a risky command",
-    quote: measurements.quote ?? "",
+    quote: measurements.quote ? `'${measurements.quote}'` : "",
     knowledgeTool: measurements.knowledgeTool ?? "that tool",
     hermesLabel: measurements.hermesLabel ?? "a background agent",
     runnerAgent: measurements.runnerAgent ?? "this agent",
