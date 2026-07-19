@@ -34,8 +34,12 @@ init in the browser. No local install required.
 Once the Codespace boots, run in its terminal:
 
 ```sh
-bun src/cli.ts init --pretty
+bun src/cli.ts demo
 ```
+
+A fresh Codespace has no agent history, so the sample stands in for yours. On a
+machine that does have sessions to read, `bun src/cli.ts init --pretty` walks
+the onboarding against your own history instead.
 
 Or install locally (after `npm publish` lands):
 
