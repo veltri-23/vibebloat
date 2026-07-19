@@ -1,11 +1,6 @@
 {
   "name": "VibeBloat",
   "image": "mcr.microsoft.com/devcontainers/universal:2",
-  "features": {
-    "ghcr.io/jungtech/setup-bun@v1": {
-      "version": "1.3.14"
-    }
-  },
   "onCreateCommand": "bash .devcontainer/setup.sh",
   "postStartCommand": "bash .devcontainer/welcome.sh",
   "customizations": {
