@@ -6,7 +6,15 @@ export interface IncidentManifest {
   chokepoint: Chokepoint;
   command?: string;
   path?: string;
+  /**
+   * The arguments that made this occurrence destructive. Without them a guard
+   * can only match the bare command, so "git stash -u deleted my files"
+   * compiles to a rule that blocks every git stash — worse than no guard.
+   */
+  args_contains?: string[];
   condition: string;
+  /** What to do instead. Shown to the user at block time. */
+  remediation?: string;
   evidence_refs: string[];
   severity: number;
   frequency: number;

@@ -127,7 +127,7 @@ test("compile receipt stays outside the runtime guard set", () => {
   expect(result.stderr.toString()).toBe([
     "BLOCKED  guard: no-publish  class: A",
     "incident: untracked files present  date: 2026-07-17",
-    "why: VibeBloat found no-publish in 2 incidents.",
+    "why: 07-17 untracked files present.",
     "fix: vibebloat allow no-publish --once",
     "",
   ].join("\n"));

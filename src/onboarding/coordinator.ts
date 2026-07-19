@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { compileGuard } from "../compiler/codex-fill";
+import { syntheticEvent } from "../compiler/synthetic-event";
 import { guardHomeForScope, type GuardScope } from "../guard-home";
 import { seedIncrementalCursor } from "../ingest/incremental-cursor";
 import { scanHistory, type ScanOptions } from "../ingest/scan";
@@ -123,15 +124,9 @@ const embeddedAbsolutePath = /(?:[A-Za-z]:[\\/]|\\\\[^\\\s]+\\|(?:^|[\s"'`])\/(?
 const identifier = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const absolutePath = /^(?:[A-Za-z]:[\\/]|\\\\|\/)/;
 
-function syntheticEvent(guard: Guard): Event {
-  return guard.match.chokepoint === "shell"
-    ? { chokepoint: "shell", command: guard.match.command }
-    : { chokepoint: "file", path: guard.match.path };
-}
-
 function assertSafeIncident(incident: IncidentManifest): void {
   const required = ["incident_id", "class", "chokepoint", "condition", "evidence_refs", "severity", "frequency", "recency"];
-  const allowed = new Set([...required, "command", "path"]);
+  const allowed = new Set([...required, "command", "path", "args_contains", "remediation"]);
   if (required.some((key) => !(key in incident)) || Object.keys(incident).some((key) => !allowed.has(key))) {
     throw new Error("Mined incident has an invalid schema.");
   }

@@ -23,6 +23,7 @@ import { installStarterGuardPack } from "./install/starter-pack";
 import { claimStarPack, type StarPackClaimReport } from "./growth/star-pack";
 import { verifyShellPaths, type Shell } from "./install/shim";
 import { compileGuard } from "./compiler/codex-fill";
+import { syntheticEvent } from "./compiler/synthetic-event";
 import { compileLiveForScope, drainQueuedLiveCompilesForScope } from "./compiler/live-compile";
 import { approveLiveCompileProposal, authorizeHumanLiveCompileApproval, drainQueuedLiveProposalsForScope, processQueuedLiveProposal, reviewLiveCompileProposal } from "./compiler/live-incident";
 import { runShellShimCommand } from "./hooks/shell-shim-handler";
@@ -36,7 +37,7 @@ import type { UntrustedSemanticContext } from "./ingest/semantic-context";
 import { rankIncidents, type IncidentManifest } from "./ingest/rank";
 import { onboardingGateValues } from "./onboarding/gate-measurements";
 import type { HistoryChunk } from "./ingest/types";
-import { serializeModelCommandInput } from "./mine/model-command-input";
+import { buildChatCompletionsBody, parseModelIncidentOutput, serializeModelCommandInput } from "./mine/model-command-input";
 import { detectRunnerDetails, parentProcessCommand, parseRunnerOverride, type RunnerDetectionSource } from "./onboarding/detect-runner";
 import { answerAssist } from "./onboarding/assist";
 import { validateOnboardingEffectRequirements, type EffectGateId, type OnboardingEffectEvidence } from "./onboarding/effect-requirements";
@@ -145,6 +146,10 @@ function runtimeGuards(): Guard[] {
 
 function configText(path: string): string {
   return existsSync(path) ? readFileSync(path, "utf8") : "";
+}
+
+function isChatCompletionsCommand(command: readonly string[]): boolean {
+  return command.some((part) => part.includes("/v1/chat/completions"));
 }
 
 function defaultOpenAiModelCommand(): string[] {
@@ -444,6 +449,10 @@ function parseIncidentManifest(value: unknown): IncidentManifest | undefined {
     chokepoint: incident.chokepoint,
     ...(typeof incident.command === "string" ? { command: incident.command } : {}),
     ...(typeof incident.path === "string" ? { path: incident.path } : {}),
+    ...(Array.isArray(incident.args_contains) && incident.args_contains.every((argument) => typeof argument === "string" && argument.length > 0 && argument.length <= 64)
+      ? { args_contains: incident.args_contains.slice(0, 8) as string[] }
+      : {}),
+    ...(typeof incident.remediation === "string" && incident.remediation.length <= 200 ? { remediation: incident.remediation } : {}),
     condition: incident.condition,
     evidence_refs: incident.evidence_refs,
     severity: incident.severity,
@@ -492,9 +501,13 @@ async function runModelCommand(
   candidates: HistoryChunk[],
   semanticContext?: UntrustedSemanticContext,
 ): Promise<IncidentManifest[]> {
-  const result = await executeCommand(command, serializeModelCommandInput(candidates, semanticContext));
+  const serialized = serializeModelCommandInput(candidates, semanticContext);
+  // The OpenAI route pipes stdin straight into /v1/chat/completions, which
+  // rejects the bare candidates payload; it needs a real request body.
+  const payload = isChatCompletionsCommand(command) ? buildChatCompletionsBody(serialized) : serialized;
+  const result = await executeCommand(command, payload);
   if (result.exitCode !== 0) throw new Error("model command failed");
-  const incidents: unknown = JSON.parse(result.stdout);
+  const incidents: unknown = parseModelIncidentOutput(result.stdout);
   if (!Array.isArray(incidents) || hasRawBearerToken(incidents)) {
     throw new Error("model command returned an unsafe incident manifest");
   }
@@ -1519,10 +1532,7 @@ if (mode === "compile") {
 
     const scope = guardScope();
     const guard = compileGuard(incident, incident.severity >= 4 ? "high" : "low");
-    const syntheticEvent: Event = incident.chokepoint === "shell"
-      ? { chokepoint: "shell", command: incident.command }
-      : { chokepoint: "file", path: incident.path };
-    const result = compileLiveForScope(scope, guard, syntheticEvent, process.env, process.cwd(), { trigger: "session-end" });
+    const result = compileLiveForScope(scope, guard, syntheticEvent(guard), process.env, process.cwd(), { trigger: "session-end" });
     const directory = join(guardHomeForScope(scope), "guards");
     if (result.status === "queued") {
       process.stdout.write(`${JSON.stringify({ status: result.status, scope, warning: result.warning })}\n`);

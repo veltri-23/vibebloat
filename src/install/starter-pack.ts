@@ -2,6 +2,7 @@ import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { Runtime } from "../runtime";
 import { parseGuard } from "../schema";
+import { syntheticEvent } from "../compiler/synthetic-event";
 import type { Event, Guard } from "../types";
 import { applyAtomicFilePlans, type AtomicFilePlan } from "./atomic-files";
 
@@ -95,20 +96,6 @@ export interface StarterGuardPackInstallReport {
 
 export function starterGuardPack(): Guard[] {
   return starterGuardValues.map((guard) => parseGuard(structuredClone(guard)));
-}
-
-function syntheticEvent(guard: Guard): Event {
-  if (guard.match.chokepoint === "file") {
-    return { chokepoint: "file", path: guard.match.path };
-  }
-  const required = guard.match.argsContains ?? [];
-  const any = guard.match.argsAnyOf?.slice(0, 1) ?? [];
-  return {
-    chokepoint: "shell",
-    command: [guard.match.command, ...required, ...any]
-      .filter((part): part is string => Boolean(part))
-      .join(" "),
-  };
 }
 
 function serializedGuard(guard: Guard): string {
