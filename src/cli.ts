@@ -39,7 +39,7 @@ import { serializeModelCommandInput } from "./mine/model-command-input";
 import { detectRunnerDetails, parentProcessCommand, parseRunnerOverride, type RunnerDetectionSource } from "./onboarding/detect-runner";
 import { answerAssist } from "./onboarding/assist";
 import { validateOnboardingEffectRequirements, type EffectGateId, type OnboardingEffectEvidence } from "./onboarding/effect-requirements";
-import { canonicalGateChoice, isGateChoice, type OnboardingContext } from "./onboarding/gates";
+import { canonicalGateChoice, gateValues, isGateChoice, type OnboardingContext } from "./onboarding/gates";
 import { OnboardingCoordinator, reviewDecisionForChoice, type GuardReviewDecision, type OnboardingCheckpoint } from "./onboarding/coordinator";
 import { lookupMarkdownAnswer } from "./onboarding/markdown-help";
 import { readCustomAgentHomes, revokeCustomAgentHomes, saveCustomAgentHome, type CustomAgentHomes } from "./onboarding/custom-agent-homes";
@@ -105,7 +105,10 @@ function formatOnboardingPretty(payload: {
     lines.push("");
     lines.push("Want to start?");
   } else if (payload.prompt?.question) {
-    lines.push(payload.prompt.question.replace(/\[EST\]/g, "~1").replace(/\[\d[\d,.]*\]/g, (match) => match.replace(/[\[\]]/g, "")));
+    // Gates arrive already rendered from this machine's measurements. Stripping
+    // brackets off unfilled placeholders used to print one developer's figures
+    // as if they were the reader's, which is worse than showing nothing.
+    lines.push(payload.prompt.question);
   } else {
     lines.push(`Gate ${payload.gate}.`);
   }
@@ -513,6 +516,33 @@ function onboardingRunnerContext(
       : {}),
     reviewsRemaining: Math.max(1, incidentCount - reviewed + (state.gate === "J3" ? 1 : 0)),
   };
+}
+
+/**
+ * Binds onboarding copy to what was actually measured on this machine. Fields
+ * with no measurement are left undefined so gateValues renders a vague phrase
+ * rather than a borrowed figure.
+ */
+function onboardingGateValues(
+  checkpoint: OnboardingCheckpoint | undefined,
+  runnerAgent?: string,
+): Record<string, string | number> {
+  const incidents = checkpoint?.incidents ?? [];
+  const ranked = rankIncidents(incidents);
+  const top = ranked[0];
+  const environments = checkpoint?.discovery?.environments.map(({ label, id }) => label ?? id).filter(Boolean) ?? [];
+  const hermes = checkpoint?.discovery?.environments.find(({ id }) => id === "hermes" || id === "openclaw");
+  return gateValues({
+    ...(incidents.length > 0 ? {
+      incidentsFound: incidents.length,
+      confidentCount: incidents.filter(({ severity }) => severity >= 4).length,
+      uncertainCount: incidents.filter(({ severity }) => severity < 4).length,
+    } : {}),
+    ...(top ? { topIncidentDate: top.recency, ...(top.command ? { topIncidentCommand: top.command } : {}) } : {}),
+    ...(environments.length > 0 ? { environments } : {}),
+    ...(hermes ? { hermesLabel: hermes.label ?? hermes.id } : {}),
+    ...(runnerAgent ? { runnerAgent } : {}),
+  });
 }
 
 function verifiedMissingEnvironmentDirectory(path: string): string {
@@ -1174,7 +1204,7 @@ if (mode === "init") {
     : { gate: "A0", answers: {}, runner: runnerKind };
   let coordinatorCheckpoint = state.coordinator;
   const coordinator = createProductionOnboardingCoordinator(home, coordinatorCheckpoint, (checkpoint) => { coordinatorCheckpoint = checkpoint; }, state.preferences?.modelRoute);
-  let runner = new OnboardingRunner(state as RunnerState, onboardingRunnerContext(coordinatorCheckpoint, state));
+  let runner = new OnboardingRunner(state as RunnerState, onboardingRunnerContext(coordinatorCheckpoint, state), {}, onboardingGateValues(coordinatorCheckpoint, runnerSource));
   const answerIndex = process.argv.indexOf("--answer");
   const prettyMode = process.argv.includes("--pretty");
   if (answerIndex < 0) {
@@ -1316,7 +1346,7 @@ if (mode === "init") {
         saveOnboardingState(home, { ...scanState, coordinator: coordinatorCheckpoint, reviewDecisions: state.reviewDecisions });
         throw new ControlledScrubbersUnavailableError();
       }
-      runner = new OnboardingRunner(scanState, onboardingRunnerContext(coordinatorCheckpoint, { ...state, gate: scanState.gate }));
+      runner = new OnboardingRunner(scanState, onboardingRunnerContext(coordinatorCheckpoint, { ...state, gate: scanState.gate }), {}, onboardingGateValues(coordinatorCheckpoint, runnerSource));
       next = runner.advanceAutomaticGates();
     }
 
@@ -1324,11 +1354,11 @@ if (mode === "init") {
       const decisions: GuardReviewDecision[] = state.reviewDecisions ?? [];
       coordinator.review(decisions);
       await coordinator.install();
-      runner = new OnboardingRunner(next, onboardingRunnerContext(coordinatorCheckpoint, { ...state, gate: next.gate }));
+      runner = new OnboardingRunner(next, onboardingRunnerContext(coordinatorCheckpoint, { ...state, gate: next.gate }), {}, onboardingGateValues(coordinatorCheckpoint, runnerSource));
     }
     if (validChoice && before.gate === "L1") coordinator.prove();
     if (validChoice && !next.cancelled) {
-      runner = new OnboardingRunner(next, onboardingRunnerContext(coordinatorCheckpoint, { ...state, gate: next.gate }));
+      runner = new OnboardingRunner(next, onboardingRunnerContext(coordinatorCheckpoint, { ...state, gate: next.gate }), {}, onboardingGateValues(coordinatorCheckpoint, runnerSource));
       next = runner.advanceAutomaticGates();
     }
     saveOnboardingState(home, {
