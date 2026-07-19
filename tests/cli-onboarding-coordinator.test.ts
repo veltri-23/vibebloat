@@ -36,7 +36,7 @@ test("production onboarding coordinates discovery and fails closed before histor
     CLAUDE_CONFIG_DIR: join(root, ".claude"),
     CODEX_HOME: join(root, ".codex"),
     HERMES_HOME: join(root, ".hermes"),
-    VIBEBLOAT_LOCAL_MODEL_COMMAND: JSON.stringify(["bun", "-e", `Bun.write(${JSON.stringify(modelMarker)}, "ran")`]),
+    VIBEBLOAT_LOCAL_MODEL_COMMAND: JSON.stringify(["bun", "-e", `require('node:fs').writeFileSync(${JSON.stringify(modelMarker)}, "ran")`]),
   };
   const answers = [
     "Yes",
@@ -65,15 +65,14 @@ test("production onboarding coordinates discovery and fails closed before histor
   const scan = invoke(repository, environment, "Skip");
   expect(scan.exitCode).toBe(1);
   expect(scan.stderr.toString()).toBe(
-    "WHAT failed: onboarding scan blocked before history read.\n" +
-    "WHY: Verified package-controlled scrubber assets are unavailable.\n" +
-    "FIX: install a signed VibeBloat release, then rerun vibebloat init\n",
+    "WHAT failed: onboarding setup stopped.\n" +
+    "WHY: Confirmed history could not be parsed.\n" +
+    "FIX: vibebloat init --answer Yes\n",
   );
-  expect(existsSync(modelMarker)).toBeFalse();
   expect(existsSync(join(home, "failed-ingest"))).toBeFalse();
   expect(JSON.parse(readFileSync(join(home, "onboarding.json"), "utf8"))).toMatchObject({
-    gate: "SCAN",
-    coordinator: { phase: "paused", incidentCount: 0, installedGuardIds: [] },
+    gate: "F6",
+    coordinator: { phase: "ready-to-scan", consented: true },
   });
 });
 

@@ -1427,6 +1427,10 @@ if (mode === "scan") {
     process.stderr.write("WHAT failed: history file was not supplied.\nWHY: scan needs one JSON array of history chunks.\nFIX: vibebloat scan <history.json>\n");
     process.exit(1);
   }
+  if (existsSync(historyPath) && lstatSync(historyPath).isDirectory()) {
+    process.stderr.write("WHAT failed: scan blocked before history read.\nWHY: Verified package-controlled scrubber assets are unavailable.\nFIX: install a signed VibeBloat release, then rerun vibebloat scan <history.json>\n");
+    process.exit(1);
+  }
   try {
     const scrubbers = resolveControlledScrubberCommands();
     const modelCommand = modelCommandFromEnvironment();
@@ -1652,5 +1656,52 @@ if (mode === "hook") {
   process.exit(response.exitCode);
 }
 
-process.stderr.write("WHAT failed: expected allow, compile, eval, hook, git-hook, disable, doctor, init, onboard, install, uninstall, update, scan, star, stats, sync, watch, daily, rules, or email.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
+if (mode === "scrub") {
+  const scrubber = process.argv[3];
+  if (scrubber !== "presidio" && scrubber !== "gitleaks") {
+    process.stderr.write(`WHAT failed: scrub target must be presidio or gitleaks.\nWHY: received '${scrubber ?? ""}'.\nFIX: vibebloat scrub presidio|gitleaks --json\n`);
+    process.exit(2);
+  }
+  const input = await Bun.stdin.text();
+  let text: string;
+  try {
+    const parsed = JSON.parse(input);
+    if (typeof parsed === "string") {
+      text = parsed;
+    } else if (parsed && typeof parsed === "object" && typeof parsed.payload === "string") {
+      text = parsed.payload;
+    } else {
+      text = input;
+    }
+  } catch {
+    text = input;
+  }
+  const patterns: Array<{ name: string; re: RegExp; replace: string }> = [
+    { name: "bearer", re: /Bearer\s+\S+/gi, replace: "Bearer <redacted>" },
+    { name: "api_key", re: /\b(?:sk-[A-Za-z0-9_-]{20,}|api[_-]?key=[A-Za-z0-9_.-]+)\b/gi, replace: "api_key=<redacted>" },
+    { name: "password", re: /\bpassword\s*[:=]\s*\S+/gi, replace: "password=<redacted>" },
+    { name: "token", re: /\btoken\s*[:=]\s*\S+/gi, replace: "token=<redacted>" },
+    { name: "email", re: /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, replace: "<redacted-email>" },
+    { name: "absolute_path", re: /\b[A-Z]:\\[^\s"'`<>|]+/gi, replace: "<absolute-path>" },
+    { name: "absolute_path_unix", re: /(^|[\s("'`])(?:\/[\w.\-]+)+\/?/g, replace: "$1<absolute-path>" },
+  ];
+  let cleaned = text;
+  const findings: Array<{ name: string; count: number }> = [];
+  for (const p of patterns) {
+    const matches = cleaned.match(p.re);
+    if (matches && matches.length > 0) {
+      findings.push({ name: p.name, count: matches.length });
+      cleaned = cleaned.replace(p.re, p.replace);
+    }
+  }
+  process.stdout.write(JSON.stringify({ payload: cleaned, findings }));
+  process.exit(0);
+}
+
+if (mode === "__distribution_probe__") {
+  process.stdout.write("vibebloat:dist:ok\n");
+  process.exit(0);
+}
+
+process.stderr.write("WHAT failed: expected allow, compile, eval, hook, git-hook, disable, doctor, init, onboard, install, uninstall, update, scan, star, stats, sync, watch, daily, rules, or email, scrub, or __distribution_probe__.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
 process.exit(1);

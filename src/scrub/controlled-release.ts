@@ -49,6 +49,25 @@ export function resolveControlledScrubberCommands(
     );
     if (!verification.verified) throw new ControlledScrubbersUnavailableError();
 
+    // Probe the signed binary: must accept the "scrub" subcommand.
+    const probe = Bun.spawnSync([artifact, "__distribution_probe__"], { stdout: "pipe", stderr: "pipe" });
+    if (probe.exitCode !== 0) throw new ControlledScrubbersUnavailableError();
+    if (!new TextDecoder().decode(probe.stdout).includes("vibebloat:dist:ok")) {
+      throw new ControlledScrubbersUnavailableError();
+    }
+
+    // Reject env-var scrubber overrides that don't match the signed binary.
+    const signedPresidio = JSON.stringify([artifact, "scrub", "presidio", "--json"]);
+    const signedGitleaks = JSON.stringify([artifact, "scrub", "gitleaks", "--json"]);
+    const envPresidio = process.env.VIBEBLOAT_PRESIDIO_COMMAND;
+    const envGitleaks = process.env.VIBEBLOAT_GITLEAKS_COMMAND;
+    if (envPresidio && envPresidio !== signedPresidio) {
+      throw new ControlledScrubbersUnavailableError();
+    }
+    if (envGitleaks && envGitleaks !== signedGitleaks) {
+      throw new ControlledScrubbersUnavailableError();
+    }
+
     return {
       presidio: [artifact, "scrub", "presidio", "--json"],
       gitleaks: [artifact, "scrub", "gitleaks", "--json"],

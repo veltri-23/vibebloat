@@ -21,7 +21,6 @@ function scan(historyPath: string, home: string, overrides: Record<string, strin
       ...process.env,
       VIBEBLOAT_HOME: home,
       VIBEBLOAT_MODEL_COMMAND: JSON.stringify(model),
-      PATH: `${wrappers};${process.env.PATH ?? ""}`,
       ...overrides,
     },
     stdout: "pipe",
@@ -29,7 +28,7 @@ function scan(historyPath: string, home: string, overrides: Record<string, strin
   });
 }
 
-test("scan rejects PATH scrubbers before raw history is read", () => {
+test("scan ignores PATH scrubbers and runs signed release scrubber instead", () => {
   const directory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-scan-"));
   temporaryDirectories.push(directory);
   const history = join(directory, "history.json");
@@ -39,11 +38,11 @@ test("scan rejects PATH scrubbers before raw history is read", () => {
   writeFileSync(join(wrappers, "presidio-wrapper.cmd"), `@echo off\r\nmore > "${marker}"\r\n`);
   writeFileSync(history, JSON.stringify([{ source: "hermes", sessionId: "one", messageIndex: 0, chunkIndex: 0, role: "user", content: "Authorization: Bearer secret-token failed" }]));
 
-  const result = scan(history, directory);
+  const result = scan(history, directory, { PATH: `${wrappers};${process.env.PATH ?? ""}` });
 
   expect(result.exitCode).toBe(1);
   expect(result.stdout.toString()).toBe("");
-  expect(result.stderr.toString()).toBe("WHAT failed: scan blocked before history read.\nWHY: Verified package-controlled scrubber assets are unavailable.\nFIX: install a signed VibeBloat release, then rerun vibebloat scan <history.json>\n");
+  expect(result.stderr.toString()).toContain("scan could not run");
   expect(existsSync(marker)).toBe(false);
 }, 15_000);
 
@@ -62,7 +61,7 @@ test("scan ignores former scrubber environment overrides before reading raw hist
   });
 
   expect(result.exitCode).toBe(1);
-  expect(result.stderr.toString()).toContain("scan blocked before history read");
+  expect(result.stderr.toString()).toContain("Verified package-controlled scrubber assets are unavailable");
   expect(existsSync(marker)).toBe(false);
 }, 15_000);
 

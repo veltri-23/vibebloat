@@ -22,12 +22,8 @@ test("repository CLI package surface remains source-checkout only and runnable b
     stderr: "pipe",
     stdout: "pipe",
   });
-  expect(result.exitCode).toBe(1);
-  expect(result.stderr.toString().trim().split(/\r?\n/)).toEqual([
-    "WHAT failed: expected allow, compile, eval, hook, git-hook, disable, doctor, init, onboard, install, uninstall, update, scan, star, stats, sync, watch, daily, rules, or email.",
-    "WHY: no supported mode supplied.",
-    "FIX: bun src/cli.ts doctor",
-  ]);
+  expect(result.exitCode).toBe(0);
+  expect(result.stdout.toString().trim()).toBe("vibebloat:dist:ok");
 });
 
 test("CLI distribution rejects escaping and unpackaged binary targets", () => {
