@@ -155,6 +155,22 @@ function defaultLocalModelCommand(): string[] {
   return ["ollama", "run", "llama3.1:8b"];
 }
 
+function defaultAgentModelCommand(): string[] | undefined {
+  if (process.env.CLAUDE_CODE_ENTRYPOINT || process.env.CLAUDE_CODE_SSE_PORT) {
+    return ["claude", "-p", "--model", "claude-opus-4-8"];
+  }
+  if (process.env.CODEX_HOME) {
+    return ["codex", "exec", "--model", "gpt-5"];
+  }
+  if (process.env.OPENCLAW_SESSION) {
+    return ["openclaw", "model", "run"];
+  }
+  if (process.env.HERMES_HOME) {
+    return ["hermes", "agent", "complete"];
+  }
+  return undefined;
+}
+
 function parseModelCommandValue(name: string, value: string): string[] {
   let command: unknown;
   try {
@@ -173,17 +189,24 @@ function modelCommandFromEnvironment(route?: ModelRoute): string[] {
   const preferredValue = preferredName ? process.env[preferredName] : undefined;
   if (preferredValue) return parseModelCommandValue(preferredName!, preferredValue);
   if (preferredName) {
+    if (route === "agent-session") {
+      const agent = defaultAgentModelCommand();
+      if (agent) return agent;
+      throw new Error(`${preferredName} is required for agent-driven scan (or run Vibebloat from inside Claude Code / Codex / OpenClaw / Hermes)`);
+    }
     if (route === "api-key" && process.env.OPENAI_API_KEY) return defaultOpenAiModelCommand();
     if (route === "local") return defaultLocalModelCommand();
     throw new Error(`${preferredName} is required for the selected model route (or set OPENAI_API_KEY / install Ollama)`);
   }
   const explicit = process.env.VIBEBLOAT_MODEL_COMMAND;
   if (explicit) return parseModelCommandValue("VIBEBLOAT_MODEL_COMMAND", explicit);
+  const agent = defaultAgentModelCommand();
+  if (agent) return agent;
   if (process.env.OPENAI_API_KEY) return defaultOpenAiModelCommand();
   if (process.env.VIBEBLOAT_LOCAL_MODEL_COMMAND) {
     return parseModelCommandValue("VIBEBLOAT_LOCAL_MODEL_COMMAND", process.env.VIBEBLOAT_LOCAL_MODEL_COMMAND);
   }
-  throw new Error("No model available. Set OPENAI_API_KEY, install Ollama, or VIBEBLOAT_MODEL_COMMAND.");
+  throw new Error("No model available. Run Vibebloat from inside Claude Code / Codex / OpenClaw / Hermes, set OPENAI_API_KEY, install Ollama, or set VIBEBLOAT_MODEL_COMMAND.");
 }
 
 function argumentValue(flag: string): string | undefined {
