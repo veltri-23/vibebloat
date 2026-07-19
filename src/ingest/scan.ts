@@ -1,7 +1,7 @@
 import { ingestFailClosed, type IngestResult } from "../scrub/fail-closed";
 import { createGitleaksCommandScrubber } from "../scrub/gitleaks";
 import type { LocalOnlySink } from "../scrub/local-sink";
-import { createPresidioCommandScrubber } from "../scrub/presidio";
+import { createPresidioCommandScrubber, type Scrubber } from "../scrub/presidio";
 import { markScrubbedCandidates, type ScrubbedCandidates } from "../scrub/scrubbed-candidates";
 import { candidateFingerprint, dedupeCandidates, type DedupedCandidate } from "./dedup";
 import { prefilterCandidates } from "./prefilter";
@@ -14,6 +14,9 @@ import type { HistoryChunk } from "./types";
 export interface ScanOptions<Incident> {
   presidioCommand: readonly string[];
   gitleaksCommand: readonly string[];
+  /** In-process scrubbers. When present these win over the command form. */
+  presidio?: Scrubber;
+  gitleaks?: Scrubber;
   localSink: LocalOnlySink;
   modelPass(candidates: HistoryChunk[], semanticContext?: UntrustedSemanticContext): Promise<Incident[]>;
   publish(incidents: Incident[]): Promise<void>;
@@ -196,8 +199,8 @@ export async function scanHistory<Incident>(
 
   const chunks = typeof chunksOrLoader === "function" ? await chunksOrLoader() : chunksOrLoader;
   return ingestFailClosed(JSON.stringify(chunks), {
-    presidio: createPresidioCommandScrubber(options.presidioCommand),
-    gitleaks: createGitleaksCommandScrubber(options.gitleaksCommand),
+    presidio: options.presidio ?? createPresidioCommandScrubber(options.presidioCommand),
+    gitleaks: options.gitleaks ?? createGitleaksCommandScrubber(options.gitleaksCommand),
     localSink: options.localSink,
     modelPass: async (payload) => {
       const scrubbedChunks = JSON.parse(payload) as HistoryChunk[];

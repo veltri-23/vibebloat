@@ -11,6 +11,23 @@ import { Runtime } from "../runtime";
 import { parseGuard } from "../schema";
 import type { Event, Guard } from "../types";
 import { renderGate, type GateId } from "./gates";
+import type { Scrubber } from "../scrub/presidio";
+
+/**
+ * A verified scrubber pair. Commands point at a signed release binary;
+ * functions run the built-in scrubber in-process. Both fail closed.
+ */
+export interface VerifiedScrubbers {
+  presidio: readonly string[] | Scrubber;
+  gitleaks: readonly string[] | Scrubber;
+}
+
+function scrubberScanOptions(verified: VerifiedScrubbers): Partial<ScanOptions<IncidentManifest>> {
+  return {
+    ...(typeof verified.presidio === "function" ? { presidio: verified.presidio } : { presidioCommand: verified.presidio }),
+    ...(typeof verified.gitleaks === "function" ? { gitleaks: verified.gitleaks } : { gitleaksCommand: verified.gitleaks }),
+  };
+}
 
 export type OnboardingPhase =
   | "entry"
@@ -84,7 +101,7 @@ export interface OnboardingCheckpoint extends OnboardingSnapshot {
 export interface OnboardingCoordinatorOptions {
   discover(): Promise<OnboardingDiscovery>;
   setupBindings?(): Promise<void> | void;
-  verifyScrubbers(): Promise<{ presidio: readonly string[]; gitleaks: readonly string[] } | void> | { presidio: readonly string[]; gitleaks: readonly string[] } | void;
+  verifyScrubbers(): Promise<VerifiedScrubbers | void> | VerifiedScrubbers | void;
   loadHistory(sourceIds: readonly string[], authorization: { confirmed: true; scrubbersVerified: true }): Promise<HistoryChunk[]>;
   scan: Omit<ScanOptions<IncidentManifest>, "publish">;
   installBindings(guards: readonly Guard[], environmentIds: readonly string[]): Promise<void> | void;
@@ -293,7 +310,7 @@ export class OnboardingCoordinator {
   async scan(): Promise<OnboardingSnapshot> {
     if (this.#phase !== "ready-to-scan" && this.#phase !== "paused") this.#expect("ready-to-scan");
     if (!this.#environmentConfirmed || !this.#consented) throw new Error("Explicit environment confirmation and privacy consent are required before scanning.");
-    let verifiedScrubbers: { presidio: readonly string[]; gitleaks: readonly string[] } | void;
+    let verifiedScrubbers: VerifiedScrubbers | void;
     try {
       verifiedScrubbers = await this.options.verifyScrubbers();
     } catch {
@@ -313,10 +330,7 @@ export class OnboardingCoordinator {
       },
       {
         ...this.options.scan,
-        ...(verifiedScrubbers ? {
-          presidioCommand: verifiedScrubbers.presidio,
-          gitleaksCommand: verifiedScrubbers.gitleaks,
-        } : {}),
+        ...(verifiedScrubbers ? scrubberScanOptions(verifiedScrubbers) : {}),
         modelPass: async (candidates, semanticContext) => {
           const incidents = await this.options.scan.modelPass(candidates, semanticContext);
           assertSafeIncidents(incidents);

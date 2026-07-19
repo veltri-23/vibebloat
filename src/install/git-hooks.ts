@@ -1,9 +1,27 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { applyAtomicFilePlans, type AtomicFilePlan } from "./atomic-files";
+import { cliSelfCommand } from "../self-command";
 
 const start = "# vibebloat:start";
 const end = "# vibebloat:end";
+
+function quoteArgument(argument: string): string {
+  // Git hooks are /bin/sh scripts even on Windows, where a backslash is an
+  // escape character. Git accepts forward slashes on every platform.
+  const normalized = argument.replaceAll("\\", "/");
+  return /[\s"']/.test(normalized) ? `"${normalized.replace(/"/g, '\\"')}"` : normalized;
+}
+
+/**
+ * Builds the hook line from the running executable rather than a bare
+ * `vibebloat` on PATH. A bare name fails every commit and push in the repo on
+ * any machine without a global install, which is a hard break in the user's
+ * own work caused by installing us.
+ */
+export function gitHookCommandLine(hook: GitHookName, selfCommand: readonly string[] = cliSelfCommand()): string {
+  return [...selfCommand, "git-hook", hook].map(quoteArgument).join(" ");
+}
 
 export type GitHookName = "pre-commit" | "pre-push";
 

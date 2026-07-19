@@ -48,8 +48,10 @@ test("install creates Claude JSON and Codex TOML hooks after consent", () => {
   expect(codex).toContain("vibebloat hook --agent=codex");
   const preCommit = join(repo, ".git", "hooks", "pre-commit");
   const prePush = join(repo, ".git", "hooks", "pre-push");
-  expect(readFileSync(preCommit, "utf8")).toContain("vibebloat git-hook pre-commit");
-  expect(readFileSync(prePush, "utf8")).toContain("vibebloat git-hook pre-push");
+  // Must invoke this executable; a bare name on PATH breaks every commit.
+  expect(readFileSync(preCommit, "utf8")).toContain("git-hook pre-commit");
+  expect(readFileSync(preCommit, "utf8")).not.toMatch(/^vibebloat git-hook/m);
+  expect(readFileSync(prePush, "utf8")).toContain("git-hook pre-push");
   if (process.platform !== "win32") expect(statSync(preCommit).mode & 0o111).not.toBe(0);
   expect(existsSync(join(repo, ".vibebloat", "receipts", "fs-guard.json"))).toBeFalse();
 

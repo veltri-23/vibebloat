@@ -14,7 +14,7 @@ import { canonicalGuardId, gitCheckoutDiscardGuard, gitCleanForceGuard, gitReset
 import { formatGuardRuntimeFailure, hookResponseForVerdict, runPreToolUse } from "./hooks";
 import { match } from "./match";
 import { closeWatcherOnSignals, fsGuardReceiptPath, hasUnenforceableFileGuard, inspectPersistentFsGuard, launchPersistentFsGuard, stopPersistentFsGuard, waitForFsGuardLaunchReceipt, watchFsGuardStopRequests, watchGuardedWrites } from "./install/fs-guard";
-import { discoverCurrentRepoGitHookPaths, installCurrentRepoGitHooks, planGitHook, type GitHookName } from "./install/git-hooks";
+import { discoverCurrentRepoGitHookPaths, gitHookCommandLine, installCurrentRepoGitHooks, planGitHook, type GitHookName } from "./install/git-hooks";
 import { installNativeHooks } from "./install/orchestrator";
 import { installHermesHook, preflightHermesHook } from "./install/hermes";
 import { installOnboardingBindings, readOnboardingBindingReceipt } from "./install/onboarding-bindings";
@@ -53,6 +53,7 @@ import { allowOnce, consumeAllowedOnce } from "./runtime/override";
 import { parseGuard } from "./schema";
 import { executeCommand } from "./scrub/command";
 import { ControlledScrubbersUnavailableError, resolveControlledScrubberCommands } from "./scrub/controlled-release";
+import { resolveScrubbers } from "./scrub/resolve";
 import { createLocalOnlySink } from "./scrub/local-sink";
 import { readLocalStats } from "./stats/local";
 import { applyPull, fetchAndPlanPull, GuardSyncError, type GuardSyncDiff } from "./sync";
@@ -62,8 +63,8 @@ import { formatUpdateCommandFailure, formatUpdateCommandResult, parseUpdateArgum
 
 const guards: Guard[] = [gitStashUntrackedGuard, mcpConfigWrongFileGuard, gitResetHardGuard, gitCheckoutDiscardGuard, gitCleanForceGuard, npxMcpHangGuard];
 const gitHookCommands = {
-  "pre-commit": "vibebloat git-hook pre-commit",
-  "pre-push": "vibebloat git-hook pre-push",
+  "pre-commit": gitHookCommandLine("pre-commit"),
+  "pre-push": gitHookCommandLine("pre-push"),
 } as const;
 const guardIdPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const effectGateFallback: Record<EffectGateId, string> = {
@@ -653,7 +654,10 @@ function createProductionOnboardingCoordinator(
         })),
       };
     },
-    verifyScrubbers: () => resolveControlledScrubberCommands(),
+    verifyScrubbers: () => {
+      const resolved = resolveScrubbers();
+      return { presidio: resolved.presidio, gitleaks: resolved.gitleaks };
+    },
     loadHistory: async (sourceIds, authorization) => historyCatalog().loadConfirmed({
       ...authorization,
       sourceIds: sourceIds as Array<"claude-code" | "codex" | "hermes">,
@@ -698,7 +702,7 @@ async function runProductionReturningScan(
   if (sourceIds.some((id) => !available.has(id as "claude-code" | "codex" | "hermes"))) {
     throw new Error("Returning scan cursor cannot be used because a previously selected history source is unavailable.");
   }
-  const scrubbers = resolveControlledScrubberCommands();
+  const scrubbers = resolveScrubbers();
   let incidents: IncidentManifest[] = [];
   const scan = await scanIncrementalHistory({
     directory: join(home, "returning-scan"),
@@ -708,8 +712,10 @@ async function runProductionReturningScan(
       sourceIds: sourceIds as Array<"claude-code" | "codex" | "hermes">,
     }),
     scan: {
-      presidioCommand: scrubbers.presidio,
-      gitleaksCommand: scrubbers.gitleaks,
+      presidio: scrubbers.presidio,
+      gitleaks: scrubbers.gitleaks,
+      presidioCommand: [],
+      gitleaksCommand: [],
       localSink: createLocalOnlySink(join(home, "failed-ingest")),
       semantic: {
         repoRoot: resolve(process.cwd()),
@@ -1428,11 +1434,11 @@ if (mode === "scan") {
     process.exit(1);
   }
   if (existsSync(historyPath) && lstatSync(historyPath).isDirectory()) {
-    process.stderr.write("WHAT failed: scan blocked before history read.\nWHY: Verified package-controlled scrubber assets are unavailable.\nFIX: install a signed VibeBloat release, then rerun vibebloat scan <history.json>\n");
+    process.stderr.write("WHAT failed: scan blocked before history read.\nWHY: the history path is a directory, not a JSON history file.\nFIX: vibebloat scan <history.json>\n");
     process.exit(1);
   }
   try {
-    const scrubbers = resolveControlledScrubberCommands();
+    const scrubbers = resolveScrubbers();
     const modelCommand = modelCommandFromEnvironment();
     const parsed: unknown = JSON.parse(readFileSync(historyPath, "utf8"));
     if (!Array.isArray(parsed) || !parsed.every(isHistoryChunk)) throw new Error("history file must contain valid history chunks");
@@ -1441,8 +1447,10 @@ if (mode === "scan") {
     let candidateCount = 0;
     let incidents: IncidentManifest[] = [];
     const result = await scanHistory(parsed, {
-      presidioCommand: scrubbers.presidio,
-      gitleaksCommand: scrubbers.gitleaks,
+      presidio: scrubbers.presidio,
+      gitleaks: scrubbers.gitleaks,
+      presidioCommand: [],
+      gitleaksCommand: [],
       localSink: createLocalOnlySink(join(scanHome, "failed-ingest")),
       semantic: {
         repoRoot: resolve(process.cwd()),
