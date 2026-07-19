@@ -47,5 +47,7 @@ export function resolveScrubbers(options: ResolveScrubberOptions = {}): Resolved
 export function scrubberTierNotice(resolved: ResolvedScrubbers): string {
   return resolved.tier === "signed"
     ? "Scrubbing with the signed VibeBloat release."
-    : "Scrubbing in-process with the built-in scrubber. History never leaves this machine; ingest halts if a secret survives.";
+    // Deliberately does not promise every secret is caught: this tier is a
+    // pattern and entropy scrubber, not Presidio's full detector set.
+    : "Scrubbing in-process with the built-in scrubber: known key formats, credentials in URLs, and high-entropy strings are removed before anything reaches a model, and ingest halts if a known secret survives. Only the mined rule is ever shared, never raw history.";
 }

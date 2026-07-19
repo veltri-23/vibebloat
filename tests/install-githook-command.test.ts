@@ -12,8 +12,17 @@ test("hook command invokes this executable, not a bare name on PATH", () => {
 test("quotes paths with spaces and uses sh-safe forward slashes", () => {
   const line = gitHookCommandLine("pre-push", ["C:\\Program Files\\bun\\bun.exe", "D:\\my repo\\src\\cli.ts"]);
   // Hooks run under /bin/sh even on Windows, where a backslash escapes.
-  expect(line).toBe('"C:/Program Files/bun/bun.exe" "D:/my repo/src/cli.ts" git-hook pre-push');
+  expect(line).toBe("'C:/Program Files/bun/bun.exe' 'D:/my repo/src/cli.ts' git-hook pre-push");
   expect(line).not.toContain("\\");
+});
+
+test("neutralizes shell metacharacters in the executable path", () => {
+  // A username containing $ or a backtick would otherwise expand and break
+  // every commit in the repo.
+  const line = gitHookCommandLine("pre-commit", ["C:\\Users\\a$USER\\node.exe", "C:\\p`whoami`\\cli.ts"]);
+  expect(line).toBe("'C:/Users/a$USER/node.exe' 'C:/p`whoami`/cli.ts' git-hook pre-commit");
+  const quoted = gitHookCommandLine("pre-commit", ["/bin/it's/node"]);
+  expect(quoted).toBe("'/bin/it'\\''s/node' git-hook pre-commit");
 });
 
 test("supports a standalone binary with no script argument", () => {

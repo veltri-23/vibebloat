@@ -25,21 +25,36 @@ export function shannonEntropy(value: string): number {
   return entropy;
 }
 
-const namedPatterns: Array<{ name: string; re: RegExp; replace: string }> = [
-  { name: "bearer", re: /Bearer\s+\S+/gi, replace: "Bearer <redacted>" },
+/** Keywords whose adjacent value is a credential. */
+const secretKeyword = "(?:password|passwd|pwd|pass|secret|client[_-]?secret|api[_-]?key|access[_-]?key|auth[_-]?token|token)";
+
+/** Keeps the final path segment: the model still needs to know WHICH file an incident touched. */
+function redactPathKeepingTail(match: string, separator: string): string {
+  const segments = match.split(/[\\/]+/).filter(Boolean);
+  const tail = segments.at(-1);
+  return tail ? `<path>${separator}${tail}` : "<path>";
+}
+
+const namedPatterns: Array<{ name: string; re: RegExp; replace: string | ((match: string) => string) }> = [
+  // Credentials inside connection strings carry no keyword and are usually
+  // short enough to slip under the entropy floor.
+  { name: "uri_credentials", re: /\b([a-z][a-z0-9+.-]*:\/\/)[^\s:@/]+:[^\s@/]+@/gi, replace: "$1<redacted-credentials>@" },
+  // Keeps the scheme so "Bearer <redacted>" stays the shared convention with
+  // gitleaks.ts and the checkpoint validator in ingest/scan.ts.
+  { name: "bearer", re: /\b(Bearer|Basic|Token)\s+[A-Za-z0-9._~+/=-]{8,}/gi, replace: "$1 <redacted>" },
   {
     name: "provider_key",
     re: /\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{20,}|sk-ant-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}|glpat-[A-Za-z0-9_-]{20,})\b/g,
     replace: "<redacted-key>",
   },
-  { name: "api_key", re: /\bapi[_-]?key\s*[:=]\s*\S+/gi, replace: "api_key=<redacted>" },
-  { name: "password", re: /\bpassword\s*[:=]\s*\S+/gi, replace: "password=<redacted>" },
-  { name: "token", re: /\btoken\s*[:=]\s*\S+/gi, replace: "token=<redacted>" },
-  { name: "secret", re: /\bsecret\s*[:=]\s*\S+/gi, replace: "secret=<redacted>" },
-  { name: "private_key_block", re: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, replace: "<redacted-private-key>" },
+  { name: "keyword_secret", re: new RegExp(`\\b${secretKeyword}\\s*[:=]\\s*\\S+`, "gi"), replace: "<redacted-secret>" },
+  { name: "uuid_token", re: /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, replace: "<redacted-uuid>" },
+  // Truncated PEM blocks are common in chat logs, so END is optional.
+  { name: "private_key_block", re: /-----BEGIN [A-Z ]*PRIVATE KEY-----(?:[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----)?/g, replace: "<redacted-private-key>" },
   { name: "email", re: /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, replace: "<redacted-email>" },
-  { name: "absolute_path", re: /\b[A-Z]:\\[^\s"'`<>|]+/gi, replace: "<absolute-path>" },
-  { name: "absolute_path_unix", re: /(^|[\s("'`])(?:\/[\w.\-]+)+\/?/g, replace: "$1<absolute-path>" },
+  { name: "absolute_path", re: /\b[A-Z]:[\\/][^\s"'`<>|]+/gi, replace: (match) => redactPathKeepingTail(match, "\\") },
+  // Two or more segments, so slash commands (/ship) are not mistaken for paths.
+  { name: "absolute_path_unix", re: /(?<=^|[\s("'`])(?:\/[\w.\-]+){2,}\/?/g, replace: (match) => redactPathKeepingTail(match, "/") },
 ];
 
 /**
@@ -47,7 +62,8 @@ const namedPatterns: Array<{ name: string; re: RegExp; replace: string }> = [
  * characters. Requires mixed case or digits/symbols so ordinary long words are
  * never scored.
  */
-const entropyCandidate = /\b(?=[A-Za-z0-9+/=_-]*[0-9+/=_-])(?=[A-Za-z0-9+/=_-]*[A-Za-z])[A-Za-z0-9+/=_-]{24,}\b/g;
+// Excludes "/" so URLs and paths are not swallowed as one long candidate.
+const entropyCandidate = /\b(?=[A-Za-z0-9+=_-]*[0-9+=_-])(?=[A-Za-z0-9+=_-]*[A-Za-z])[A-Za-z0-9+=_-]{24,}\b/g;
 const entropyThresholdBitsPerChar = 3.5;
 
 export function builtinRedact(text: string): RedactionResult {
@@ -58,7 +74,9 @@ export function builtinRedact(text: string): RedactionResult {
     const matches = cleaned.match(pattern.re);
     if (matches?.length) {
       findings.push({ name: pattern.name, count: matches.length });
-      cleaned = cleaned.replace(pattern.re, pattern.replace);
+      cleaned = typeof pattern.replace === "function"
+        ? cleaned.replace(pattern.re, pattern.replace)
+        : cleaned.replace(pattern.re, pattern.replace);
     }
   }
 
@@ -73,8 +91,20 @@ export function builtinRedact(text: string): RedactionResult {
   return { payload: cleaned, findings };
 }
 
-/** Secrets that must never survive redaction. Presence after scrubbing halts ingest. */
-const survivingSecret = /\bBearer\s+(?!<redacted>)\S+|\b(?:gh[pousr]_|github_pat_|sk-|xox[baprs]-|AKIA)[A-Za-z0-9_-]{16,}|-----BEGIN [A-Z ]*PRIVATE KEY-----/;
+/**
+ * Independent second pass. This must be a BROADER net than the redactor, never
+ * a subset of it — a check that only restates the redactor's own patterns can
+ * catch redactor bugs but never redactor gaps, and gaps pass silently to the
+ * model. Anything matching here after redaction halts ingest.
+ */
+const survivingSecret = new RegExp([
+  `\\b(?:Bearer|Basic|Token)\\s+(?!<redacted)[A-Za-z0-9._~+/=-]{8,}`,
+  `\\b[a-z][a-z0-9+.-]*:\\/\\/[^\\s:@/]+:(?!<redacted)[^\\s@/]+@`,
+  `\\b(?:gh[pousr]_|github_pat_|sk-|xox[baprs]-|AKIA|glpat-|AIza)[A-Za-z0-9_-]{16,}`,
+  `-----BEGIN [A-Z ]*PRIVATE KEY-----`,
+  `\\b${secretKeyword}\\s*[:=]\\s*(?!<redacted)\\S+`,
+  `\\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\b`,
+].join("|"), "i");
 
 export interface BuiltinScrubberOptions {
   redact?: (text: string) => RedactionResult;

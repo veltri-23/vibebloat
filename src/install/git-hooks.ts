@@ -10,7 +10,9 @@ function quoteArgument(argument: string): string {
   // Git hooks are /bin/sh scripts even on Windows, where a backslash is an
   // escape character. Git accepts forward slashes on every platform.
   const normalized = argument.replaceAll("\\", "/");
-  return /[\s"']/.test(normalized) ? `"${normalized.replace(/"/g, '\\"')}"` : normalized;
+  // Single quotes, because inside double quotes sh expands $VAR and backticks:
+  // a Windows username containing "$" would otherwise break every commit.
+  return /^[A-Za-z0-9_./:-]+$/.test(normalized) ? normalized : `'${normalized.replaceAll("'", `'\\''`)}'`;
 }
 
 /**
