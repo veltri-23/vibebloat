@@ -2,8 +2,9 @@ import { compileGuard } from "../compiler/codex-fill";
 import { syntheticEvent } from "../compiler/synthetic-event";
 import { rankIncidents, type IncidentManifest } from "../ingest/rank";
 import { prefilterCandidates } from "../ingest/prefilter";
-import { match } from "../match";
-import { renderGuardReceipt } from "../block-receipt";
+import { Runtime } from "../runtime";
+import { runPreToolUse } from "../hooks";
+
 import { builtinPresidioScrubber, builtinGitleaksScrubber } from "../scrub/builtin";
 import type { HistoryChunk } from "../ingest/types";
 import { sampleHistory, samplePrecomputedIncidents, SAMPLE_LABEL } from "./history";
@@ -13,11 +14,41 @@ export interface DemoStep {
   detail: string;
 }
 
+export interface DemoBlock {
+  /** The command an agent tried, exactly as a hook would receive it. */
+  command: string;
+  /** Exit code the agent's hook process receives. 2 means blocked. */
+  exitCode: number;
+  receipt: string;
+  /** The same guard's verdict delivered to a different agent, when applicable. */
+  crossAgent?: string;
+}
+
+export interface DemoAllowed {
+  command: string;
+  exitCode: number;
+}
+
 export interface DemoResult {
   steps: DemoStep[];
   receipts: string[];
+  blocks: DemoBlock[];
+  /** Safe variants proving the guard is scoped, not a blanket ban. */
+  allowed: DemoAllowed[];
   mined: "model" | "precomputed";
   incidents: IncidentManifest[];
+}
+
+/**
+ * The same command minus the flag that made it destructive, to show the guard
+ * is precise rather than a blanket ban. Positional arguments are kept, so
+ * `docker compose down -v` demonstrates against `docker compose down` rather
+ * than a bare `docker compose` nobody would type.
+ */
+function safeVariant(command: string | undefined, args: readonly string[] | undefined): string | undefined {
+  if (!command || !args?.length) return undefined;
+  const positional = args.filter((argument) => !argument.startsWith("-"));
+  return [command, ...positional].join(" ");
 }
 
 export type DemoMiner = (candidates: HistoryChunk[]) => Promise<IncidentManifest[]>;
@@ -73,15 +104,49 @@ export async function runSampleDemo(miner?: DemoMiner): Promise<DemoResult> {
   }
 
   const ranked = rankIncidents(incidents);
+  const guards = ranked.map((incident) => compileGuard(incident, incident.severity >= 4 ? "high" : "low"));
   const receipts: string[] = [];
-  for (const incident of ranked) {
-    const guard = compileGuard(incident, incident.severity >= 4 ? "high" : "low");
-    const verdict = match(guard, syntheticEvent(guard));
-    if (!verdict.fired) continue;
-    const receipt = renderGuardReceipt(guard, verdict.reason ?? guard.action.message);
-    if (receipt) receipts.push(receipt);
-  }
-  steps.push({ label: "prove", detail: `${receipts.length} ${receipts.length === 1 ? "guard blocks" : "guards block"} the exact command that caused the incident` });
+  const blocks: DemoBlock[] = [];
+  const allowed: DemoAllowed[] = [];
 
-  return { steps, receipts, mined, incidents: ranked };
+  for (const [index, guard] of guards.entries()) {
+    const event = syntheticEvent(guard);
+    // The real hook entry point, so the exit code shown is the one an agent
+    // actually receives -- not a rendering of what it might have been.
+    const payload = event.chokepoint === "shell"
+      ? { tool_input: { command: event.command } }
+      : { tool_input: { file_path: event.path } };
+    const response = runPreToolUse(guards, payload, new Runtime());
+    if (response.exitCode !== 2 || !response.stderr) continue;
+
+    const command = event.chokepoint === "shell" ? event.command! : `write ${event.path}`;
+    receipts.push(response.stderr);
+    blocks.push({
+      command,
+      exitCode: response.exitCode,
+      receipt: response.stderr,
+      // Codex takes a structured deny instead of exit 2: one guard, two wire
+      // formats, which is the cross-agent claim made concrete.
+      ...(index === 0 ? { crossAgent: JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "deny",
+          permissionDecisionReason: response.stderr,
+        },
+      }) } : {}),
+    });
+
+    const safe = safeVariant(guard.match.command, guard.match.argsContains ?? guard.match.argsAnyOf);
+    if (safe && safe !== command) {
+      const safeResponse = runPreToolUse(guards, { tool_input: { command: safe } }, new Runtime());
+      if (safeResponse.exitCode === 0) allowed.push({ command: safe, exitCode: 0 });
+    }
+  }
+
+  steps.push({ label: "prove", detail: `${blocks.length} ${blocks.length === 1 ? "guard blocks" : "guards block"} the exact command that caused the incident, with exit code 2` });
+  if (allowed.length > 0) {
+    steps.push({ label: "allow", detail: `${allowed.length} safe ${allowed.length === 1 ? "variant" : "variants"} of the same ${allowed.length === 1 ? "command runs" : "commands run"} untouched` });
+  }
+
+  return { steps, receipts, blocks, allowed, mined, incidents: ranked };
 }

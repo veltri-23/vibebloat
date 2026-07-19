@@ -917,7 +917,22 @@ if (mode === "demo") {
       "",
       ...result.steps.map((step) => `${step.label.padEnd(10)} ${step.detail}`),
       "",
-      ...result.receipts.flatMap((receipt) => [receipt, ""]),
+      ...result.blocks.flatMap((block) => [
+        `$ ${block.command}`,
+        block.receipt,
+        `exit ${block.exitCode} — the agent never ran it.`,
+        "",
+      ]),
+      ...(result.allowed.length > 0 ? [
+        "Precise, not blanket. The safe form of the same command still runs:",
+        ...result.allowed.map((allowed) => `$ ${allowed.command}   exit ${allowed.exitCode}`),
+        "",
+      ] : []),
+      ...(result.blocks[0]?.crossAgent ? [
+        "Same guard, a different agent. Codex gets a structured deny instead of exit 2:",
+        result.blocks[0].crossAgent,
+        "",
+      ] : []),
       result.mined === "model"
         ? "Those findings were mined live by your model, from the sample history above."
         : "Those findings were precomputed for the sample. Configure a model and rerun to mine them live.",
