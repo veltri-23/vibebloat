@@ -9,16 +9,26 @@ cat <<'EOF'
   Vibebloat — try it here
 =============================================
 
-Quick start:
+Start here. No setup, no API key, about ten seconds:
 
+  bun src/cli.ts demo
+
+That runs the real pipeline over a labelled sample history and shows the
+guards it produces blocking the exact commands that caused each incident.
+A fresh Codespace has no agent history of its own, so the sample stands in
+for yours.
+
+Then, on a machine that does have history:
+
+  bun src/cli.ts init --pretty     # walk onboarding against your own sessions
   bun src/cli.ts doctor            # health check
-  bun src/cli.ts init --pretty     # walk onboarding (warm prose)
 
-For the model pass, set OPENAI_API_KEY in your Codespace secrets, or:
+To mine the sample live instead of using its precomputed findings, set
+OPENAI_API_KEY in your Codespace secrets, or install a local model:
 
   curl -fsSL https://ollama.com/install.sh | sh
   ollama pull llama3.1:8b
 
-To wipe: rm -rf ~/.vibebloat ~/fake-claude ~/fake-codex ~/fake-hermes
+To wipe anything Vibebloat wrote: rm -rf ~/.vibebloat
 =============================================
 EOF
