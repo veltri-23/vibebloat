@@ -41,7 +41,7 @@ export class Runtime {
       if (guard.binds?.length && context.agent && !guard.binds.includes(context.agent)) continue;
       const verdict = match(guard, normalizedEvent);
       if (!verdict.fired) continue;
-      if (this.overrides.delete(guardId) || compatiblePersistedGuardIds(guardId).some((id) => this.consumePersistedOverride?.(id))) return { fired: false };
+      if (this.overrides.delete(guardId) || compatiblePersistedGuardIds(guardId).some((id) => this.consumePersistedOverride?.(id))) continue;
       const outcome = runAction(guard, normalizedEvent, context);
       let auditWarnings: LocalWarning[] = [];
       try {

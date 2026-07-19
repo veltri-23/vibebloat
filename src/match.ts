@@ -11,8 +11,27 @@ interface ShellCommand {
   args: string[];
 }
 
+const gitGlobalOptionsWithValue = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"]);
+const gitGlobalOptionsBare = new Set(["-p", "-P", "--paginate", "--no-pager", "--bare", "--no-replace-objects", "--literal-pathspecs", "--no-optional-locks"]);
+
+function stripGitGlobalOptions(args: string[]): void {
+  while (args.length) {
+    const first = args[0];
+    if (gitGlobalOptionsWithValue.has(first)) { args.splice(0, 2); continue; }
+    if (gitGlobalOptionsBare.has(first) || [...gitGlobalOptionsWithValue].some((option) => first.startsWith(`${option}=`))) { args.splice(0, 1); continue; }
+    break;
+  }
+}
+
+function argMatches(args: readonly string[], wanted: string): boolean {
+  if (args.includes(wanted)) return true;
+  if (!/^-[A-Za-z]$/.test(wanted)) return false;
+  const letter = wanted[1];
+  return args.some((argument) => /^-[A-Za-z]+$/.test(argument) && argument.includes(letter));
+}
+
 function normalizeBinary(value: string): string {
-  return value.replace(/^.*[\\/]/, "");
+  return value.replace(/^.*[\\/]/, "").replace(/\.(exe|cmd|bat)$/i, "");
 }
 
 function normalizeCommand(command: string, variables: Record<string, string> = {}): string {
@@ -68,6 +87,7 @@ function hasObviousSyntaxError(command: string): boolean {
     const character = command[index];
     if (character === "\\") { index += 1; continue; }
     if (quote) { if (character === quote) quote = undefined; continue; }
+    if (character === "#" && (index === 0 || /\s/.test(command[index - 1]))) break;
     if (character === "'" || character === '"') { quote = character; continue; }
     if (character === "$" && command[index + 1] === "(") { substitutions += 1; index += 1; continue; }
     if (character === ")" && substitutions > 0) substitutions -= 1;
@@ -148,8 +168,9 @@ export function match(guard: Guard, event: Event): Verdict {
     if (!hasCommandKeyword(normalizedCommand, expected[0])) return { fired: false };
     for (const candidate of parsedCommands ?? shellCommands(normalizedCommand)) {
       if (candidate.binary === "git" && candidate.args[0]) {
+        stripGitGlobalOptions(candidate.args);
         if (event.aliasResolutionFailed) throw new Error("Git alias normalization could not read local configuration.");
-        const alias = event.aliases?.[candidate.args[0]];
+        const alias = candidate.args[0] ? event.aliases?.[candidate.args[0]] : undefined;
         if (alias) {
           if (alias.trimStart().startsWith("!")) throw new Error("Git shell aliases cannot be normalized safely.");
           const expansion = tokenize(alias);
@@ -158,9 +179,10 @@ export function match(guard: Guard, event: Event): Verdict {
         }
       }
       if (candidate.binary !== expected[0] || candidate.args[0] !== expected[1]) continue;
-      if (candidate.args.includes("--")) continue;
-      const containsRequiredArgs = !guard.match.argsContains || guard.match.argsContains.every((argument) => candidate.args.includes(argument));
-      const containsAnyRiskyArg = !guard.match.argsAnyOf || guard.match.argsAnyOf.some((argument) => candidate.args.includes(argument));
+      const doubleDash = candidate.args.indexOf("--");
+      if (candidate.binary === "git" && doubleDash >= 0 && doubleDash < candidate.args.length - 1) continue;
+      const containsRequiredArgs = !guard.match.argsContains || guard.match.argsContains.every((argument) => argMatches(candidate.args, argument));
+      const containsAnyRiskyArg = !guard.match.argsAnyOf || guard.match.argsAnyOf.some((argument) => argMatches(candidate.args, argument));
       if (containsRequiredArgs && containsAnyRiskyArg) {
         return { fired: true, guardId: guard.id, reason: guard.action.message };
       }

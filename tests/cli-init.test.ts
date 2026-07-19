@@ -8,7 +8,16 @@ afterEach(() => { for (const directory of temporaryDirectories.splice(0)) rmSync
 
 function init(home: string, ...args: string[]) {
   return Bun.spawnSync(["bun", "src/cli.ts", "init", ...args], {
-    cwd: import.meta.dir + "/..", env: { ...process.env, VIBEBLOAT_HOME: home }, stdout: "pipe", stderr: "pipe",
+    cwd: import.meta.dir + "/..",
+    env: {
+      ...process.env,
+      VIBEBLOAT_HOME: home,
+      CLAUDE_CONFIG_DIR: join(home, "claude"),
+      CODEX_HOME: join(home, "codex"),
+      HERMES_HOME: join(home, "hermes"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
   });
 }
 
@@ -68,7 +77,7 @@ test("unknown mode keeps the three-line error", () => {
   temporaryDirectories.push(home);
   const result = invoke(home, "unknown");
   expect(result.exitCode).toBe(1);
-  expect(result.stderr.toString()).toBe("WHAT failed: expected allow, compile, eval, hook, git-hook, disable, doctor, init, onboard, install, uninstall, update, scan, stats, sync, watch, daily, rules, or email.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
+  expect(result.stderr.toString()).toBe("WHAT failed: expected allow, compile, eval, hook, git-hook, disable, doctor, init, onboard, install, uninstall, update, scan, star, stats, sync, watch, daily, rules, or email.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
 });
 
 test("F0 consent preflights helpers but defers writes until selected binding install", () => {
