@@ -47,15 +47,29 @@ export async function runSampleDemo(miner?: DemoMiner): Promise<DemoResult> {
   const candidates = prefilterCandidates(scrubbed);
   steps.push({ label: "prefilter", detail: `${candidates.length} of ${scrubbed.length} messages carry an incident signal` });
 
-  let incidents: IncidentManifest[];
+  let incidents: IncidentManifest[] = [];
   let mined: DemoResult["mined"] = "precomputed";
+  let minerError: string | undefined;
   if (miner) {
-    incidents = await miner(candidates);
-    mined = "model";
+    try {
+      incidents = await miner(candidates);
+      mined = "model";
+    } catch (error) {
+      // A stale key or an offline endpoint must not take the demo down with
+      // it: showing the loop is the whole point of this command.
+      minerError = error instanceof Error ? error.message : "model command failed";
+    }
+  }
+  if (mined === "model") {
     steps.push({ label: "mine", detail: `model found ${incidents.length} repeated ${incidents.length === 1 ? "mistake" : "mistakes"}` });
   } else {
     incidents = samplePrecomputedIncidents();
-    steps.push({ label: "mine", detail: `no model configured, using the sample's ${incidents.length} precomputed findings` });
+    steps.push({
+      label: "mine",
+      detail: minerError
+        ? `model failed (${minerError}), using the sample's ${incidents.length} precomputed findings`
+        : `no model configured, using the sample's ${incidents.length} precomputed findings`,
+    });
   }
 
   const ranked = rankIncidents(incidents);

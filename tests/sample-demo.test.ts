@@ -45,3 +45,15 @@ test("the miner only ever sees scrubbed, prefiltered content", async () => {
     return [];
   });
 });
+
+test("a model that fails at runtime falls back instead of killing the demo", async () => {
+  // A stale API key is the common case for someone trying this quickly, and
+  // the demo exists precisely so that person still sees the loop.
+  const result = await runSampleDemo(async () => { throw new Error("model command failed"); });
+  expect(result.mined).toBe("precomputed");
+  expect(result.receipts.length).toBeGreaterThanOrEqual(3);
+  const mineStep = result.steps.find(({ label }) => label === "mine")!;
+  expect(mineStep.detail).toContain("precomputed");
+  // It must say the model was tried and failed, not pretend none was set.
+  expect(mineStep.detail).toMatch(/model/i);
+});
