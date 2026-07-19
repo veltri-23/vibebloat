@@ -3,6 +3,7 @@ import { compileGuard } from "../src/compiler/codex-fill";
 import { renderGuardReceipt } from "../src/block-receipt";
 import { match } from "../src/match";
 import { syntheticEvent } from "../src/compiler/synthetic-event";
+import { assertSafeIncident } from "../src/onboarding/coordinator";
 import type { IncidentManifest } from "../src/ingest/rank";
 
 const stashIncident: IncidentManifest = {
@@ -21,7 +22,9 @@ const stashIncident: IncidentManifest = {
 
 test("a mined guard blocks the dangerous form, not the whole command", () => {
   const guard = compileGuard(stashIncident, "high");
-  expect(guard.match.argsContains).toEqual(["-u"]);
+  // A single flag widens to every spelling of the same operation.
+  expect(guard.match.argsAnyOf).toEqual(["-u", "--include-untracked"]);
+  expect(match(guard, { chokepoint: "shell", command: "git stash --include-untracked" }).fired).toBe(true);
 
   // The incident: destructive.
   expect(match(guard, { chokepoint: "shell", command: "git stash -u" }).fired).toBe(true);
@@ -71,4 +74,22 @@ test("a guard requiring args can prove itself at compile time", () => {
   // is rejected before it can ever be installed.
   expect(event.command).toContain("-u");
   expect(match(guard, event).fired).toBe(true);
+});
+
+test("an over-long or malformed args list is rejected, never silently dropped", () => {
+  // Dropping the field reverts the guard to a bare-command match, which is the
+  // "blocks every git stash" bug this whole change exists to remove.
+  const tooMany = { ...stashIncident, args_contains: Array.from({ length: 20 }, () => "-u") };
+  expect(() => assertSafeIncident(tooMany)).toThrow();
+
+  const tooLong = { ...stashIncident, args_contains: ["-".repeat(200)] };
+  expect(() => assertSafeIncident(tooLong)).toThrow();
+
+  const notStrings = { ...stashIncident, args_contains: [42] as unknown as string[] };
+  expect(() => assertSafeIncident(notStrings)).toThrow();
+
+  const longRemediation = { ...stashIncident, remediation: "x".repeat(500) };
+  expect(() => assertSafeIncident(longRemediation)).toThrow();
+
+  expect(() => assertSafeIncident(stashIncident)).not.toThrow();
 });

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { gitStashUntrackedGuard } from "../src/guards";
 import { match } from "../src/match";
+import { parseGuard } from "../src/schema";
 import { Runtime } from "../src/runtime";
 import type { Guard } from "../src/types";
 
@@ -92,4 +93,22 @@ describe("override scope", () => {
     const verdict = runtime.evaluate([guard, otherGuard], { chokepoint: "shell", command: "git stash -u" });
     expect(verdict).toMatchObject({ fired: true, guardId: "git-stash-quiet" });
   });
+});
+
+test("a whole-tree pathspec after -- is not a scoped command", () => {
+  const guard = parseGuard({
+    schemaVersion: 1, id: "stash-u", class: "A",
+    provenance: { incident: "i", date: "2026-07-15", source: "s" },
+    match: { chokepoint: "shell", command: "git stash", argsContains: ["-u"] },
+    action: { type: "block", message: "m", override: "o" },
+    confidence: "high", tier: "local", binds: [], enabled: true,
+  });
+
+  // Genuinely scoped to one path: the incident does not apply.
+  expect(match(guard, { chokepoint: "shell", command: "git stash -u -- src/app.ts" }).fired).toBe(false);
+  // "." is the whole working tree, so this is the destructive case wearing a
+  // pathspec as a disguise.
+  for (const command of ["git stash -u -- .", "git stash -u -- ./", "git stash -u -- :/"]) {
+    expect(match(guard, { chokepoint: "shell", command }).fired).toBe(true);
+  }
 });

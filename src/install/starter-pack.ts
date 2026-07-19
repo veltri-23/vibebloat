@@ -56,7 +56,9 @@ const starterGuardValues = [
       date: "2026-07-18",
       source: "vibebloat-starter-pack",
     },
-    match: { chokepoint: "shell", command: "git push", argsContains: ["-f"] },
+    // --force-with-lease is deliberately absent: it is the safe form, and
+    // blocking it would be the false positive that gets the pack turned off.
+    match: { chokepoint: "shell", command: "git push", argsAnyOf: ["-f", "--force"] },
     action: {
       type: "block",
       message: "Preventive rule blocked git push -f. Review remote history before overriding.",

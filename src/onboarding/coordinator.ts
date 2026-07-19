@@ -124,11 +124,33 @@ const embeddedAbsolutePath = /(?:[A-Za-z]:[\\/]|\\\\[^\\\s]+\\|(?:^|[\s"'`])\/(?
 const identifier = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const absolutePath = /^(?:[A-Za-z]:[\\/]|\\\\|\/)/;
 
-function assertSafeIncident(incident: IncidentManifest): void {
+/**
+ * Model-supplied bounds. These are the documented defense, so they belong on
+ * every path into compileGuard -- the onboarding path consumes model output
+ * and previously had none. A violation throws: silently dropping args_contains
+ * would revert the guard to a bare-command match, which is broader than the
+ * incident and blocks legitimate work.
+ */
+const maximumMatchArguments = 8;
+const maximumMatchArgumentLength = 64;
+const maximumRemediationLength = 200;
+
+export function assertSafeIncident(incident: IncidentManifest): void {
   const required = ["incident_id", "class", "chokepoint", "condition", "evidence_refs", "severity", "frequency", "recency"];
   const allowed = new Set([...required, "command", "path", "args_contains", "remediation"]);
   if (required.some((key) => !(key in incident)) || Object.keys(incident).some((key) => !allowed.has(key))) {
     throw new Error("Mined incident has an invalid schema.");
+  }
+  if (incident.args_contains !== undefined) {
+    const args = incident.args_contains;
+    if (!Array.isArray(args) || args.length > maximumMatchArguments
+      || args.some((argument) => typeof argument !== "string" || !argument.length || argument.length > maximumMatchArgumentLength)) {
+      throw new Error("Mined incident has an invalid argument list.");
+    }
+  }
+  if (incident.remediation !== undefined
+    && (typeof incident.remediation !== "string" || incident.remediation.length > maximumRemediationLength)) {
+    throw new Error("Mined incident has an invalid remediation.");
   }
   const serialized = JSON.stringify(incident);
   if (rawSecret.test(serialized)) throw new Error("Mined incident contains unsanitized secret material.");

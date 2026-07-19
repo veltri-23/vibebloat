@@ -2,6 +2,7 @@ import { rankIncidents, type IncidentManifest } from "../ingest/rank";
 import { parseGuard } from "../schema";
 import type { Guard } from "../types";
 import { actionTypeForConfidence } from "./tiering";
+import { widenArgs } from "./flag-synonyms";
 
 /**
  * What the user reads when the guard fires: what happened, dated, and what to
@@ -27,7 +28,9 @@ export function compileGuard(incident: IncidentManifest, confidence: "high" | "l
       ? {
         chokepoint: "shell",
         command: incident.command,
-        ...(incident.args_contains?.length ? { argsContains: [...incident.args_contains] } : {}),
+        // An incident records one spelling of a flag; the guard must cover the
+        // operation, so a rule learned from `-u` also catches its long form.
+        ...widenArgs(incident.command, incident.args_contains),
       }
       : { chokepoint: "file", path: incident.path },
     action: { type: actionType, message, override: `vibebloat allow ${incident.incident_id} --once` },

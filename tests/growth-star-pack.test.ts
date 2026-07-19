@@ -42,13 +42,17 @@ describe("star guard pack", () => {
     const runtime = new Runtime();
     expect(runtime.evaluate(pack, { chokepoint: "shell", command: "git checkout ." })).toMatchObject({ fired: true, blocked: true, guardId: "star-git-checkout-discard" });
     expect(runtime.evaluate(pack, { chokepoint: "shell", command: "git clean -fd" })).toMatchObject({ fired: true, blocked: true, guardId: "star-git-clean-force" });
+    // "." after "--" is the whole working tree, so this discards everything
+    // and must not pass as a scoped command.
+    expect(runtime.evaluate(pack, { chokepoint: "shell", command: "git checkout -- ." })).toMatchObject({ fired: true, blocked: true, guardId: "star-git-checkout-discard" });
     expect(runtime.evaluate(pack, { chokepoint: "file", path: "project/.env" })).toMatchObject({ fired: true, blocked: true, guardId: "star-env-file-confirm" });
   });
 
   test("true negatives stay quiet", () => {
     const pack = starGuardPack();
     const runtime = new Runtime();
-    expect(runtime.evaluate(pack, { chokepoint: "shell", command: "git checkout -- ." })).toMatchObject({ fired: false });
+    // A genuinely scoped checkout restores one file: not the incident.
+    expect(runtime.evaluate(pack, { chokepoint: "shell", command: "git checkout -- src/app.ts" })).toMatchObject({ fired: false });
     expect(runtime.evaluate(pack, { chokepoint: "shell", command: "git checkout feature-branch" })).toMatchObject({ fired: false });
     expect(runtime.evaluate(pack, { chokepoint: "shell", command: "git clean -n" })).toMatchObject({ fired: false });
     expect(runtime.evaluate(pack, { chokepoint: "file", path: "project/example.env" })).toMatchObject({ fired: false });

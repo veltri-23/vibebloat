@@ -37,12 +37,12 @@ import type { UntrustedSemanticContext } from "./ingest/semantic-context";
 import { rankIncidents, type IncidentManifest } from "./ingest/rank";
 import { onboardingGateValues } from "./onboarding/gate-measurements";
 import type { HistoryChunk } from "./ingest/types";
-import { buildChatCompletionsBody, parseModelIncidentOutput, serializeModelCommandInput } from "./mine/model-command-input";
+import { buildChatCompletionsBody, parseModelIncidentOutput, serializeModelCommandInput, usesChatCompletionsWire } from "./mine/model-command-input";
 import { detectRunnerDetails, parentProcessCommand, parseRunnerOverride, type RunnerDetectionSource } from "./onboarding/detect-runner";
 import { answerAssist } from "./onboarding/assist";
 import { validateOnboardingEffectRequirements, type EffectGateId, type OnboardingEffectEvidence } from "./onboarding/effect-requirements";
 import { canonicalGateChoice, gateValues, isGateChoice, type OnboardingContext } from "./onboarding/gates";
-import { OnboardingCoordinator, reviewDecisionForChoice, type GuardReviewDecision, type OnboardingCheckpoint } from "./onboarding/coordinator";
+import { assertSafeIncident, OnboardingCoordinator, reviewDecisionForChoice, type GuardReviewDecision, type OnboardingCheckpoint } from "./onboarding/coordinator";
 import { lookupMarkdownAnswer } from "./onboarding/markdown-help";
 import { readCustomAgentHomes, revokeCustomAgentHomes, saveCustomAgentHome, type CustomAgentHomes } from "./onboarding/custom-agent-homes";
 import { applyOnboardingPreference, modelCommandEnvironmentName, type ModelRoute } from "./onboarding/preferences";
@@ -146,10 +146,6 @@ function runtimeGuards(): Guard[] {
 
 function configText(path: string): string {
   return existsSync(path) ? readFileSync(path, "utf8") : "";
-}
-
-function isChatCompletionsCommand(command: readonly string[]): boolean {
-  return command.some((part) => part.includes("/v1/chat/completions"));
 }
 
 function defaultOpenAiModelCommand(): string[] {
@@ -449,10 +445,8 @@ function parseIncidentManifest(value: unknown): IncidentManifest | undefined {
     chokepoint: incident.chokepoint,
     ...(typeof incident.command === "string" ? { command: incident.command } : {}),
     ...(typeof incident.path === "string" ? { path: incident.path } : {}),
-    ...(Array.isArray(incident.args_contains) && incident.args_contains.every((argument) => typeof argument === "string" && argument.length > 0 && argument.length <= 64)
-      ? { args_contains: incident.args_contains.slice(0, 8) as string[] }
-      : {}),
-    ...(typeof incident.remediation === "string" && incident.remediation.length <= 200 ? { remediation: incident.remediation } : {}),
+    ...(incident.args_contains === undefined ? {} : { args_contains: incident.args_contains as string[] }),
+    ...(incident.remediation === undefined ? {} : { remediation: incident.remediation as string }),
     condition: incident.condition,
     evidence_refs: incident.evidence_refs,
     severity: incident.severity,
@@ -490,6 +484,8 @@ function assertCompilableIncident(incident: IncidentManifest | undefined): asser
   if (guardDirectories().flatMap(loadGuards).some((guard) => canonicalGuardId(guard.id) === canonicalId)) {
     throw new Error("incident id conflicts with an installed guard");
   }
+  // Shared bounds, so a local incident file gets the same limits as model output.
+  assertSafeIncident(incident);
 }
 
 function hasRawBearerToken(value: unknown): boolean {
@@ -504,7 +500,7 @@ async function runModelCommand(
   const serialized = serializeModelCommandInput(candidates, semanticContext);
   // The OpenAI route pipes stdin straight into /v1/chat/completions, which
   // rejects the bare candidates payload; it needs a real request body.
-  const payload = isChatCompletionsCommand(command) ? buildChatCompletionsBody(serialized) : serialized;
+  const payload = usesChatCompletionsWire(command) ? buildChatCompletionsBody(serialized) : serialized;
   const result = await executeCommand(command, payload);
   if (result.exitCode !== 0) throw new Error("model command failed");
   const incidents: unknown = parseModelIncidentOutput(result.stdout);

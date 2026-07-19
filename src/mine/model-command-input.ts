@@ -1,8 +1,34 @@
 import { isUntrustedSemanticContext, type UntrustedSemanticContext } from "../ingest/semantic-context";
 import type { HistoryChunk } from "../ingest/types";
 
-/** Model used when the OpenAI route builds its own request body. */
+/**
+ * Model used when the OpenAI route builds its own request body. Overridable
+ * via VIBEBLOAT_OPENAI_MODEL: a wrong id here would otherwise make the
+ * advertised zero-config OPENAI_API_KEY route fail with no way out.
+ */
 export const DEFAULT_OPENAI_MODEL = "gpt-5.6";
+
+export function openAiModel(environment: Record<string, string | undefined> = process.env): string {
+  return environment.VIBEBLOAT_OPENAI_MODEL?.trim() || DEFAULT_OPENAI_MODEL;
+}
+
+/**
+ * Whether this command speaks the chat-completions wire format and therefore
+ * needs a real request body rather than the raw mining payload.
+ *
+ * Detection is by URL because that is all a command line reveals; any endpoint
+ * it cannot recognize can be declared with VIBEBLOAT_MODEL_WIRE, which wins
+ * over sniffing in both directions.
+ */
+export function usesChatCompletionsWire(
+  command: readonly string[],
+  environment: Record<string, string | undefined> = process.env,
+): boolean {
+  const declared = environment.VIBEBLOAT_MODEL_WIRE?.trim().toLowerCase();
+  if (declared === "chat-completions") return true;
+  if (declared === "raw") return false;
+  return command.some((part) => part.includes("chat/completions"));
+}
 
 /**
  * The mining contract.
@@ -62,7 +88,7 @@ export function serializeModelCommandInput(
  * rejects a bare {"candidates":[...]} payload, so the request body has to be
  * assembled here.
  */
-export function buildChatCompletionsBody(serializedInput: string, model = DEFAULT_OPENAI_MODEL): string {
+export function buildChatCompletionsBody(serializedInput: string, model = openAiModel()): string {
   const parsed = JSON.parse(serializedInput) as { instructions?: string; candidates?: unknown; semantic_context?: unknown };
   const { instructions, ...payload } = parsed;
   return JSON.stringify({

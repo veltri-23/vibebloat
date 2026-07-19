@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { serializeModelCommandInput, buildChatCompletionsBody, parseModelIncidentOutput } from "../src/mine/model-command-input";
+import { serializeModelCommandInput, buildChatCompletionsBody, parseModelIncidentOutput, usesChatCompletionsWire } from "../src/mine/model-command-input";
 import type { HistoryChunk } from "../src/ingest/types";
 
 const candidates: HistoryChunk[] = [
@@ -41,4 +41,28 @@ test("unparseable model output is rejected rather than guessed at", () => {
 
 test("an empty finding is a valid answer", () => {
   expect(parseModelIncidentOutput("[]")).toEqual([]);
+});
+
+test("the OpenAI model id can be overridden without editing code", () => {
+  const body = JSON.parse(buildChatCompletionsBody(serializeModelCommandInput(candidates), "gpt-4.1"));
+  expect(body.model).toBe("gpt-4.1");
+});
+
+test("chat-completions routes are detected on any host or path", () => {
+  for (const url of [
+    "https://api.openai.com/v1/chat/completions",
+    "https://openrouter.ai/api/v1/chat/completions",
+    "http://localhost:8080/chat/completions",
+  ]) {
+    expect(usesChatCompletionsWire(["curl", url], {})).toBe(true);
+  }
+  expect(usesChatCompletionsWire(["ollama", "run", "llama3.1"], {})).toBe(false);
+});
+
+test("an unrecognized endpoint can be told which wire format to use", () => {
+  const command = ["curl", "https://example.test/inference"];
+  expect(usesChatCompletionsWire(command, {})).toBe(false);
+  expect(usesChatCompletionsWire(command, { VIBEBLOAT_MODEL_WIRE: "chat-completions" })).toBe(true);
+  // An explicit raw setting wins over URL sniffing.
+  expect(usesChatCompletionsWire(["curl", "https://api.openai.com/v1/chat/completions"], { VIBEBLOAT_MODEL_WIRE: "raw" })).toBe(false);
 });
