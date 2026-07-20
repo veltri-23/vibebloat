@@ -184,7 +184,11 @@ export function match(guard: Guard, event: Event): Verdict {
           candidate.args.splice(0, 1, ...expansion);
         }
       }
-      if (candidate.binary !== expected[0] || candidate.args[0] !== expected[1]) continue;
+      // A guard command may be a bare binary (grep, python, npx) or a binary
+      // plus subcommand (git stash). Requiring a subcommand meant a bare-binary
+      // guard never fired and failed its own compile-time proof.
+      if (candidate.binary !== expected[0]) continue;
+      if (expected[1] !== undefined && candidate.args[0] !== expected[1]) continue;
       const doubleDash = candidate.args.indexOf("--");
       // A pathspec after "--" normally means the command was scoped to a
       // subset, so the incident does not apply. But ".", "./" and ":/" select
