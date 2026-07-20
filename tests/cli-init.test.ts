@@ -67,7 +67,10 @@ test("no mode opens the initial onboarding gate without setup mutation", () => {
   });
   expect(result.exitCode).toBe(0);
   expect(JSON.parse(result.stdout.toString())).toMatchObject({ gate: "A0", prompt: { question: expect.stringContaining("VibeBloat") } });
-  expect(existsSync(join(home, "onboarding.json"))).toBeFalse();
+  // A0 now persists the empty state on display so a user who quits and
+  // restarts lands on the next gate instead of being re-greeted (audit
+  // finding L11).
+  expect(existsSync(join(home, "onboarding.json"))).toBeTrue();
   expect(existsSync(join(claudeHome, "settings.json"))).toBeFalse();
   expect(existsSync(join(codexHome, "config.toml"))).toBeFalse();
 });

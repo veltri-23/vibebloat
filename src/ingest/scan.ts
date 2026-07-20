@@ -133,6 +133,17 @@ function checkpointIncidents<Incident>(directory: string, identity: string, inci
   validate(incidents);
   if (checkpointSecret.test(JSON.stringify(incidents))) throw new Error("Incident checkpoint contains unsanitized secret material.");
   writeCheckpoint(directory, "incidents", { schemaVersion: 1, stage: "incidents", identity, incidents } satisfies IncidentsCheckpoint<Incident>);
+  // Companion debug log: surfaces the accepted count alongside the
+  // incidents checkpoint, so a "0 incidents" outcome is no longer a silent
+  // dead end. The rejected list is reserved for a follow-up that captures
+  // model-pass and parseIncidentManifest failures with reasons.
+  writeCheckpoint(directory, "filter-log", {
+    schemaVersion: 1,
+    stage: "filter-log",
+    identity,
+    acceptedCount: incidents.length,
+    rejected: [],
+  });
 }
 
 function preparePlan(chunks: readonly HistoryChunk[], candidates: readonly HistoryChunk[], backgroundOptIn = false): DedupedHybridPlan {

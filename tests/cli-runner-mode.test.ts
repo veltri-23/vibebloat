@@ -41,7 +41,8 @@ test("init surfaces non-interactive TTY and agent-environment detection without 
     gate: "A0", runner: "agent", runnerSource: "non-interactive",
     prompt: { question: expect.stringContaining("VibeBloat") },
   });
-  expect(existsSync(join(ttyHome, "onboarding.json"))).toBeFalse();
+  // A0 now persists the empty state on display (audit finding L11).
+  expect(existsSync(join(ttyHome, "onboarding.json"))).toBeTrue();
 
   expect(readOutput(init(environmentHome, ["--answer", "Yes"], { OPENCLAW_SESSION: "session" }))).toMatchObject({
     gate: "A1", runner: "agent", runnerSource: "environment",

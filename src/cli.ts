@@ -43,7 +43,7 @@ import { buildChatCompletionsBody, parseModelIncidentOutput, serializeModelComma
 import { detectRunnerDetails, parentProcessCommand, parseRunnerOverride, type RunnerDetectionSource } from "./onboarding/detect-runner";
 import { answerAssist } from "./onboarding/assist";
 import { validateOnboardingEffectRequirements, type EffectGateId, type OnboardingEffectEvidence } from "./onboarding/effect-requirements";
-import { canonicalGateChoice, gateValues, isGateChoice, type OnboardingContext } from "./onboarding/gates";
+import { canonicalGateChoice, gateValues, isGateChoice, nearestGateChoice, type OnboardingContext } from "./onboarding/gates";
 import { assertSafeIncident, OnboardingCoordinator, reviewDecisionForChoice, type GuardReviewDecision, type OnboardingCheckpoint } from "./onboarding/coordinator";
 import { lookupMarkdownAnswer } from "./onboarding/markdown-help";
 import { readCustomAgentHomes, revokeCustomAgentHomes, saveCustomAgentHome, type CustomAgentHomes } from "./onboarding/custom-agent-homes";
@@ -523,8 +523,17 @@ function onboardingRunnerContext(
 ): OnboardingContext {
   const incidentCount = checkpoint?.incidents.length ?? 0;
   const reviewed = state.reviewDecisions?.length ?? 0;
+  // Skip E2's "you don't have a code map yet" upsell when a graph tool is
+  // already wired in. Detection looks for codebase-memory-mcp's binary
+  // (env var or known install path) — cheap and correct on the platforms
+  // the operator runs on. False negatives just fall through to the
+  // existing E2 prompt.
+  const codeBaseMemoryMcpOnPath = Boolean(process.env.CODEBASE_MEMORY_MCP_PATH?.trim())
+    || (process.platform === "win32"
+      && Boolean(process.env.LOCALAPPDATA?.trim())
+      && existsSync(`${process.env.LOCALAPPDATA!.replace(/[\\/]+$/, "")}\\Programs\\codebase-memory-mcp\\codebase-memory-mcp.exe`));
   return {
-    knowledgeToolsDetected: false,
+    knowledgeToolsDetected: codeBaseMemoryMcpOnPath,
     hasHermesOrOpenClaw: checkpoint?.discovery?.environments.some(({ id }) => id === "hermes" || id === "openclaw") ?? false,
     ...(checkpoint?.phase === "review" || checkpoint?.phase === "ready-to-install" || checkpoint?.phase === "ready-to-prove" || checkpoint?.phase === "complete"
       ? { scanOutcome: incidentCount > 0 ? "found" as const : "zero" as const }
@@ -550,6 +559,10 @@ function verifiedMissingEnvironmentDirectory(path: string): string {
 }
 
 function addMissingEnvironment(coordinator: OnboardingCoordinator, home: string, answer: string): void {
+  // Allow the user to back out of the B1.missing sub-gate with natural
+  // language rather than forcing them to name a real supported path. A
+  // silent return leaves the state machine at B1.missing → B1.
+  if (/^\s*(actually[ ,]+(that['']s|that is) everything|that['']s everything|that is everything|nope|never ?mind|cancel|skip)\s*\.?$/i.test(answer)) return;
   const match = /^(.{1,60}?)\s+(?:at|in)\s+(.+)$/.exec(answer.trim());
   if (!match) throw new Error("Missing environment must be supplied as '<name> at <absolute-directory>'.");
   const label = match[1].trim();
@@ -1239,6 +1252,9 @@ if (mode === "init") {
   const answerIndex = process.argv.indexOf("--answer");
   const prettyMode = process.argv.includes("--pretty");
   if (answerIndex < 0) {
+    // Persist the empty state on first display so a user who quits at A0
+    // and reruns lands on the next gate instead of being re-greeted.
+    saveOnboardingState(home, { ...runner.snapshot(), coordinator: coordinatorCheckpoint, preferences: state.preferences, ...(state.pendingSourceIds ? { pendingSourceIds: state.pendingSourceIds } : {}) });
     const payload = { ...runner.snapshot(), runnerSource, prompt: runner.current(), ...(coordinator.discovery() ? { discovery: coordinator.discovery() } : {}) };
     if (prettyMode) {
       process.stdout.write(`${formatOnboardingPretty(payload)}\n`);
@@ -1250,6 +1266,7 @@ if (mode === "init") {
   const answer = process.argv[answerIndex + 1] ?? "";
   const before = runner.snapshot();
   const directChoice = answer.trim().toLowerCase() === "cancel" || isGateChoice(before.gate, answer);
+  const nearMiss = directChoice ? undefined : nearestGateChoice(before.gate, answer);
   let assistResponse: ReturnType<OnboardingRunner["assist"]> | undefined;
   let next: RunnerState;
   if (directChoice) {
@@ -1407,7 +1424,7 @@ if (mode === "init") {
     process.stderr.write(`WHAT failed: onboarding setup stopped.\nWHY: ${reason}\nFIX: ${modelVariable ? `set ${modelVariable} to a JSON command array, then rerun vibebloat init --answer ${JSON.stringify(effectiveAnswer)}` : "vibebloat init --answer Yes"}\n`);
     process.exit(1);
   }
-  process.stdout.write(`${JSON.stringify({ ...next, ...(state.pendingSourceIds ? { pendingSourceIds: state.pendingSourceIds } : {}), runnerSource, prompt: runner.current(), ...(coordinator.discovery() ? { discovery: coordinator.discovery() } : {}), ...(assistResponse ? { assist: assistResponse } : {}) })}\n`);
+  process.stdout.write(`${JSON.stringify({ ...next, ...(state.pendingSourceIds ? { pendingSourceIds: state.pendingSourceIds } : {}), runnerSource, prompt: runner.current(), ...(coordinator.discovery() ? { discovery: coordinator.discovery() } : {}), ...(assistResponse ? { assist: assistResponse } : {}), ...(nearMiss ? { nearMiss: { option: nearMiss.option, distance: Number(nearMiss.distance.toFixed(2)) } } : {}) })}\n`);
   process.exit(0);
 }
 
@@ -1719,7 +1736,8 @@ if (mode === "scrub") {
     process.stderr.write(`WHAT failed: scrub target must be presidio or gitleaks.\nWHY: received '${scrubber ?? ""}'.\nFIX: vibebloat scrub presidio|gitleaks --json\n`);
     process.exit(2);
   }
-  const input = await Bun.stdin.text();
+  // stdin was already consumed by the top-level `await Bun.stdin.text()` at
+  // module load above; reuse it rather than re-reading an empty stream.
   let text: string;
   try {
     const parsed = JSON.parse(input);
@@ -1735,6 +1753,11 @@ if (mode === "scrub") {
   }
   const patterns: Array<{ name: string; re: RegExp; replace: string }> = [
     { name: "bearer", re: /Bearer\s+\S+/gi, replace: "Bearer <redacted>" },
+    { name: "aws_key", re: /\bAKIA[0-9A-Z]{16}\b/g, replace: "<redacted-aws-key>" },
+    { name: "github_pat", re: /\bghp_[A-Za-z0-9]{36,255}\b/g, replace: "<redacted-github-pat>" },
+    { name: "google_api_key", re: /\bAIza[0-9A-Za-z_-]{35}\b/g, replace: "<redacted-google-key>" },
+    { name: "stripe_key", re: /\b(?:sk|pk|rk)_(?:live|test)_[0-9a-zA-Z]{24,}\b/g, replace: "<redacted-stripe-key>" },
+    { name: "session_id", re: /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, replace: "<redacted-session-id>" },
     { name: "api_key", re: /\b(?:sk-[A-Za-z0-9_-]{20,}|api[_-]?key=[A-Za-z0-9_.-]+)\b/gi, replace: "api_key=<redacted>" },
     { name: "password", re: /\bpassword\s*[:=]\s*\S+/gi, replace: "password=<redacted>" },
     { name: "token", re: /\btoken\s*[:=]\s*\S+/gi, replace: "token=<redacted>" },
