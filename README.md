@@ -56,6 +56,25 @@ why: 07-15 this deleted untracked files. Use git stash -u -- <path> or commit fi
 fix: vibebloat allow git-stash-u --once
 ```
 
+## What ships in the library
+
+Every guard here was compiled from a real incident. The `class` field is
+the guard's severity: `A` is destructive (block), `B` is bad edit/config
+(block or warn), `C` is environmental (warn), `D` is wrong result (warn).
+
+| Guard | Class | What it stops |
+|-------|-------|----------------|
+| `git-stash-u` | A | `git stash -u` deleting untracked operational files |
+| `git-reset-hard` | A | `git reset --hard` discarding committed work |
+| `git-checkout-discard` | A | `git checkout -- <path>` clobbering tracked files |
+| `git-clean-force` | A | `git clean -fd` silently removing untracked scripts |
+| `git-checkout-parallel-revert` | A | parallel-agent worktrees overwriting each other |
+| `mcp-config-wrong-file` | A | `.mcp.json` written to the wrong file path |
+| `npx-mcp-hang` | B | `npx -y` re-resolving deps and hanging the agent |
+
+These compile from your history on first install. Add your own with
+`vibebloat allow <guard-id>` after a one-time override.
+
 ## Install
 
 `npx vibebloat` works once published. Until then, source-checkout steps live in

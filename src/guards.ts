@@ -114,3 +114,20 @@ export const npxMcpHangGuard: Guard = {
   },
   enabled: true,
 };
+
+export const gitCheckoutParallelRevertGuard: Guard = {
+  id: "git-checkout-parallel-revert",
+  class: "A",
+  provenance: {
+    incident: "running `git checkout -- .` while a parallel agent reverts in the same worktree wiped both branches' work — checkout discards unstaged, not just the parallel branch",
+    date: "2026-07-15",
+    source: "claude-code",
+  },
+  match: { chokepoint: "shell", command: "git checkout", argsAnyOf: ["--", "-f", "--force"] },
+  action: {
+    type: "warn",
+    message: "07-15 this overwrote unstaged work from a parallel session. Use git stash or a dedicated worktree per agent.",
+    override: "vibebloat disable git-checkout-parallel-revert",
+  },
+  enabled: true,
+};
