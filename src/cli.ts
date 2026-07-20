@@ -1719,7 +1719,8 @@ if (mode === "scrub") {
     process.stderr.write(`WHAT failed: scrub target must be presidio or gitleaks.\nWHY: received '${scrubber ?? ""}'.\nFIX: vibebloat scrub presidio|gitleaks --json\n`);
     process.exit(2);
   }
-  const input = await Bun.stdin.text();
+  // stdin was already consumed by the top-level `await Bun.stdin.text()` at
+  // module load above; reuse it rather than re-reading an empty stream.
   let text: string;
   try {
     const parsed = JSON.parse(input);
@@ -1735,6 +1736,11 @@ if (mode === "scrub") {
   }
   const patterns: Array<{ name: string; re: RegExp; replace: string }> = [
     { name: "bearer", re: /Bearer\s+\S+/gi, replace: "Bearer <redacted>" },
+    { name: "aws_key", re: /\bAKIA[0-9A-Z]{16}\b/g, replace: "<redacted-aws-key>" },
+    { name: "github_pat", re: /\bghp_[A-Za-z0-9]{36,255}\b/g, replace: "<redacted-github-pat>" },
+    { name: "google_api_key", re: /\bAIza[0-9A-Za-z_-]{35}\b/g, replace: "<redacted-google-key>" },
+    { name: "stripe_key", re: /\b(?:sk|pk|rk)_(?:live|test)_[0-9a-zA-Z]{24,}\b/g, replace: "<redacted-stripe-key>" },
+    { name: "session_id", re: /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, replace: "<redacted-session-id>" },
     { name: "api_key", re: /\b(?:sk-[A-Za-z0-9_-]{20,}|api[_-]?key=[A-Za-z0-9_.-]+)\b/gi, replace: "api_key=<redacted>" },
     { name: "password", re: /\bpassword\s*[:=]\s*\S+/gi, replace: "password=<redacted>" },
     { name: "token", re: /\btoken\s*[:=]\s*\S+/gi, replace: "token=<redacted>" },
