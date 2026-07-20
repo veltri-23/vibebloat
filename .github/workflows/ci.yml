@@ -10,6 +10,13 @@ permissions:
 
 jobs:
   release-artifacts:
+    # Build cross-platform artifacts on push to main (or manual dispatch) only.
+    # PR builds rely on the validate job's host-platform `bun run build`. The
+    # cross-platform step downloads a separate bun executable per target and
+    # has been observed to fail on GitHub-hosted runners with "Failed to
+    # extract executable for 'bun-linux-x64-baseline-v1.3.14'." Keep the
+    # cross-target build out of the PR merge path.
+    if: github.event_name != 'pull_request'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     strategy:
@@ -72,7 +79,10 @@ jobs:
         run: bun test
       - name: Run Hermes tests
         run: python -m pytest -q hermes/tests
+      # Host-platform build only on PRs; full cross-target build runs on
+      # main via the release-artifacts job (which is skipped on PRs).
       - name: Build distributions
+        if: github.event_name == 'pull_request'
         run: bun run build
       - name: Verify npm package surface
         run: npm pack --dry-run
