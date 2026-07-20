@@ -152,7 +152,12 @@ export function assertSafeIncident(incident: IncidentManifest): void {
     && (typeof incident.remediation !== "string" || incident.remediation.length > maximumRemediationLength)) {
     throw new Error("Mined incident has an invalid remediation.");
   }
-  const serialized = JSON.stringify(incident);
+  // A descriptive kebab-case id is long by design (the mining contract asks
+  // for one), and the generic long-run heuristic below reads any 32+ character
+  // token as a secret. Hyphenated words are not credentials; an opaque
+  // hyphen-free blob still is, so it stays in the scan.
+  const descriptiveId = /^[a-z0-9]+(?:-[a-z0-9]+)+$/.test(incident.incident_id);
+  const serialized = JSON.stringify(descriptiveId ? { ...incident, incident_id: "id" } : incident);
   if (rawSecret.test(serialized)) throw new Error("Mined incident contains unsanitized secret material.");
   if (email.test(serialized)) throw new Error("Mined incident contains personal data.");
   if (embeddedAbsolutePath.test(serialized)) throw new Error("Mined incident contains an absolute path.");

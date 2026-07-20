@@ -111,3 +111,18 @@ test("distinct incidents are all kept", () => {
   ]);
   expect(guards).toHaveLength(2);
 });
+
+// Found by dogfooding: a real mined incident could not compile because its
+// descriptive id tripped the generic "long run = secret" heuristic. The mining
+// contract asks for descriptive ids, so good output was being rejected.
+test("a long descriptive incident id is not mistaken for a secret", () => {
+  const incident = { ...stashIncident, incident_id: "gh-issues-instead-of-project-board" };
+  expect(incident.incident_id.length).toBeGreaterThan(32);
+  expect(() => assertSafeIncident(incident)).not.toThrow();
+});
+
+test("an opaque token-shaped id is still rejected", () => {
+  // No hyphens, high entropy: a credential wearing an id's clothes.
+  const incident = { ...stashIncident, incident_id: "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4" };
+  expect(() => assertSafeIncident(incident)).toThrow();
+});
