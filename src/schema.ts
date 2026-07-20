@@ -5,7 +5,8 @@ const guardAgents = new Set<GuardAgent>(["claude-code", "codex", "hermes", "open
 const actionTypes = new Set<Action["type"]>(["block", "warn", "require-confirm", "quarantine-file", "run-check"]);
 const guardFields = new Set(["schemaVersion", "id", "class", "provenance", "match", "action", "confidence", "tier", "binds", "enabled"]);
 const provenanceFields = new Set(["incident", "date", "source"]);
-const matchFields = new Set(["chokepoint", "command", "argsContains", "argsAnyOf", "path"]);
+const matchFields = new Set(["chokepoint", "command", "argsContains", "argsAnyOf", "path", "context"]);
+const contextFields = new Set(["cwdUnder", "whenProcessRunning", "whenUnstagedChanges"]);
 const actionFields = new Set(["type", "message", "override"]);
 const guardIdPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
@@ -56,6 +57,14 @@ export function parseGuard(value: unknown): Guard {
   assert(guard.match.chokepoint !== "file" || isNonEmptyString(guard.match.path), "file match requires a non-empty path");
   assertOptionalStringArray(guard.match.argsContains, "match.argsContains");
   assertOptionalStringArray(guard.match.argsAnyOf, "match.argsAnyOf");
+  if (guard.match.context !== undefined) {
+    const context = record(guard.match.context, "match.context must be an object");
+    assertAllowedFields(context, contextFields, "match.context");
+    assert(context.cwdUnder === undefined || isNonEmptyString(context.cwdUnder), "match.context.cwdUnder must be a non-empty string");
+    assert(context.whenProcessRunning === undefined || isNonEmptyString(context.whenProcessRunning), "match.context.whenProcessRunning must be a non-empty string");
+    assert(context.whenUnstagedChanges === undefined || typeof context.whenUnstagedChanges === "boolean", "match.context.whenUnstagedChanges must be a boolean");
+    assert(context.cwdUnder !== undefined || context.whenProcessRunning !== undefined || context.whenUnstagedChanges !== undefined, "match.context requires at least one condition");
+  }
   assert(isNonEmptyString(guard.action?.message), "action.message must be a non-empty string");
   assert(isNonEmptyString(guard.action?.override), "action.override must be a non-empty string");
   assert(actionTypes.has(guard.action?.type as Action["type"]), "action.type is not trusted");
