@@ -54,7 +54,8 @@
     "prepublishOnly": "bun scripts/prepublish.ts && bun test && python -m pytest -q hermes/tests && bun run build",
     "test": "bun test",
     "eval": "bun src/cli.ts eval",
-    "hook": "bun src/cli.ts hook"
+    "hook": "bun src/cli.ts hook",
+    "postinstall": "node bin/postinstall.js || true"
   },
   "dependencies": {
     "tree-sitter": "^0.21.1",
