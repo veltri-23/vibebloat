@@ -10,7 +10,13 @@ const destructiveCommands = new Map([
   ["starter-rm-recursive-force", "rm -rf /tmp/example"],
   ["starter-git-force-push", "git push -f"],
   ["starter-git-reset-hard", "git reset --hard"],
+  // Formerly gated behind a GitHub star; every user gets them now.
+  ["starter-git-checkout-discard", "git checkout ."],
+  ["starter-git-clean-force", "git clean -fd"],
 ]);
+
+// Guards whose chokepoint is a file rather than a shell command.
+const fileGuards = new Map([["starter-env-file-confirm", ".env"]]);
 
 describe("starter guard pack", () => {
   test("contains only deterministic preventive guards for locked examples", () => {
@@ -18,10 +24,12 @@ describe("starter guard pack", () => {
     const second = starterGuardPack();
 
     expect(second).toEqual(first);
-    expect(first.map(({ id }) => id)).toEqual([...destructiveCommands.keys()]);
+    expect(first.map(({ id }) => id)).toEqual([...destructiveCommands.keys(), ...fileGuards.keys()]);
     for (const guard of first) {
-      expect(guard.class).toBe("A");
-      expect(guard.action.type).toBe("block");
+      // The .env guard is class B and asks for confirmation rather than
+      // blocking outright: writing a secret file is not always a mistake.
+      expect(guard.class).toBe(fileGuards.has(guard.id) ? "B" : "A");
+      expect(guard.action.type).toBe(fileGuards.has(guard.id) ? "require-confirm" : "block");
       expect(guard.provenance.source).toBe("vibebloat-starter-pack");
       expect(guard.provenance.incident).toStartWith("Preventive starter-pack rule for ");
       expect(guard.provenance.incident).not.toContain("deleted");
@@ -30,10 +38,10 @@ describe("starter guard pack", () => {
 
   test("synthetic locked examples fire and block", () => {
     for (const guard of starterGuardPack()) {
-      expect(new Runtime().evaluate([guard], {
-        chokepoint: "shell",
-        command: destructiveCommands.get(guard.id)!,
-      })).toMatchObject({ fired: true, blocked: true, guardId: guard.id });
+      const event = fileGuards.has(guard.id)
+        ? { chokepoint: "file" as const, path: fileGuards.get(guard.id)! }
+        : { chokepoint: "shell" as const, command: destructiveCommands.get(guard.id)! };
+      expect(new Runtime().evaluate([guard], event)).toMatchObject({ fired: true, guardId: guard.id });
     }
   });
 
@@ -55,8 +63,8 @@ describe("starter guard pack", () => {
 
       const report = installStarterGuardPack(guardDirectory);
 
-      expect(report.guardIds).toEqual([...destructiveCommands.keys()]);
-      expect(report.writtenPaths).toHaveLength(4);
+      expect(report.guardIds).toEqual([...destructiveCommands.keys(), ...fileGuards.keys()]);
+      expect(report.writtenPaths).toHaveLength(destructiveCommands.size + fileGuards.size);
       expect(readFileSync(unrelatedPath, "utf8")).toBe("local-only\n");
       for (const guard of starterGuardPack()) {
         const installed = parseGuard(JSON.parse(readFileSync(join(guardDirectory, `${guard.id}.json`), "utf8")));

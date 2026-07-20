@@ -11,6 +11,19 @@ Unlike `destructive_command_guard` (5k-star static blocker), VibeBloat learns
 *personalized* guards from your own repeated incidents — not a universal
 command blocklist.
 
+## See it work in 10 seconds
+
+No history, no API key, no install beyond the repo:
+
+```sh
+bun src/cli.ts demo
+```
+
+It runs the real pipeline — scrub, prefilter, mine, compile, block — over a
+labelled sample history and prints the guards it produced. With a model
+configured it mines those findings live; without one it uses the sample's
+precomputed findings and says so.
+
 ## Try it
 
 The fastest way: open Vibebloat in a pre-configured GitHub Codespace and run
@@ -21,8 +34,12 @@ init in the browser. No local install required.
 Once the Codespace boots, run in its terminal:
 
 ```sh
-bun src/cli.ts init --pretty
+bun src/cli.ts demo
 ```
+
+A fresh Codespace has no agent history, so the sample stands in for yours. On a
+machine that does have sessions to read, `bun src/cli.ts init --pretty` walks
+the onboarding against your own history instead.
 
 Or install locally (after `npm publish` lands):
 

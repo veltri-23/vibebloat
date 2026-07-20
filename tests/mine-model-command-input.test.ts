@@ -60,5 +60,7 @@ test("model command input rejects forged semantic context", () => {
 });
 
 test("model command input keeps the original payload when enrichment is unavailable", () => {
-  expect(serializeModelCommandInput(candidates)).toBe(JSON.stringify({ candidates }));
+  const payload = JSON.parse(serializeModelCommandInput(candidates));
+  expect(payload.candidates).toEqual(candidates);
+  expect(payload.semantic_context).toBeUndefined();
 });

@@ -77,7 +77,7 @@ test("unknown mode keeps the three-line error", () => {
   temporaryDirectories.push(home);
   const result = invoke(home, "unknown");
   expect(result.exitCode).toBe(1);
-  expect(result.stderr.toString()).toBe("WHAT failed: expected allow, compile, eval, hook, git-hook, disable, doctor, init, onboard, install, uninstall, update, scan, star, stats, sync, watch, daily, rules, or email, scrub, or __distribution_probe__.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
+  expect(result.stderr.toString()).toBe("WHAT failed: expected allow, compile, demo, eval, hook, git-hook, disable, doctor, init, onboard, install, uninstall, update, scan, star, stats, sync, watch, daily, rules, or email, scrub, or __distribution_probe__.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
 });
 
 test("F0 consent preflights helpers but defers writes until selected binding install", () => {
@@ -139,11 +139,11 @@ test("init advances only silent gates after a valid human answer", () => {
   writeFileSync(join(home, "onboarding.json"), JSON.stringify({ gate: "F2", answers: {} }));
   const result = initAt(join(import.meta.dir, ".."), home, {
     VIBEBLOAT_LOCAL_MODEL_COMMAND: JSON.stringify(["ollama", "run", "local-model"]),
-  }, "--answer", "Run it locally and free (a bit slower)");
+  }, "--answer", "Run it locally and free (advanced: needs a large local model, small ones cannot do this reliably)");
   expect(JSON.parse(result.stdout.toString())).toMatchObject({ gate: "F4" });
   expect(JSON.parse(readFileSync(join(home, "onboarding.json"), "utf8"))).toMatchObject({
     gate: "F4",
-    answers: { F2: "Run it locally and free (a bit slower)" },
+    answers: { F2: "Run it locally and free (advanced: needs a large local model, small ones cannot do this reliably)" },
     preferences: { modelRoute: "local" },
   });
 });
@@ -312,7 +312,6 @@ test("B1 missing rejects unbounded custom directory input before it can be resca
 test("unverified onboarding effects fail closed without advancing", () => {
   const cases = [
     ["F6", "Yes", "Skip"],
-    ["N1", "Star", "Maybe later"],
     ["N2", "Yes, notify me (uses your email)", "Skip"],
     ["O1", "Yes", "Manual only"],
     ["O2", "Yes", "No"],

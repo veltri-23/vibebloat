@@ -2,6 +2,7 @@ import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { Runtime } from "../runtime";
 import { parseGuard } from "../schema";
+import { syntheticEvent } from "../compiler/synthetic-event";
 import type { Event, Guard } from "../types";
 import { applyAtomicFilePlans, type AtomicFilePlan } from "./atomic-files";
 
@@ -55,7 +56,9 @@ const starterGuardValues = [
       date: "2026-07-18",
       source: "vibebloat-starter-pack",
     },
-    match: { chokepoint: "shell", command: "git push", argsContains: ["-f"] },
+    // --force-with-lease is deliberately absent: it is the safe form, and
+    // blocking it would be the false positive that gets the pack turned off.
+    match: { chokepoint: "shell", command: "git push", argsAnyOf: ["-f", "--force"] },
     action: {
       type: "block",
       message: "Preventive rule blocked git push -f. Review remote history before overriding.",
@@ -86,6 +89,66 @@ const starterGuardValues = [
     binds: [],
     enabled: true,
   },
+  {
+    schemaVersion: 1,
+    id: "starter-git-checkout-discard",
+    class: "A",
+    provenance: {
+      incident: "Preventive starter-pack rule for git checkout . discarding uncommitted edits.",
+      date: "2026-07-18",
+      source: "vibebloat-starter-pack",
+    },
+    match: { chokepoint: "shell", command: "git checkout", argsContains: ["."] },
+    action: {
+      type: "block",
+      message: "Blocked git checkout . - it discards every uncommitted edit. Scope to git checkout -- <path>.",
+      override: "vibebloat allow starter-git-checkout-discard --once",
+    },
+    confidence: "high",
+    tier: "local",
+    binds: [],
+    enabled: true,
+  },
+  {
+    schemaVersion: 1,
+    id: "starter-git-clean-force",
+    class: "A",
+    provenance: {
+      incident: "Preventive starter-pack rule for forced git clean deleting untracked files.",
+      date: "2026-07-18",
+      source: "vibebloat-starter-pack",
+    },
+    match: { chokepoint: "shell", command: "git clean", argsAnyOf: ["-f", "-ff", "-fd", "-df", "-fdx", "-xdf", "-dfx", "-xfd", "--force"] },
+    action: {
+      type: "block",
+      message: "Blocked forced git clean - it deletes untracked files forever. Dry-run with git clean -n first.",
+      override: "vibebloat allow starter-git-clean-force --once",
+    },
+    confidence: "high",
+    tier: "local",
+    binds: [],
+    enabled: true,
+  },
+  {
+    schemaVersion: 1,
+    id: "starter-env-file-confirm",
+    class: "B",
+    provenance: {
+      incident: "Preventive starter-pack rule for agent writes to .env secret files.",
+      date: "2026-07-18",
+      source: "vibebloat-starter-pack",
+    },
+    match: { chokepoint: "file", path: ".env" },
+    action: {
+      type: "require-confirm",
+      message: "Paused a write to .env. Secrets live here - confirm the change is intentional.",
+      override: "vibebloat allow starter-env-file-confirm --once",
+    },
+    confidence: "high",
+    tier: "local",
+    binds: [],
+    enabled: true,
+  },
 ] as const;
 
 export interface StarterGuardPackInstallReport {
@@ -95,20 +158,6 @@ export interface StarterGuardPackInstallReport {
 
 export function starterGuardPack(): Guard[] {
   return starterGuardValues.map((guard) => parseGuard(structuredClone(guard)));
-}
-
-function syntheticEvent(guard: Guard): Event {
-  if (guard.match.chokepoint === "file") {
-    return { chokepoint: "file", path: guard.match.path };
-  }
-  const required = guard.match.argsContains ?? [];
-  const any = guard.match.argsAnyOf?.slice(0, 1) ?? [];
-  return {
-    chokepoint: "shell",
-    command: [guard.match.command, ...required, ...any]
-      .filter((part): part is string => Boolean(part))
-      .join(" "),
-  };
 }
 
 function serializedGuard(guard: Guard): string {

@@ -69,11 +69,11 @@ function blockReceipt(guardId: string, incident: string, why: string, date = "20
 
 test("same learned guard denies Claude Code, Codex, OpenClaw, and Hermes", () => {
   const { root, guardHome } = createLearnedGuardHome();
-  const receipt = blockReceipt("no-publish", "test learned guard", "VibeBloat found no-publish in 1 incident.");
+  const receipt = blockReceipt("no-publish", "test learned guard", "07-18 test learned guard.");
 
   const claude = runCli(guardHome, ["hook"]);
   expect(claude.exitCode).toBe(2);
-  expect(claude.stderr.toString()).toContain("VibeBloat found no-publish in 1 incident.");
+  expect(claude.stderr.toString()).toContain("07-18 test learned guard.");
 
   const codex = runCli(guardHome, ["hook", "--agent=codex"]);
   expect(codex.exitCode).toBe(0);
@@ -158,6 +158,6 @@ test("Hermes bridge resolves a repository Git alias before blocking a compiled g
   expect(hermes.exitCode).toBe(0);
   expect(JSON.parse(hermes.stdout.toString())).toEqual({
     decision: "deny",
-    message: blockReceipt("git-reset-hard", "git reset --hard destroyed uncommitted work", "07-15 this destroyed uncommitted work. Use git stash first, or reset --soft to keep changes stag", "2026-07-15"),
+    message: blockReceipt("git-reset-hard", "git reset --hard destroyed uncommitted work", "07-15 this destroyed uncommitted work. Use git stash first, or reset --soft to keep changes staged.", "2026-07-15"),
   });
 });

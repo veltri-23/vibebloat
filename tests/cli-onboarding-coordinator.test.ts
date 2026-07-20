@@ -47,7 +47,7 @@ test("production onboarding coordinates discovery and fails closed before histor
     "Not now",
     "Yes, but sharing off",
     "No thanks",
-    "Run it locally and free (a bit slower)",
+    "Run it locally and free (advanced: needs a large local model, small ones cannot do this reliably)",
     "Stay quiet unless sure (recommended)",
     "Skip style rules",
   ];

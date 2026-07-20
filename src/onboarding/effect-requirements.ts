@@ -1,11 +1,10 @@
 import { getGate, isGateChoice, type GateChoice, type GateId } from "./gates";
 
-export type EffectGateId = Extract<GateId, "F6" | "N1" | "N2" | "O1" | "O2" | "O3">;
+export type EffectGateId = Extract<GateId, "F6" | "N2" | "O1" | "O2" | "O3">;
 
 export interface OnboardingEffectEvidence {
   subscriberCaptureValidated?: boolean;
   starterPackInstalled?: boolean;
-  githubStarVerified?: boolean;
   subscriptionStored?: boolean;
   dailyScheduleVerified?: boolean;
   agentCronVerified?: boolean;
@@ -20,7 +19,7 @@ export type EffectRequirementsResult =
 
 const requirements: Record<EffectGateId, { option: number; evidence: OnboardingEffectEvidenceKey[] }> = {
   F6: { option: 0, evidence: ["subscriberCaptureValidated", "starterPackInstalled"] },
-  N1: { option: 0, evidence: ["githubStarVerified"] },
+
   N2: { option: 0, evidence: ["subscriptionStored"] },
   O1: { option: 0, evidence: ["dailyScheduleVerified"] },
   O2: { option: 0, evidence: ["agentCronVerified"] },
@@ -48,6 +47,8 @@ export function validateOnboardingEffectRequirements(
   if (!selected) return { ok: false, reason: "invalid-choice", missing: [] };
 
   const requirement = requirements[gate];
+  // A gate with no declared effect has nothing to verify.
+  if (!requirement) return { ok: true, choice: selected, missing: [] };
   if (selected !== getGate(gate).options[requirement.option]) return { ok: true, choice: selected, missing: [] };
 
   const missing = requirement.evidence.filter((key) => evidence[key] !== true);

@@ -14,5 +14,6 @@ echo "[vibebloat] installing dependencies"
 bun install --frozen-lockfile
 
 echo "[vibebloat] ready"
-echo "[vibebloat] run: bun src/cli.ts doctor"
-echo "[vibebloat] run: bun src/cli.ts init --pretty"
+# A fresh Codespace has no agent history, so lead with the sample demo
+# rather than an onboarding scan that would find nothing.
+echo "[vibebloat] run: bun src/cli.ts demo"

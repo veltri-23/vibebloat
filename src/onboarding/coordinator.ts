@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { compileGuard } from "../compiler/codex-fill";
+import { syntheticEvent } from "../compiler/synthetic-event";
 import { guardHomeForScope, type GuardScope } from "../guard-home";
 import { seedIncrementalCursor } from "../ingest/incremental-cursor";
 import { scanHistory, type ScanOptions } from "../ingest/scan";
@@ -11,6 +12,23 @@ import { Runtime } from "../runtime";
 import { parseGuard } from "../schema";
 import type { Event, Guard } from "../types";
 import { renderGate, type GateId } from "./gates";
+import type { Scrubber } from "../scrub/presidio";
+
+/**
+ * A verified scrubber pair. Commands point at a signed release binary;
+ * functions run the built-in scrubber in-process. Both fail closed.
+ */
+export interface VerifiedScrubbers {
+  presidio: readonly string[] | Scrubber;
+  gitleaks: readonly string[] | Scrubber;
+}
+
+function scrubberScanOptions(verified: VerifiedScrubbers): Partial<ScanOptions<IncidentManifest>> {
+  return {
+    ...(typeof verified.presidio === "function" ? { presidio: verified.presidio } : { presidioCommand: verified.presidio }),
+    ...(typeof verified.gitleaks === "function" ? { gitleaks: verified.gitleaks } : { gitleaksCommand: verified.gitleaks }),
+  };
+}
 
 export type OnboardingPhase =
   | "entry"
@@ -68,6 +86,8 @@ export interface OnboardingSnapshot {
   consented: boolean;
   selectedSourceIds: string[];
   incidentCount: number;
+  /** Distinct sessions read during the scan. Undefined until a scan has run. */
+  sessionsScanned?: number;
   approvedIncidentIds: string[];
   installedGuardIds: string[];
   cancelled: boolean;
@@ -84,7 +104,7 @@ export interface OnboardingCheckpoint extends OnboardingSnapshot {
 export interface OnboardingCoordinatorOptions {
   discover(): Promise<OnboardingDiscovery>;
   setupBindings?(): Promise<void> | void;
-  verifyScrubbers(): Promise<{ presidio: readonly string[]; gitleaks: readonly string[] } | void> | { presidio: readonly string[]; gitleaks: readonly string[] } | void;
+  verifyScrubbers(): Promise<VerifiedScrubbers | void> | VerifiedScrubbers | void;
   loadHistory(sourceIds: readonly string[], authorization: { confirmed: true; scrubbersVerified: true }): Promise<HistoryChunk[]>;
   scan: Omit<ScanOptions<IncidentManifest>, "publish">;
   installBindings(guards: readonly Guard[], environmentIds: readonly string[]): Promise<void> | void;
@@ -104,19 +124,40 @@ const embeddedAbsolutePath = /(?:[A-Za-z]:[\\/]|\\\\[^\\\s]+\\|(?:^|[\s"'`])\/(?
 const identifier = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const absolutePath = /^(?:[A-Za-z]:[\\/]|\\\\|\/)/;
 
-function syntheticEvent(guard: Guard): Event {
-  return guard.match.chokepoint === "shell"
-    ? { chokepoint: "shell", command: guard.match.command }
-    : { chokepoint: "file", path: guard.match.path };
-}
+/**
+ * Model-supplied bounds. These are the documented defense, so they belong on
+ * every path into compileGuard -- the onboarding path consumes model output
+ * and previously had none. A violation throws: silently dropping args_contains
+ * would revert the guard to a bare-command match, which is broader than the
+ * incident and blocks legitimate work.
+ */
+const maximumMatchArguments = 8;
+const maximumMatchArgumentLength = 64;
+const maximumRemediationLength = 200;
 
-function assertSafeIncident(incident: IncidentManifest): void {
+export function assertSafeIncident(incident: IncidentManifest): void {
   const required = ["incident_id", "class", "chokepoint", "condition", "evidence_refs", "severity", "frequency", "recency"];
-  const allowed = new Set([...required, "command", "path"]);
+  const allowed = new Set([...required, "command", "path", "args_contains", "remediation"]);
   if (required.some((key) => !(key in incident)) || Object.keys(incident).some((key) => !allowed.has(key))) {
     throw new Error("Mined incident has an invalid schema.");
   }
-  const serialized = JSON.stringify(incident);
+  if (incident.args_contains !== undefined) {
+    const args = incident.args_contains;
+    if (!Array.isArray(args) || args.length > maximumMatchArguments
+      || args.some((argument) => typeof argument !== "string" || !argument.length || argument.length > maximumMatchArgumentLength)) {
+      throw new Error("Mined incident has an invalid argument list.");
+    }
+  }
+  if (incident.remediation !== undefined
+    && (typeof incident.remediation !== "string" || incident.remediation.length > maximumRemediationLength)) {
+    throw new Error("Mined incident has an invalid remediation.");
+  }
+  // A descriptive kebab-case id is long by design (the mining contract asks
+  // for one), and the generic long-run heuristic below reads any 32+ character
+  // token as a secret. Hyphenated words are not credentials; an opaque
+  // hyphen-free blob still is, so it stays in the scan.
+  const descriptiveId = /^[a-z0-9]+(?:-[a-z0-9]+)+$/.test(incident.incident_id);
+  const serialized = JSON.stringify(descriptiveId ? { ...incident, incident_id: "id" } : incident);
   if (rawSecret.test(serialized)) throw new Error("Mined incident contains unsanitized secret material.");
   if (email.test(serialized)) throw new Error("Mined incident contains personal data.");
   if (embeddedAbsolutePath.test(serialized)) throw new Error("Mined incident contains an absolute path.");
@@ -157,6 +198,7 @@ export class OnboardingCoordinator {
   #consented = false;
   #selectedSourceIds: string[] = [];
   #incidents: IncidentManifest[] = [];
+  #sessionsScanned: number | undefined;
   #approved: Array<{ incident: IncidentManifest; confidence: "high" | "low" }> = [];
   #installed: Guard[] = [];
   #cancelled = false;
@@ -194,6 +236,7 @@ export class OnboardingCoordinator {
       consented: this.#consented,
       selectedSourceIds: [...this.#selectedSourceIds],
       incidentCount: this.#incidents.length,
+      ...(this.#sessionsScanned === undefined ? {} : { sessionsScanned: this.#sessionsScanned }),
       approvedIncidentIds: this.#approved.map(({ incident }) => incident.incident_id),
       installedGuardIds: this.#installed.map((guard) => guard.id),
       cancelled: this.#cancelled,
@@ -293,7 +336,7 @@ export class OnboardingCoordinator {
   async scan(): Promise<OnboardingSnapshot> {
     if (this.#phase !== "ready-to-scan" && this.#phase !== "paused") this.#expect("ready-to-scan");
     if (!this.#environmentConfirmed || !this.#consented) throw new Error("Explicit environment confirmation and privacy consent are required before scanning.");
-    let verifiedScrubbers: { presidio: readonly string[]; gitleaks: readonly string[] } | void;
+    let verifiedScrubbers: VerifiedScrubbers | void;
     try {
       verifiedScrubbers = await this.options.verifyScrubbers();
     } catch {
@@ -313,10 +356,7 @@ export class OnboardingCoordinator {
       },
       {
         ...this.options.scan,
-        ...(verifiedScrubbers ? {
-          presidioCommand: verifiedScrubbers.presidio,
-          gitleaksCommand: verifiedScrubbers.gitleaks,
-        } : {}),
+        ...(verifiedScrubbers ? scrubberScanOptions(verifiedScrubbers) : {}),
         modelPass: async (candidates, semanticContext) => {
           const incidents = await this.options.scan.modelPass(candidates, semanticContext);
           assertSafeIncidents(incidents);
@@ -330,6 +370,9 @@ export class OnboardingCoordinator {
       this.#incidents = [];
       this.#phase = "paused";
       return this.#save();
+    }
+    if (loadedHistory) {
+      this.#sessionsScanned = new Set(loadedHistory.map((chunk) => `${chunk.source}:${chunk.sessionId}`)).size;
     }
     if (loadedHistory && this.options.incrementalCursor) {
       seedIncrementalCursor(

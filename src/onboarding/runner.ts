@@ -1,6 +1,6 @@
 import { answerAssist, type AssistContext, type AssistResponse } from "./assist";
 import type { RunnerKind } from "./detect-runner";
-import { autoAdvances, canonicalGateChoice, getGate, isGateChoice, nextFirstRunGate, type GateChoice, type GateId, type OnboardingContext } from "./gates";
+import { autoAdvances, canonicalGateChoice, gateValues, getGate, isGateChoice, nextFirstRunGate, renderGate, type GateChoice, type GateId, type OnboardingContext } from "./gates";
 import type { GuardScope } from "../guard-home";
 
 export function nextGateBatch<Gate>(orderedGates: Gate[], offset: number, maximum = 3): Gate[] {
@@ -22,9 +22,20 @@ export interface RunnerOptions {
 
 /** Pure runner: UI owns discovery, scanning, installs, and every human choice. */
 export class OnboardingRunner {
-  constructor(private state: RunnerState, private readonly context: OnboardingContext = {}, private readonly options: RunnerOptions = {}) {}
+  constructor(
+    private state: RunnerState,
+    private readonly context: OnboardingContext = {},
+    private readonly options: RunnerOptions = {},
+    private values: Record<string, string | number> = gateValues(),
+  ) {}
 
-  current() { return getGate(this.state.gate); }
+  /** Rendered with this machine's measurements, never raw placeholder copy. */
+  current() { return renderGate(this.state.gate, this.values); }
+
+  /** Scan results arrive mid-run, so measurements can be refreshed in place. */
+  measure(values: Record<string, string | number>): void {
+    this.values = { ...this.values, ...values };
+  }
 
   snapshot(): RunnerState { return { ...this.state, answers: { ...this.state.answers } }; }
 
@@ -66,9 +77,9 @@ export class OnboardingRunner {
 
   choose(choice: GateChoice): RunnerState {
     if (typeof choice === "string" && choice.trim().toLowerCase() === "cancel") return this.cancel();
-    if (!isGateChoice(this.state.gate, choice)) return this.snapshot();
+    if (!isGateChoice(this.state.gate, choice, this.values)) return this.snapshot();
     const gate = this.state.gate;
-    const canonical = canonicalGateChoice(gate, choice);
+    const canonical = canonicalGateChoice(gate, choice, this.values);
     const optionIndex = getGate(gate).options.indexOf(canonical);
     const next = nextFirstRunGate(gate, optionIndex >= 0 ? optionIndex : choice, this.context);
     this.state.answers[gate] = canonical;

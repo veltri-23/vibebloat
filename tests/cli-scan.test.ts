@@ -28,7 +28,7 @@ function scan(historyPath: string, home: string, overrides: Record<string, strin
   });
 }
 
-test("scan ignores PATH scrubbers and runs signed release scrubber instead", () => {
+test("scan ignores PATH scrubbers and scrubs in-process instead", () => {
   const directory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-scan-"));
   temporaryDirectories.push(directory);
   const history = join(directory, "history.json");
@@ -40,10 +40,12 @@ test("scan ignores PATH scrubbers and runs signed release scrubber instead", () 
 
   const result = scan(history, directory, { PATH: `${wrappers};${process.env.PATH ?? ""}` });
 
-  expect(result.exitCode).toBe(1);
-  expect(result.stdout.toString()).toBe("");
-  expect(result.stderr.toString()).toContain("scan could not run");
+  // A PATH-planted scrubber must never receive raw history, and its absence
+  // must not dead-end the scan: the built-in scrubber runs in-process.
   expect(existsSync(marker)).toBe(false);
+  expect(result.exitCode).toBe(0);
+  // The model stub exits non-zero unless it received redacted content.
+  expect(result.stderr.toString()).not.toContain("scrubber assets are unavailable");
 }, 15_000);
 
 test("scan ignores former scrubber environment overrides before reading raw history", () => {
@@ -60,12 +62,14 @@ test("scan ignores former scrubber environment overrides before reading raw hist
     VIBEBLOAT_GITLEAKS_COMMAND: JSON.stringify(["bun", "-e", `Bun.write(${JSON.stringify(marker)}, await Bun.stdin.text())`]),
   });
 
-  expect(result.exitCode).toBe(1);
-  expect(result.stderr.toString()).toContain("Verified package-controlled scrubber assets are unavailable");
+  // Former override vars are inert: they must not route raw history anywhere,
+  // and must not block the scan either.
   expect(existsSync(marker)).toBe(false);
+  expect(result.exitCode).toBe(0);
+  expect(result.stderr.toString()).not.toContain("scrubber assets are unavailable");
 }, 15_000);
 
-test("scan rejects signed-scrubber absence before attempting an unreadable history path", () => {
+test("scan rejects a directory history path before reading anything", () => {
   const directory = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-scan-"));
   temporaryDirectories.push(directory);
   const result = scan(directory, directory);

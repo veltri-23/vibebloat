@@ -56,6 +56,12 @@ function normalizeCommand(command: string, variables: Record<string, string> = {
   return parts.join("");
 }
 
+const wholeTreePathspecs = new Set([".", "./", ":/", "*", ":(top)"]);
+
+function isWholeTreePathspec(pathspec: string): boolean {
+  return wholeTreePathspecs.has(pathspec);
+}
+
 function hasCommandKeyword(command: string, binary: string): boolean {
   let index = command.indexOf(binary);
   while (index >= 0) {
@@ -178,9 +184,17 @@ export function match(guard: Guard, event: Event): Verdict {
           candidate.args.splice(0, 1, ...expansion);
         }
       }
-      if (candidate.binary !== expected[0] || candidate.args[0] !== expected[1]) continue;
+      // A guard command may be a bare binary (grep, python, npx) or a binary
+      // plus subcommand (git stash). Requiring a subcommand meant a bare-binary
+      // guard never fired and failed its own compile-time proof.
+      if (candidate.binary !== expected[0]) continue;
+      if (expected[1] !== undefined && candidate.args[0] !== expected[1]) continue;
       const doubleDash = candidate.args.indexOf("--");
-      if (candidate.binary === "git" && doubleDash >= 0 && doubleDash < candidate.args.length - 1) continue;
+      // A pathspec after "--" normally means the command was scoped to a
+      // subset, so the incident does not apply. But ".", "./" and ":/" select
+      // the entire working tree -- scoped in syntax only.
+      if (candidate.binary === "git" && doubleDash >= 0 && doubleDash < candidate.args.length - 1
+        && !candidate.args.slice(doubleDash + 1).every(isWholeTreePathspec)) continue;
       const containsRequiredArgs = !guard.match.argsContains || guard.match.argsContains.every((argument) => argMatches(candidate.args, argument));
       const containsAnyRiskyArg = !guard.match.argsAnyOf || guard.match.argsAnyOf.some((argument) => argMatches(candidate.args, argument));
       if (containsRequiredArgs && containsAnyRiskyArg) {

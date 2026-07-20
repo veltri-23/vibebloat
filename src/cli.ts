@@ -14,15 +14,18 @@ import { canonicalGuardId, gitCheckoutDiscardGuard, gitCleanForceGuard, gitReset
 import { formatGuardRuntimeFailure, hookResponseForVerdict, runPreToolUse } from "./hooks";
 import { match } from "./match";
 import { closeWatcherOnSignals, fsGuardReceiptPath, hasUnenforceableFileGuard, inspectPersistentFsGuard, launchPersistentFsGuard, stopPersistentFsGuard, waitForFsGuardLaunchReceipt, watchFsGuardStopRequests, watchGuardedWrites } from "./install/fs-guard";
-import { discoverCurrentRepoGitHookPaths, installCurrentRepoGitHooks, planGitHook, type GitHookName } from "./install/git-hooks";
+import { discoverCurrentRepoGitHookPaths, gitHookCommandLine, installCurrentRepoGitHooks, planGitHook, type GitHookName } from "./install/git-hooks";
 import { installNativeHooks } from "./install/orchestrator";
 import { installHermesHook, preflightHermesHook } from "./install/hermes";
 import { installOnboardingBindings, readOnboardingBindingReceipt } from "./install/onboarding-bindings";
 import { DailySchedulerTargetUnavailableError, installVerifiedStandaloneDailyScheduler } from "./install/daily-scheduler";
 import { installStarterGuardPack } from "./install/starter-pack";
-import { claimStarPack, type StarPackClaimReport } from "./growth/star-pack";
+import { starRepository } from "./growth/star-pack";
+import { runSampleDemo, type DemoMiner } from "./sample/demo";
+import { SAMPLE_LABEL } from "./sample/history";
 import { verifyShellPaths, type Shell } from "./install/shim";
 import { compileGuard } from "./compiler/codex-fill";
+import { syntheticEvent } from "./compiler/synthetic-event";
 import { compileLiveForScope, drainQueuedLiveCompilesForScope } from "./compiler/live-compile";
 import { approveLiveCompileProposal, authorizeHumanLiveCompileApproval, drainQueuedLiveProposalsForScope, processQueuedLiveProposal, reviewLiveCompileProposal } from "./compiler/live-incident";
 import { runShellShimCommand } from "./hooks/shell-shim-handler";
@@ -34,13 +37,14 @@ import { createLocalSemanticAdapter, localSemanticIndexPath } from "./ingest/loc
 import { scanHistory } from "./ingest/scan";
 import type { UntrustedSemanticContext } from "./ingest/semantic-context";
 import { rankIncidents, type IncidentManifest } from "./ingest/rank";
+import { onboardingGateValues } from "./onboarding/gate-measurements";
 import type { HistoryChunk } from "./ingest/types";
-import { serializeModelCommandInput } from "./mine/model-command-input";
+import { buildChatCompletionsBody, parseModelIncidentOutput, serializeModelCommandInput, usesChatCompletionsWire } from "./mine/model-command-input";
 import { detectRunnerDetails, parentProcessCommand, parseRunnerOverride, type RunnerDetectionSource } from "./onboarding/detect-runner";
 import { answerAssist } from "./onboarding/assist";
 import { validateOnboardingEffectRequirements, type EffectGateId, type OnboardingEffectEvidence } from "./onboarding/effect-requirements";
-import { canonicalGateChoice, isGateChoice, type OnboardingContext } from "./onboarding/gates";
-import { OnboardingCoordinator, reviewDecisionForChoice, type GuardReviewDecision, type OnboardingCheckpoint } from "./onboarding/coordinator";
+import { canonicalGateChoice, gateValues, isGateChoice, type OnboardingContext } from "./onboarding/gates";
+import { assertSafeIncident, OnboardingCoordinator, reviewDecisionForChoice, type GuardReviewDecision, type OnboardingCheckpoint } from "./onboarding/coordinator";
 import { lookupMarkdownAnswer } from "./onboarding/markdown-help";
 import { readCustomAgentHomes, revokeCustomAgentHomes, saveCustomAgentHome, type CustomAgentHomes } from "./onboarding/custom-agent-homes";
 import { applyOnboardingPreference, modelCommandEnvironmentName, type ModelRoute } from "./onboarding/preferences";
@@ -53,6 +57,7 @@ import { allowOnce, consumeAllowedOnce } from "./runtime/override";
 import { parseGuard } from "./schema";
 import { executeCommand } from "./scrub/command";
 import { ControlledScrubbersUnavailableError, resolveControlledScrubberCommands } from "./scrub/controlled-release";
+import { resolveScrubbers } from "./scrub/resolve";
 import { createLocalOnlySink } from "./scrub/local-sink";
 import { readLocalStats } from "./stats/local";
 import { applyPull, fetchAndPlanPull, GuardSyncError, type GuardSyncDiff } from "./sync";
@@ -62,8 +67,8 @@ import { formatUpdateCommandFailure, formatUpdateCommandResult, parseUpdateArgum
 
 const guards: Guard[] = [gitStashUntrackedGuard, mcpConfigWrongFileGuard, gitResetHardGuard, gitCheckoutDiscardGuard, gitCleanForceGuard, npxMcpHangGuard];
 const gitHookCommands = {
-  "pre-commit": "vibebloat git-hook pre-commit",
-  "pre-push": "vibebloat git-hook pre-push",
+  "pre-commit": gitHookCommandLine("pre-commit"),
+  "pre-push": gitHookCommandLine("pre-push"),
 } as const;
 const guardIdPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const effectGateFallback: Record<EffectGateId, string> = {
@@ -104,7 +109,10 @@ function formatOnboardingPretty(payload: {
     lines.push("");
     lines.push("Want to start?");
   } else if (payload.prompt?.question) {
-    lines.push(payload.prompt.question.replace(/\[EST\]/g, "~1").replace(/\[\d[\d,.]*\]/g, (match) => match.replace(/[\[\]]/g, "")));
+    // Gates arrive already rendered from this machine's measurements. Stripping
+    // brackets off unfilled placeholders used to print one developer's figures
+    // as if they were the reader's, which is worse than showing nothing.
+    lines.push(payload.prompt.question);
   } else {
     lines.push(`Gate ${payload.gate}.`);
   }
@@ -151,8 +159,15 @@ function defaultOpenAiModelCommand(): string[] {
   ];
 }
 
+/**
+ * Local mining needs a model that can hold a schema over a long transcript
+ * prompt. Measured against real history, small local models return prose or
+ * malformed JSON and mine nothing, so the default points at a capable size
+ * rather than the smallest thing that will load.
+ */
 function defaultLocalModelCommand(): string[] {
-  return ["ollama", "run", "llama3.1:8b"];
+  const model = process.env.VIBEBLOAT_LOCAL_MODEL?.trim() || "llama3.1:70b";
+  return ["ollama", "run", model];
 }
 
 function defaultAgentModelCommand(): string[] | undefined {
@@ -230,10 +245,6 @@ function githubUsername(): string {
   const fromGitConfig = result.exitCode === 0 ? result.stdout.toString().trim() : "";
   if (fromGitConfig) return fromGitConfig;
   throw new Error("GitHub username unknown. Pass --github-user=<name> or set VIBEBLOAT_GITHUB_USER.");
-}
-
-async function claimStarPackForScope(scope: "repo" | "machine"): Promise<StarPackClaimReport> {
-  return claimStarPack(githubUsername(), join(guardHomeForScope(scope), "guards"));
 }
 
 function fsGuardCommand(repository: string): string[] {
@@ -439,6 +450,8 @@ function parseIncidentManifest(value: unknown): IncidentManifest | undefined {
     chokepoint: incident.chokepoint,
     ...(typeof incident.command === "string" ? { command: incident.command } : {}),
     ...(typeof incident.path === "string" ? { path: incident.path } : {}),
+    ...(incident.args_contains === undefined ? {} : { args_contains: incident.args_contains as string[] }),
+    ...(incident.remediation === undefined ? {} : { remediation: incident.remediation as string }),
     condition: incident.condition,
     evidence_refs: incident.evidence_refs,
     severity: incident.severity,
@@ -476,6 +489,8 @@ function assertCompilableIncident(incident: IncidentManifest | undefined): asser
   if (guardDirectories().flatMap(loadGuards).some((guard) => canonicalGuardId(guard.id) === canonicalId)) {
     throw new Error("incident id conflicts with an installed guard");
   }
+  // Shared bounds, so a local incident file gets the same limits as model output.
+  assertSafeIncident(incident);
 }
 
 function hasRawBearerToken(value: unknown): boolean {
@@ -487,9 +502,13 @@ async function runModelCommand(
   candidates: HistoryChunk[],
   semanticContext?: UntrustedSemanticContext,
 ): Promise<IncidentManifest[]> {
-  const result = await executeCommand(command, serializeModelCommandInput(candidates, semanticContext));
+  const serialized = serializeModelCommandInput(candidates, semanticContext);
+  // The OpenAI route pipes stdin straight into /v1/chat/completions, which
+  // rejects the bare candidates payload; it needs a real request body.
+  const payload = usesChatCompletionsWire(command) ? buildChatCompletionsBody(serialized) : serialized;
+  const result = await executeCommand(command, payload);
   if (result.exitCode !== 0) throw new Error("model command failed");
-  const incidents: unknown = JSON.parse(result.stdout);
+  const incidents: unknown = parseModelIncidentOutput(result.stdout);
   if (!Array.isArray(incidents) || hasRawBearerToken(incidents)) {
     throw new Error("model command returned an unsafe incident manifest");
   }
@@ -653,7 +672,10 @@ function createProductionOnboardingCoordinator(
         })),
       };
     },
-    verifyScrubbers: () => resolveControlledScrubberCommands(),
+    verifyScrubbers: () => {
+      const resolved = resolveScrubbers();
+      return { presidio: resolved.presidio, gitleaks: resolved.gitleaks };
+    },
     loadHistory: async (sourceIds, authorization) => historyCatalog().loadConfirmed({
       ...authorization,
       sourceIds: sourceIds as Array<"claude-code" | "codex" | "hermes">,
@@ -698,7 +720,7 @@ async function runProductionReturningScan(
   if (sourceIds.some((id) => !available.has(id as "claude-code" | "codex" | "hermes"))) {
     throw new Error("Returning scan cursor cannot be used because a previously selected history source is unavailable.");
   }
-  const scrubbers = resolveControlledScrubberCommands();
+  const scrubbers = resolveScrubbers();
   let incidents: IncidentManifest[] = [];
   const scan = await scanIncrementalHistory({
     directory: join(home, "returning-scan"),
@@ -708,8 +730,10 @@ async function runProductionReturningScan(
       sourceIds: sourceIds as Array<"claude-code" | "codex" | "hermes">,
     }),
     scan: {
-      presidioCommand: scrubbers.presidio,
-      gitleaksCommand: scrubbers.gitleaks,
+      presidio: scrubbers.presidio,
+      gitleaks: scrubbers.gitleaks,
+      presidioCommand: [],
+      gitleaksCommand: [],
       localSink: createLocalOnlySink(join(home, "failed-ingest")),
       semantic: {
         repoRoot: resolve(process.cwd()),
@@ -881,6 +905,55 @@ if (mode === "doctor") {
   }
 }
 
+if (mode === "demo") {
+  const useModel = !process.argv.includes("--no-model");
+  let miner: DemoMiner | undefined;
+  if (useModel) {
+    try {
+      const command = modelCommandFromEnvironment();
+      miner = async (candidates) => runModelCommand(command, candidates);
+    } catch {
+      miner = undefined; // No model configured: fall back and say so.
+    }
+  }
+
+  try {
+    const result = await runSampleDemo(miner);
+    const lines = [
+      SAMPLE_LABEL,
+      "",
+      ...result.steps.map((step) => `${step.label.padEnd(10)} ${step.detail}`),
+      "",
+      ...result.blocks.flatMap((block) => [
+        `$ ${block.command}`,
+        block.receipt,
+        `exit ${block.exitCode} — the agent never ran it.`,
+        "",
+      ]),
+      ...(result.allowed.length > 0 ? [
+        "Precise, not blanket. The safe form of the same command still runs:",
+        ...result.allowed.map((allowed) => `$ ${allowed.command}   exit ${allowed.exitCode}`),
+        "",
+      ] : []),
+      ...(result.blocks[0]?.crossAgent ? [
+        "Same guard, a different agent. Codex gets a structured deny instead of exit 2:",
+        result.blocks[0].crossAgent,
+        "",
+      ] : []),
+      result.mined === "model"
+        ? "Those findings were mined live by your model, from the sample history above."
+        : "Those findings were precomputed for the sample. Configure a model and rerun to mine them live.",
+      "Run `vibebloat init` to do this against your own history.",
+    ];
+    process.stdout.write(`${lines.join("\n")}\n`);
+    process.exit(0);
+  } catch (error) {
+    const why = error instanceof Error ? error.message : "unknown error";
+    process.stderr.write(`WHAT failed: sample demo could not run.\nWHY: ${why}\nFIX: vibebloat demo --no-model\n`);
+    process.exit(1);
+  }
+}
+
 if (mode === "stats") {
   try {
     const audit = readAndPruneFirings(globalGuardHome());
@@ -974,18 +1047,12 @@ if (mode === "email" && process.argv[3] === "--forget") {
 }
 
 if (mode === "star") {
-  try {
-    const report = await claimStarPackForScope(guardScope());
-    process.stdout.write([
-      `STAR PACK UNLOCKED  ${report.guardIds.length} guards  repo: ${report.repository}  user: ${report.username}`,
-      ...report.guardIds.map((guardId) => `installed: ${guardId}`),
-    ].join("\n") + "\n");
-    process.exit(0);
-  } catch (error) {
-    const why = error instanceof Error ? error.message : "unknown error";
-    process.stderr.write(`WHAT failed: star pack was not installed.\nWHY: ${why}\nFIX: star the VibeBloat GitHub repo, then rerun vibebloat star --github-user=<name>\n`);
-    process.exit(1);
-  }
+  // Guards are never withheld pending a star: the pack installs for everyone
+  // at onboarding. This just points at the repo.
+  process.stdout.write(`VibeBloat is free and every guard is already installed.
+If it earned it: https://github.com/${starRepository()}
+`);
+  process.exit(0);
 }
 
 if (mode === "install") {
@@ -1168,7 +1235,7 @@ if (mode === "init") {
     : { gate: "A0", answers: {}, runner: runnerKind };
   let coordinatorCheckpoint = state.coordinator;
   const coordinator = createProductionOnboardingCoordinator(home, coordinatorCheckpoint, (checkpoint) => { coordinatorCheckpoint = checkpoint; }, state.preferences?.modelRoute);
-  let runner = new OnboardingRunner(state as RunnerState, onboardingRunnerContext(coordinatorCheckpoint, state));
+  let runner = new OnboardingRunner(state as RunnerState, onboardingRunnerContext(coordinatorCheckpoint, state), {}, onboardingGateValues(coordinatorCheckpoint));
   const answerIndex = process.argv.indexOf("--answer");
   const prettyMode = process.argv.includes("--pretty");
   if (answerIndex < 0) {
@@ -1242,15 +1309,6 @@ if (mode === "init") {
           throw new OnboardingEffectUnavailableError("O2", ["agentCronVerified"], proof);
         }
       }
-      if (before.gate === "N1" && selectedEffectChoice === "Star") {
-        try {
-          await claimStarPackForScope(next.scope ?? state.scope ?? "machine");
-          effectEvidence.githubStarVerified = true;
-        } catch (error) {
-          const proof = error instanceof Error ? error.message : "GitHub star could not be verified";
-          throw new OnboardingEffectUnavailableError("N1", ["githubStarVerified"], proof);
-        }
-      }
       if (effectGates.has(before.gate as EffectGateId)) {
         const gate = before.gate as EffectGateId;
         const requirement = validateOnboardingEffectRequirements(gate, effectiveAnswer, effectEvidence);
@@ -1310,7 +1368,7 @@ if (mode === "init") {
         saveOnboardingState(home, { ...scanState, coordinator: coordinatorCheckpoint, reviewDecisions: state.reviewDecisions });
         throw new ControlledScrubbersUnavailableError();
       }
-      runner = new OnboardingRunner(scanState, onboardingRunnerContext(coordinatorCheckpoint, { ...state, gate: scanState.gate }));
+      runner = new OnboardingRunner(scanState, onboardingRunnerContext(coordinatorCheckpoint, { ...state, gate: scanState.gate }), {}, onboardingGateValues(coordinatorCheckpoint));
       next = runner.advanceAutomaticGates();
     }
 
@@ -1318,11 +1376,11 @@ if (mode === "init") {
       const decisions: GuardReviewDecision[] = state.reviewDecisions ?? [];
       coordinator.review(decisions);
       await coordinator.install();
-      runner = new OnboardingRunner(next, onboardingRunnerContext(coordinatorCheckpoint, { ...state, gate: next.gate }));
+      runner = new OnboardingRunner(next, onboardingRunnerContext(coordinatorCheckpoint, { ...state, gate: next.gate }), {}, onboardingGateValues(coordinatorCheckpoint));
     }
     if (validChoice && before.gate === "L1") coordinator.prove();
     if (validChoice && !next.cancelled) {
-      runner = new OnboardingRunner(next, onboardingRunnerContext(coordinatorCheckpoint, { ...state, gate: next.gate }));
+      runner = new OnboardingRunner(next, onboardingRunnerContext(coordinatorCheckpoint, { ...state, gate: next.gate }), {}, onboardingGateValues(coordinatorCheckpoint));
       next = runner.advanceAutomaticGates();
     }
     saveOnboardingState(home, {
@@ -1428,11 +1486,11 @@ if (mode === "scan") {
     process.exit(1);
   }
   if (existsSync(historyPath) && lstatSync(historyPath).isDirectory()) {
-    process.stderr.write("WHAT failed: scan blocked before history read.\nWHY: Verified package-controlled scrubber assets are unavailable.\nFIX: install a signed VibeBloat release, then rerun vibebloat scan <history.json>\n");
+    process.stderr.write("WHAT failed: scan blocked before history read.\nWHY: the history path is a directory, not a JSON history file.\nFIX: vibebloat scan <history.json>\n");
     process.exit(1);
   }
   try {
-    const scrubbers = resolveControlledScrubberCommands();
+    const scrubbers = resolveScrubbers();
     const modelCommand = modelCommandFromEnvironment();
     const parsed: unknown = JSON.parse(readFileSync(historyPath, "utf8"));
     if (!Array.isArray(parsed) || !parsed.every(isHistoryChunk)) throw new Error("history file must contain valid history chunks");
@@ -1441,8 +1499,10 @@ if (mode === "scan") {
     let candidateCount = 0;
     let incidents: IncidentManifest[] = [];
     const result = await scanHistory(parsed, {
-      presidioCommand: scrubbers.presidio,
-      gitleaksCommand: scrubbers.gitleaks,
+      presidio: scrubbers.presidio,
+      gitleaks: scrubbers.gitleaks,
+      presidioCommand: [],
+      gitleaksCommand: [],
       localSink: createLocalOnlySink(join(scanHome, "failed-ingest")),
       semantic: {
         repoRoot: resolve(process.cwd()),
@@ -1507,10 +1567,7 @@ if (mode === "compile") {
 
     const scope = guardScope();
     const guard = compileGuard(incident, incident.severity >= 4 ? "high" : "low");
-    const syntheticEvent: Event = incident.chokepoint === "shell"
-      ? { chokepoint: "shell", command: incident.command }
-      : { chokepoint: "file", path: incident.path };
-    const result = compileLiveForScope(scope, guard, syntheticEvent, process.env, process.cwd(), { trigger: "session-end" });
+    const result = compileLiveForScope(scope, guard, syntheticEvent(guard), process.env, process.cwd(), { trigger: "session-end" });
     const directory = join(guardHomeForScope(scope), "guards");
     if (result.status === "queued") {
       process.stdout.write(`${JSON.stringify({ status: result.status, scope, warning: result.warning })}\n`);
@@ -1662,7 +1719,8 @@ if (mode === "scrub") {
     process.stderr.write(`WHAT failed: scrub target must be presidio or gitleaks.\nWHY: received '${scrubber ?? ""}'.\nFIX: vibebloat scrub presidio|gitleaks --json\n`);
     process.exit(2);
   }
-  const input = await Bun.stdin.text();
+  // stdin was already consumed by the top-level `await Bun.stdin.text()` at
+  // module load above; reuse it rather than re-reading an empty stream.
   let text: string;
   try {
     const parsed = JSON.parse(input);
@@ -1678,6 +1736,11 @@ if (mode === "scrub") {
   }
   const patterns: Array<{ name: string; re: RegExp; replace: string }> = [
     { name: "bearer", re: /Bearer\s+\S+/gi, replace: "Bearer <redacted>" },
+    { name: "aws_key", re: /\bAKIA[0-9A-Z]{16}\b/g, replace: "<redacted-aws-key>" },
+    { name: "github_pat", re: /\bghp_[A-Za-z0-9]{36,255}\b/g, replace: "<redacted-github-pat>" },
+    { name: "google_api_key", re: /\bAIza[0-9A-Za-z_-]{35}\b/g, replace: "<redacted-google-key>" },
+    { name: "stripe_key", re: /\b(?:sk|pk|rk)_(?:live|test)_[0-9a-zA-Z]{24,}\b/g, replace: "<redacted-stripe-key>" },
+    { name: "session_id", re: /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, replace: "<redacted-session-id>" },
     { name: "api_key", re: /\b(?:sk-[A-Za-z0-9_-]{20,}|api[_-]?key=[A-Za-z0-9_.-]+)\b/gi, replace: "api_key=<redacted>" },
     { name: "password", re: /\bpassword\s*[:=]\s*\S+/gi, replace: "password=<redacted>" },
     { name: "token", re: /\btoken\s*[:=]\s*\S+/gi, replace: "token=<redacted>" },
@@ -1703,5 +1766,5 @@ if (mode === "__distribution_probe__") {
   process.exit(0);
 }
 
-process.stderr.write("WHAT failed: expected allow, compile, eval, hook, git-hook, disable, doctor, init, onboard, install, uninstall, update, scan, star, stats, sync, watch, daily, rules, or email, scrub, or __distribution_probe__.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
+process.stderr.write("WHAT failed: expected allow, compile, demo, eval, hook, git-hook, disable, doctor, init, onboard, install, uninstall, update, scan, star, stats, sync, watch, daily, rules, or email, scrub, or __distribution_probe__.\nWHY: no supported mode supplied.\nFIX: bun src/cli.ts doctor\n");
 process.exit(1);
