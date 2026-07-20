@@ -31,6 +31,8 @@ export interface LiveGitObservation {
   before: GitTreeSnapshot;
   after: GitTreeSnapshot;
   occurredAt: Date;
+  /** The tree the command ran in. Scopes the compiled guard to this tree. */
+  cwd?: string;
 }
 
 const approvalBrand: unique symbol = Symbol("human-live-compile-approval");
@@ -149,12 +151,14 @@ export function detectLiveGitIncident(observation: LiveGitObservation): Incident
   const removedCount = observation.before.untrackedPaths.filter((path) => !remaining.has(path)).length;
   if (removedCount === 0) return undefined;
   const date = observation.occurredAt.toISOString().slice(0, 10);
+  const cwdUnder = observation.cwd?.trim() ? observation.cwd.replace(/\\/g, "/").replace(/\/+$/, "") : undefined;
   return {
     incident_id: destructive.id,
     class: "A",
     chokepoint: "shell",
     command: destructive.matchCommand,
     condition: `${removedCount} untracked operational file${removedCount === 1 ? "" : "s"} left the live tree`,
+    ...(cwdUnder ? { context_cwd_under: cwdUnder } : {}),
     evidence_refs: [`live-shell:${date}`],
     severity: 5,
     frequency: 1,
@@ -182,11 +186,24 @@ function compileDetectedGuard(incident: IncidentManifest): Guard {
     || incident.frequency !== 1) {
     throw new Error("Live incident manifest is invalid.");
   }
+  const cwdUnder = typeof incident.context_cwd_under === "string" && incident.context_cwd_under.trim().length > 0
+    ? incident.context_cwd_under
+    : undefined;
   const guard = compileGuard(incident, "high");
   return parseGuard({
     ...guard,
-    match: { ...guard.match, command: destructive.matchCommand, argsAnyOf: destructive.argsAnyOf },
-    action: { ...guard.action, message: `${incident.recency} live incident: ${incident.condition}.` },
+    match: {
+      ...guard.match,
+      command: destructive.matchCommand,
+      argsAnyOf: destructive.argsAnyOf,
+      ...(cwdUnder ? { context: { cwdUnder } } : {}),
+    },
+    action: {
+      ...guard.action,
+      message: cwdUnder
+        ? `${incident.recency} live incident: ${incident.condition}. Scoped to this tree — the command runs freely elsewhere.`
+        : `${incident.recency} live incident: ${incident.condition}.`,
+    },
   });
 }
 
@@ -365,7 +382,8 @@ export function processQueuedLiveProposal(
     const guard = compileDetectedGuard(incident);
     const budget = claimCompileBudget(home, "mid-session", options.now);
     if (budget.status === "queued") return { status: "queued", incidentId, warning: budget.warning };
-    const verdict = new Runtime().evaluate([guard], { chokepoint: "shell", command: syntheticCommand(incidentId) });
+    const proofEvent = { chokepoint: "shell" as const, command: syntheticCommand(incidentId), ...(guard.match.context?.cwdUnder ? { cwd: guard.match.context.cwdUnder } : {}) };
+    const verdict = new Runtime().evaluate([guard], proofEvent);
     if (!verdict.fired || !verdict.blocked) return { status: "failed", incidentId, warning: "Synthetic proposal proof did not block." };
     const directory = proposalDirectory(home, incidentId);
     const guardSource = guardBytes(guard);

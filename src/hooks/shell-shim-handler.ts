@@ -80,7 +80,7 @@ export function runShellShimCommand(
   if (before && result.exitCode === 0) {
     try {
       const after = captureGitTreeSnapshot(process.cwd(), gitExecutable);
-      const incident = detectLiveGitIncident({ command, exitCode: 0, before, after, occurredAt: new Date() });
+      const incident = detectLiveGitIncident({ command, exitCode: 0, before, after, occurredAt: new Date(), cwd: process.cwd() });
       if (incident) {
         launchLiveCompileProposal(incident, { scope: liveScope, cliCommand: options.cliCommand });
         process.stderr.write(`Live incident detected: ${incident.condition} (${incident.recency}).\nBackground guard proposal scheduled; enforcement unchanged pending approval.\nReview later: vibebloat approve-live ${incident.incident_id}\n`);

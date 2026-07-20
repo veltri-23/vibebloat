@@ -13,6 +13,12 @@ export interface IncidentManifest {
    */
   args_contains?: string[];
   condition: string;
+  /**
+   * The working tree the incident happened in. When present, the compiled guard
+   * is scoped to fire only under this path -- "never again HERE" -- instead of
+   * blocking the command everywhere.
+   */
+  context_cwd_under?: string;
   /** What to do instead. Shown to the user at block time. */
   remediation?: string;
   evidence_refs: string[];
