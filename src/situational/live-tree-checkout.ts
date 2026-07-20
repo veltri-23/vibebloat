@@ -1,5 +1,6 @@
-import { execSync } from "node:child_process";
-import type { Event, Guard } from "../types";
+import type { Guard } from "../types";
+
+export { gatherEventContext } from "./context";
 
 /**
  * A situational, self-learned guard.
@@ -42,41 +43,3 @@ export const hermesLiveTreeCheckoutGuard: Guard = {
   binds: ["hermes"],
   enabled: true,
 };
-
-function gitHasUnstagedChanges(cwd: string): boolean {
-  try {
-    const out = execSync("git status --porcelain", { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-    return out.trim().length > 0;
-  } catch {
-    return false;
-  }
-}
-
-function runningProcessNames(): string[] {
-  try {
-    if (process.platform === "win32") {
-      const out = execSync("tasklist /fo csv /nh", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-      return out.split(/\r?\n/).map((line) => line.split(",")[0]?.replace(/"/g, "") ?? "").filter(Boolean);
-    }
-    const out = execSync("ps -eo comm", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-    return out.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Gathers the live runtime facts a situational guard needs, from the real OS:
- * the working directory, whether the repo has unstaged changes, and which
- * processes are running. This is what a real enforcement hook would attach to
- * every command event.
- */
-export function gatherEventContext(command: string, cwd: string = process.cwd()): Event {
-  return {
-    chokepoint: "shell",
-    command,
-    cwd,
-    hasUnstagedChanges: gitHasUnstagedChanges(cwd),
-    runningProcesses: runningProcessNames(),
-  };
-}
