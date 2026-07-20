@@ -7,7 +7,7 @@ import type { Guard } from "../src/types";
 
 const project = join(import.meta.dir, "..");
 const roots: string[] = [];
-const unavailable = "WHAT failed: update was not applied.\nWHY: controlled release verification or guard diff validation failed.\nFIX: vibebloat update\n";
+const unavailable = "WHAT failed: update trust check stopped.\nWHY: installed package lacks controlled release metadata or pinned public key.\nFIX: npx vibebloat@latest update\n";
 
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
