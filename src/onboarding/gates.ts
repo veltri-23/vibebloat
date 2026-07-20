@@ -26,7 +26,7 @@ export type GateChoice = string | number;
 const gates: Record<GateId, GatePrompt> = {
   A0: { question: "Hey — I'm VibeBloat. I'll look through your past coding sessions, find the mistakes your AI keeps making, and set up little tripwires so they can't happen again. One quick look now — about [estimatedMinutes] minutes — then I just run quietly in the background. Want to start?", options: [] },
   A1: { question: "First: should I protect just this project, or watch your work everywhere on this machine?", options: ["Just this project", "Everywhere (recommended for solo devs)"] },
-  F0: { question: "To catch mistakes I need to add two small helpers. Neither touches your agent config: (1) a `vibebloat` command on your PATH that runs first when any agent or terminal runs a command, and (2) a git pre-commit / pre-push check. Both are easy to remove any time. Okay to set those up?", options: ["Yes", "Shim only — skip the git hook", "Tell me more first"] },
+  F0: { question: "VibeBloat needs two small helpers: (1) a `vibebloat` command on your PATH that runs first when any agent or terminal runs a command, and (2) a git pre-commit / pre-push check. Neither touches your agent config, both are easy to remove any time. The install actually runs after you approve your rules, not at this step. Record your choice now?", options: ["Yes", "Shim only — skip the git hook", "Tell me more first"] },
   B1: { question: "Let me see what you're working with. I found these on your machine: [environments]. Did I get them all?", options: ["That's everything", "You missed one", "Ignore some of these"] },
   "B1.missing": { question: "Which, and where is it?", options: [] },
   "B1.ignore": { question: "Which should I leave out?", options: [] },
