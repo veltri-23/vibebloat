@@ -44,6 +44,7 @@ test("production onboarding coordinates discovery and fails closed before histor
     "Yes",
     "That's everything",
     "Use these",
+    "Connect all (recommended)",
     "Not now",
     "Yes, but sharing off",
     "No thanks",

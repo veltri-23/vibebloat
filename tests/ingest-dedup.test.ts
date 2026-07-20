@@ -16,6 +16,6 @@ test("dedup merges repeated evidence across agents and raises frequency", () => 
     content: "git stash -u failed",
     fingerprint: "git stash -u failed",
     frequency: 2,
-    evidenceRefs: ["claude-code:one:0:0", "codex:two:3:0"],
+    evidenceRefs: ["claude-code:one:0", "codex:two:3"],
   }]);
 });

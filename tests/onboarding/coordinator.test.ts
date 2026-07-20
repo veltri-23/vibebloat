@@ -238,7 +238,7 @@ test("interrupted onboarding scan resumes post-scrub without rereading history",
       ...original.options.scan,
       modelPass: async (candidates) => {
         modelCalls += 1;
-        expect(candidates[0]).toMatchObject({ frequency: 1, evidenceRefs: ["hermes:session-1:0:0"] });
+        expect(candidates[0]).toMatchObject({ frequency: 1, evidenceRefs: ["hermes:session-1:0"] });
         return [incident];
       },
     },

@@ -240,7 +240,7 @@ test("production scan deduplicates cross-agent candidates before model pass", as
     expect(modeled).toHaveLength(1);
     expect(modeled[0]).toMatchObject({
       frequency: 2,
-      evidenceRefs: ["claude-code:one:1:0", "codex:two:4:0"],
+      evidenceRefs: ["claude-code:one:1", "codex:two:4"],
     });
   } finally {
     await rm(directory, { recursive: true, force: true });
