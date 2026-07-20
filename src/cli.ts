@@ -41,10 +41,9 @@ import { onboardingGateValues } from "./onboarding/gate-measurements";
 import type { HistoryChunk } from "./ingest/types";
 import { buildChatCompletionsBody, parseModelIncidentOutput, serializeModelCommandInput, usesChatCompletionsWire } from "./mine/model-command-input";
 import { detectRunnerDetails, parentProcessCommand, parseRunnerOverride, type RunnerDetectionSource } from "./onboarding/detect-runner";
-import { nearestGateChoice } from "./onboarding/gates";
 import { answerAssist } from "./onboarding/assist";
 import { validateOnboardingEffectRequirements, type EffectGateId, type OnboardingEffectEvidence } from "./onboarding/effect-requirements";
-import { canonicalGateChoice, gateValues, isGateChoice, type OnboardingContext } from "./onboarding/gates";
+import { canonicalGateChoice, gateValues, isGateChoice, nearestGateChoice, type OnboardingContext } from "./onboarding/gates";
 import { assertSafeIncident, OnboardingCoordinator, reviewDecisionForChoice, type GuardReviewDecision, type OnboardingCheckpoint } from "./onboarding/coordinator";
 import { lookupMarkdownAnswer } from "./onboarding/markdown-help";
 import { readCustomAgentHomes, revokeCustomAgentHomes, saveCustomAgentHome, type CustomAgentHomes } from "./onboarding/custom-agent-homes";
@@ -524,8 +523,17 @@ function onboardingRunnerContext(
 ): OnboardingContext {
   const incidentCount = checkpoint?.incidents.length ?? 0;
   const reviewed = state.reviewDecisions?.length ?? 0;
+  // Skip E2's "you don't have a code map yet" upsell when a graph tool is
+  // already wired in. Detection looks for codebase-memory-mcp's binary
+  // (env var or known install path) — cheap and correct on the platforms
+  // the operator runs on. False negatives just fall through to the
+  // existing E2 prompt.
+  const codeBaseMemoryMcpOnPath = Boolean(process.env.CODEBASE_MEMORY_MCP_PATH?.trim())
+    || (process.platform === "win32"
+      && Boolean(process.env.LOCALAPPDATA?.trim())
+      && existsSync(`${process.env.LOCALAPPDATA!.replace(/[\\/]+$/, "")}\\Programs\\codebase-memory-mcp\\codebase-memory-mcp.exe`));
   return {
-    knowledgeToolsDetected: false,
+    knowledgeToolsDetected: codeBaseMemoryMcpOnPath,
     hasHermesOrOpenClaw: checkpoint?.discovery?.environments.some(({ id }) => id === "hermes" || id === "openclaw") ?? false,
     ...(checkpoint?.phase === "review" || checkpoint?.phase === "ready-to-install" || checkpoint?.phase === "ready-to-prove" || checkpoint?.phase === "complete"
       ? { scanOutcome: incidentCount > 0 ? "found" as const : "zero" as const }
@@ -554,7 +562,7 @@ function addMissingEnvironment(coordinator: OnboardingCoordinator, home: string,
   // Allow the user to back out of the B1.missing sub-gate with natural
   // language rather than forcing them to name a real supported path. A
   // silent return leaves the state machine at B1.missing → B1.
-  if (/^\s*(actually[ ,]+(that['']s|that is) everything|that['']s everything|that is everything|nope|never ?mind|cancel)\s*\.?$/i.test(answer)) return;
+  if (/^\s*(actually[ ,]+(that['']s|that is) everything|that['']s everything|that is everything|nope|never ?mind|cancel|skip)\s*\.?$/i.test(answer)) return;
   const match = /^(.{1,60}?)\s+(?:at|in)\s+(.+)$/.exec(answer.trim());
   if (!match) throw new Error("Missing environment must be supplied as '<name> at <absolute-directory>'.");
   const label = match[1].trim();
@@ -1244,6 +1252,9 @@ if (mode === "init") {
   const answerIndex = process.argv.indexOf("--answer");
   const prettyMode = process.argv.includes("--pretty");
   if (answerIndex < 0) {
+    // Persist the empty state on first display so a user who quits at A0
+    // and reruns lands on the next gate instead of being re-greeted.
+    saveOnboardingState(home, { ...runner.snapshot(), coordinator: coordinatorCheckpoint, preferences: state.preferences, ...(state.pendingSourceIds ? { pendingSourceIds: state.pendingSourceIds } : {}) });
     const payload = { ...runner.snapshot(), runnerSource, prompt: runner.current(), ...(coordinator.discovery() ? { discovery: coordinator.discovery() } : {}) };
     if (prettyMode) {
       process.stdout.write(`${formatOnboardingPretty(payload)}\n`);

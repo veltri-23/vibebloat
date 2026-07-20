@@ -24,7 +24,7 @@ export interface OnboardingContext {
 export type GateChoice = string | number;
 
 const gates: Record<GateId, GatePrompt> = {
-  A0: { question: "Hey — I'm VibeBloat. I'll look through your past coding sessions, find the mistakes your AI keeps making, and set up little tripwires so they can't happen again. One quick look now — about [estimatedMinutes] minutes — then I just run quietly in the background. Want to start?", options: [] },
+  A0: { question: "Hey — I'm VibeBloat. I'll look through your past coding sessions, find the mistakes your AI keeps making, and set up little tripwires so they can't happen again. One quick look now — about 5 minutes for a normal history, longer if you have a lot of sessions — then I just run quietly in the background. Want to start?", options: [] },
   A1: { question: "First: should I protect just this project, or watch your work everywhere on this machine?", options: ["Just this project", "Everywhere (recommended for solo devs)"] },
   F0: { question: "VibeBloat needs two small helpers: (1) a `vibebloat` command on your PATH that runs first when any agent or terminal runs a command, and (2) a git pre-commit / pre-push check. Neither touches your agent config, both are easy to remove any time. The install actually runs after you approve your rules, not at this step. Record your choice now?", options: ["Yes", "Shim only — skip the git hook", "Tell me more first"] },
   B1: { question: "Let me see what you're working with. I found these on your machine: [environments]. Did I get them all?", options: ["That's everything", "You missed one", "Ignore some of these"] },
@@ -36,7 +36,7 @@ const gates: Record<GateId, GatePrompt> = {
   "E1.1": { question: "Connecting [knowledgeTool] lets me point to your own notes and code — sure you want to skip it?", options: ["Connect", "Skip"] },
   E2: { question: "You don't have a code map yet. I work much better with one — want me to install codebase-memory-mcp? (recommended)", options: ["Install it", "Not now"] },
   F1: { question: "Quick note on privacy: I read your old sessions right here on your computer — nothing gets uploaded. I hide any passwords or keys before I even look. And you approve every rule before it turns on. One optional thing: I can share the mistake patterns — never your code — to help protect other developers. It's on by default, but you can flip it off. Good to go?", options: ["Yes, sharing on", "Yes, but sharing off", "Cancel"] },
-  F1b: { question: "Mind if I remember your answers to these setup questions — just the choices, never your code or secrets? It helps me make this smoother for everyone, now and when you come back. Totally optional.", options: ["Sure", "No thanks"] },
+  F1b: { question: "I can remember your choices on this machine to skip these questions next time. Stays local. OK?", options: ["Sure", "No thanks"] },
   F2: { question: "How should I do the scan? It's the one heavy step.", options: ["Just use this chat — you're already talking to me through [runnerAgent], I'll run it right here, nothing to set up (recommended when agent-driven)", "Use my own API key", "Run it locally and free (advanced: needs a large local model, small ones cannot do this reliably)"] },
   "F2.1": { question: "Here's the plan: [scanPlan]. When it's done I'll show you how much time these tripwires save you.", options: [] },
   F3: { question: "Your history is pretty big ([historySize]) — a full deep look is about [deepScanMinutes] minutes. How do you want it?", options: ["I'll wait, show me progress (recommended)", "Set up the important rules now, finish the deep part in the background"] },
@@ -45,7 +45,7 @@ const gates: Record<GateId, GatePrompt> = {
   F6: { question: "Want a free starter pack of rules every dev needs, plus a heads-up when I ship something big? Just your name, email, and what you're building — rare emails, no spam.", options: ["Yes", "Skip"] },
   SCAN: { question: "", options: [] },
   "G-empty": { question: "Looks like there's not much history here yet. I can start you with a pack of common safety rules and get smarter as you work. Want that? (To watch the full scan on sample data first, run `vibebloat demo`.)", options: ["Yes", "No"] },
-  I1: { question: "I read [sessionsBySource] [sessionNoun] and found [incidentsFound] [mistakeNoun] you've made more than once. Going by how often each one hit you, that's roughly [hoursLost] hours of cleanup. Let's turn them into tripwires.", options: [] },
+  I1: { question: "I read [sessionsScanned] [sessionNoun] and found [incidentsFound] [mistakeNoun] you've made more than once. Going by how often each one hit you, that's roughly [hoursLost] hours of cleanup. Let's turn them into tripwires.", options: [] },
   "I-zero": { question: "Good news — I couldn't find mistakes you repeat. That's rare. Want a few common preventive rules anyway? (`vibebloat demo` shows what a scan finds on sample data.)", options: ["Yes", "No"] },
   J0: { question: "I've got [incidentsFound]. Want to go through them one at a time, or should I switch on the [confidentCount] I'm confident about and you just review the [uncertainCount] I'm unsure on?", options: ["One at a time", "Fast — turn on the confident ones, I'll review the rest"] },
   J1: { question: "Here's one. Back on [topIncidentDate], `[topIncidentCommand]` [incidentEffect]. Want me to stop that from happening again? I'll step in only when it's actually risky, and you can always override it.", options: ["Yes, set it up", "Change it", "Skip", "That wasn't really a mistake"] },
@@ -92,39 +92,26 @@ export function isGateChoice(gate: GateId, choice: GateChoice, values: Record<st
     || rendered[index]?.toLowerCase() === value
     || value === String(index + 1)
     || value === String.fromCharCode(97 + index))) return true;
-  // Affirmative natural-language answers (yep, sure, ok, please) default to
-  // the first option when one is marked recommended. The user is saying "yes
-  // to the recommended" without echoing the option text. Decline phrases
-  // (nope, nah, skip) default to the option after the recommended one, which
-  // is the conventional "no / skip" position.
-  if (isAffirmative(value)) {
-    const recommended = options.findIndex((option) => /recommended/i.test(option));
-    if (recommended >= 0) return value !== "" && /\d/.test(value) === false;
-  }
-  if (isDecline(value)) {
+  if (AFFIRMATIVE_WORDS.has(value)) return true;
+  // Decline maps to the option after the recommended one (typical "no"
+  // position), or to the last option when there is no recommended marker.
+  if (DECLINE_WORDS.has(value)) {
     const recommended = options.findIndex((option) => /recommended/i.test(option));
     if (recommended >= 0 && options.length > recommended + 1) return true;
+    if (recommended < 0) return true;
   }
   return false;
 }
 
 const AFFIRMATIVE_WORDS = new Set(["yes", "y", "yep", "yeah", "yup", "sure", "ok", "okay", "confirm", "please", "do it", "absolutely", "yessir"]);
-const DECLINE_WORDS = new Set(["no", "n", "nope", "nah", "skip", "cancel", "decline", "never", "no thanks", "nope thanks", "nada"]);
-
-function isAffirmative(value: string): boolean {
-  return AFFIRMATIVE_WORDS.has(value);
-}
-
-function isDecline(value: string): boolean {
-  return DECLINE_WORDS.has(value);
-}
+const DECLINE_WORDS = new Set(["no", "n", "nope", "nah", "skip", "cancel", "decline", "never", "nada"]);
 
 /**
- * If a near-miss option exists, return the index of the closest match. Used by
- * the CLI to surface "did you mean X?" when the user's answer isn't a direct
- * choice. Distance is normalized Levenshtein in [0, 1]; 0.6 is the
- * permissive threshold that catches typos and paraphrases without suggesting
- * unrelated options.
+ * If a near-miss option exists, return the index of the closest match. The
+ * CLI surfaces this so the driving agent can ask "did you mean X?". Distance
+ * is normalized Levenshtein in [0, 1]; compares against the full option, the
+ * rendered form, and the first word (typos usually touch the leading token,
+ * not the trailing (recommended) tag).
  */
 export function nearestGateChoice(gate: GateId, choice: GateChoice, values: Record<string, string | number> = {}): { index: number; option: string; distance: number } | undefined {
   const options = getGate(gate).options;
@@ -136,10 +123,6 @@ export function nearestGateChoice(gate: GateId, choice: GateChoice, values: Reco
   for (let index = 0; index < options.length; index += 1) {
     const option = options[index]!;
     const renderedOption = rendered[index] ?? option;
-    // Compare against the option, the rendered form, and the first word —
-    // typos usually touch the leading token, not the trailing (recommended)
-    // tag, so the first-word comparison is the one that finds "evrywhere" →
-    // "Everywhere".
     const firstWord = (renderedOption.split(/\s+/)[0] ?? renderedOption).toLowerCase();
     const distance = Math.min(
       normalizedLevenshtein(value, option.toLowerCase()),
@@ -156,8 +139,7 @@ export function nearestGateChoice(gate: GateId, choice: GateChoice, values: Reco
 function normalizedLevenshtein(a: string, b: string): number {
   if (a === b) return 0;
   if (!a.length || !b.length) return 1;
-  const distance = levenshtein(a, b);
-  return distance / Math.max(a.length, b.length);
+  return levenshtein(a, b) / Math.max(a.length, b.length);
 }
 
 function levenshtein(a: string, b: string): number {
@@ -182,6 +164,23 @@ export function canonicalGateChoice(gate: GateId, choice: GateChoice, values: Re
   const rendered = comparableOptions(gate, options.length > 0 ? values : {});
   const displayed = rendered.findIndex((option) => option.toLowerCase() === choice.trim().toLowerCase());
   if (displayed >= 0) return options[displayed]!;
+  // Apply intent-alias canonicalization: "yes" → recommended, "no" → a
+  // non-recommended option (last when multiple). When the gate has no
+  // options (free-form gates like A0), preserve the original choice so
+  // the answer is recorded as-given.
+  const value = choice.trim().toLowerCase();
+  if (options.length === 0) return choice;
+  if (AFFIRMATIVE_WORDS.has(value)) {
+    const recommended = options.findIndex((option) => /recommended/i.test(option));
+    return recommended >= 0 ? options[recommended]! : options[0]!;
+  }
+  if (DECLINE_WORDS.has(value)) {
+    const recommended = options.findIndex((option) => /recommended/i.test(option));
+    if (recommended < 0) return options[options.length - 1]!;
+    // The non-recommended option nearest the end is the canonical decline.
+    const nonRecommended = options.filter((_, index) => index !== recommended);
+    return nonRecommended[nonRecommended.length - 1]!;
+  }
   const index = /^[a-z]$/i.test(choice) ? choice.toLowerCase().charCodeAt(0) - 97 : Number(choice) - 1;
   return Number.isInteger(index) && options[index] ? options[index] : choice;
 }
@@ -269,7 +268,6 @@ export function gatePlaceholders(gate: GateId): string[] {
 /** Measurements taken from this machine's own history. Every field is optional. */
 export interface GateMeasurements {
   sessionsScanned?: number;
-  sessionsBySource?: string;
   incidentsFound?: number;
   confidentCount?: number;
   uncertainCount?: number;
@@ -357,7 +355,6 @@ export function gateValues(measurements: GateMeasurements = {}): Record<string, 
   const environmentNames = measurements.environments ?? [];
   return {
     sessionsScanned: formatCount(measurements.sessionsScanned, "your"),
-    sessionsBySource: measurements.sessionsBySource ?? (measurements.sessionsScanned !== undefined ? formatCount(measurements.sessionsScanned, "") : ""),
     incidentsFound: formatCount(measurements.incidentsFound, "a few"),
     confidentCount: formatCount(measurements.confidentCount, "ones"),
     uncertainCount: formatCount(measurements.uncertainCount, "rest"),

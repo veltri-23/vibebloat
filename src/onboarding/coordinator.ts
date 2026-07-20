@@ -88,9 +88,6 @@ export interface OnboardingSnapshot {
   incidentCount: number;
   /** Distinct sessions read during the scan. Undefined until a scan has run. */
   sessionsScanned?: number;
-  /** Distinct sessions per source environment, so the user can tell apart
-   *  their seeded history from the runtime agent's own session file. */
-  sessionsBySource?: Record<string, number>;
   approvedIncidentIds: string[];
   installedGuardIds: string[];
   cancelled: boolean;
@@ -202,7 +199,6 @@ export class OnboardingCoordinator {
   #selectedSourceIds: string[] = [];
   #incidents: IncidentManifest[] = [];
   #sessionsScanned: number | undefined;
-  #sessionsBySource: Record<string, number> | undefined;
   #approved: Array<{ incident: IncidentManifest; confidence: "high" | "low" }> = [];
   #installed: Guard[] = [];
   #cancelled = false;
@@ -241,7 +237,6 @@ export class OnboardingCoordinator {
       selectedSourceIds: [...this.#selectedSourceIds],
       incidentCount: this.#incidents.length,
       ...(this.#sessionsScanned === undefined ? {} : { sessionsScanned: this.#sessionsScanned }),
-      ...(this.#sessionsBySource === undefined ? {} : { sessionsBySource: { ...this.#sessionsBySource } }),
       approvedIncidentIds: this.#approved.map(({ incident }) => incident.incident_id),
       installedGuardIds: this.#installed.map((guard) => guard.id),
       cancelled: this.#cancelled,
@@ -378,15 +373,6 @@ export class OnboardingCoordinator {
     }
     if (loadedHistory) {
       this.#sessionsScanned = new Set(loadedHistory.map((chunk) => `${chunk.source}:${chunk.sessionId}`)).size;
-      const bySource = new Map<string, Set<string>>();
-      for (const chunk of loadedHistory) {
-        const sessions = bySource.get(chunk.source) ?? new Set<string>();
-        sessions.add(chunk.sessionId);
-        bySource.set(chunk.source, sessions);
-      }
-      this.#sessionsBySource = Object.fromEntries(
-        [...bySource.entries()].map(([source, sessions]) => [source, sessions.size]),
-      );
     }
     if (loadedHistory && this.options.incrementalCursor) {
       seedIncrementalCursor(
