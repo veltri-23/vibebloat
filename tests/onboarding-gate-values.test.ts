@@ -22,7 +22,8 @@ test("no gate placeholder is a literal sample value", () => {
 
 test("gateValues fills every placeholder from real scan data", () => {
   const values = gateValues({
-    sessionsScanned: 312,
+    sessionsBySource: "5 from Claude Code + 2 from Hermes",
+    sessionsScanned: 7,
     incidentsFound: 4,
     confidentCount: 3,
     uncertainCount: 1,
@@ -48,8 +49,8 @@ test("gateValues fills every placeholder from real scan data", () => {
 });
 
 test("different machines render different numbers", () => {
-  const mine = renderGate("I1", gateValues({ sessionsScanned: 1453, incidentsFound: 12, hoursLost: 6.5 }));
-  const theirs = renderGate("I1", gateValues({ sessionsScanned: 20, incidentsFound: 1, hoursLost: 0.25 }));
+  const mine = renderGate("I1", gateValues({ sessionsBySource: "1,453 from Claude Code", incidentsFound: 12, hoursLost: 6.5 }));
+  const theirs = renderGate("I1", gateValues({ sessionsBySource: "20 from Hermes", incidentsFound: 1, hoursLost: 0.25 }));
 
   expect(mine.question).toContain("1,453");
   expect(theirs.question).toContain("20");

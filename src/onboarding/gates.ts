@@ -45,7 +45,7 @@ const gates: Record<GateId, GatePrompt> = {
   F6: { question: "Want a free starter pack of rules every dev needs, plus a heads-up when I ship something big? Just your name, email, and what you're building — rare emails, no spam.", options: ["Yes", "Skip"] },
   SCAN: { question: "", options: [] },
   "G-empty": { question: "Looks like there's not much history here yet. I can start you with a pack of common safety rules and get smarter as you work. Want that? (To watch the full scan on sample data first, run `vibebloat demo`.)", options: ["Yes", "No"] },
-  I1: { question: "I read [sessionsScanned] [sessionNoun] and found [incidentsFound] [mistakeNoun] you've made more than once. Going by how often each one hit you, that's roughly [hoursLost] hours of cleanup. Let's turn them into tripwires.", options: [] },
+  I1: { question: "I read [sessionsBySource] [sessionNoun] and found [incidentsFound] [mistakeNoun] you've made more than once. Going by how often each one hit you, that's roughly [hoursLost] hours of cleanup. Let's turn them into tripwires.", options: [] },
   "I-zero": { question: "Good news — I couldn't find mistakes you repeat. That's rare. Want a few common preventive rules anyway? (`vibebloat demo` shows what a scan finds on sample data.)", options: ["Yes", "No"] },
   J0: { question: "I've got [incidentsFound]. Want to go through them one at a time, or should I switch on the [confidentCount] I'm confident about and you just review the [uncertainCount] I'm unsure on?", options: ["One at a time", "Fast — turn on the confident ones, I'll review the rest"] },
   J1: { question: "Here's one. Back on [topIncidentDate], `[topIncidentCommand]` [incidentEffect]. Want me to stop that from happening again? I'll step in only when it's actually risky, and you can always override it.", options: ["Yes, set it up", "Change it", "Skip", "That wasn't really a mistake"] },
@@ -355,6 +355,7 @@ export function gateValues(measurements: GateMeasurements = {}): Record<string, 
   const environmentNames = measurements.environments ?? [];
   return {
     sessionsScanned: formatCount(measurements.sessionsScanned, "your"),
+    sessionsBySource: measurements.sessionsBySource ?? (measurements.sessionsScanned !== undefined ? formatCount(measurements.sessionsScanned, "") : ""),
     incidentsFound: formatCount(measurements.incidentsFound, "a few"),
     confidentCount: formatCount(measurements.confidentCount, "ones"),
     uncertainCount: formatCount(measurements.uncertainCount, "rest"),
