@@ -41,6 +41,7 @@ import { onboardingGateValues } from "./onboarding/gate-measurements";
 import type { HistoryChunk } from "./ingest/types";
 import { buildChatCompletionsBody, parseModelIncidentOutput, serializeModelCommandInput, usesChatCompletionsWire } from "./mine/model-command-input";
 import { detectRunnerDetails, parentProcessCommand, parseRunnerOverride, type RunnerDetectionSource } from "./onboarding/detect-runner";
+import { nearestGateChoice } from "./onboarding/gates";
 import { answerAssist } from "./onboarding/assist";
 import { validateOnboardingEffectRequirements, type EffectGateId, type OnboardingEffectEvidence } from "./onboarding/effect-requirements";
 import { canonicalGateChoice, gateValues, isGateChoice, type OnboardingContext } from "./onboarding/gates";
@@ -550,6 +551,10 @@ function verifiedMissingEnvironmentDirectory(path: string): string {
 }
 
 function addMissingEnvironment(coordinator: OnboardingCoordinator, home: string, answer: string): void {
+  // Allow the user to back out of the B1.missing sub-gate with natural
+  // language rather than forcing them to name a real supported path. A
+  // silent return leaves the state machine at B1.missing → B1.
+  if (/^\s*(actually[ ,]+(that['']s|that is) everything|that['']s everything|that is everything|nope|never ?mind|cancel)\s*\.?$/i.test(answer)) return;
   const match = /^(.{1,60}?)\s+(?:at|in)\s+(.+)$/.exec(answer.trim());
   if (!match) throw new Error("Missing environment must be supplied as '<name> at <absolute-directory>'.");
   const label = match[1].trim();
@@ -1250,6 +1255,7 @@ if (mode === "init") {
   const answer = process.argv[answerIndex + 1] ?? "";
   const before = runner.snapshot();
   const directChoice = answer.trim().toLowerCase() === "cancel" || isGateChoice(before.gate, answer);
+  const nearMiss = directChoice ? undefined : nearestGateChoice(before.gate, answer);
   let assistResponse: ReturnType<OnboardingRunner["assist"]> | undefined;
   let next: RunnerState;
   if (directChoice) {
@@ -1407,7 +1413,7 @@ if (mode === "init") {
     process.stderr.write(`WHAT failed: onboarding setup stopped.\nWHY: ${reason}\nFIX: ${modelVariable ? `set ${modelVariable} to a JSON command array, then rerun vibebloat init --answer ${JSON.stringify(effectiveAnswer)}` : "vibebloat init --answer Yes"}\n`);
     process.exit(1);
   }
-  process.stdout.write(`${JSON.stringify({ ...next, ...(state.pendingSourceIds ? { pendingSourceIds: state.pendingSourceIds } : {}), runnerSource, prompt: runner.current(), ...(coordinator.discovery() ? { discovery: coordinator.discovery() } : {}), ...(assistResponse ? { assist: assistResponse } : {}) })}\n`);
+  process.stdout.write(`${JSON.stringify({ ...next, ...(state.pendingSourceIds ? { pendingSourceIds: state.pendingSourceIds } : {}), runnerSource, prompt: runner.current(), ...(coordinator.discovery() ? { discovery: coordinator.discovery() } : {}), ...(assistResponse ? { assist: assistResponse } : {}), ...(nearMiss ? { nearMiss: { option: nearMiss.option, distance: Number(nearMiss.distance.toFixed(2)) } } : {}) })}\n`);
   process.exit(0);
 }
 

@@ -87,11 +87,93 @@ export function isGateChoice(gate: GateId, choice: GateChoice, values: Record<st
   if (typeof choice === "number") return Number.isInteger(choice) && choice >= 0 && choice < options.length;
   const value = choice.trim().toLowerCase();
   const rendered = comparableOptions(gate, values);
-  return options.some((option, index) =>
+  if (options.some((option, index) =>
     option.toLowerCase() === value
     || rendered[index]?.toLowerCase() === value
     || value === String(index + 1)
-    || value === String.fromCharCode(97 + index));
+    || value === String.fromCharCode(97 + index))) return true;
+  // Affirmative natural-language answers (yep, sure, ok, please) default to
+  // the first option when one is marked recommended. The user is saying "yes
+  // to the recommended" without echoing the option text. Decline phrases
+  // (nope, nah, skip) default to the option after the recommended one, which
+  // is the conventional "no / skip" position.
+  if (isAffirmative(value)) {
+    const recommended = options.findIndex((option) => /recommended/i.test(option));
+    if (recommended >= 0) return value !== "" && /\d/.test(value) === false;
+  }
+  if (isDecline(value)) {
+    const recommended = options.findIndex((option) => /recommended/i.test(option));
+    if (recommended >= 0 && options.length > recommended + 1) return true;
+  }
+  return false;
+}
+
+const AFFIRMATIVE_WORDS = new Set(["yes", "y", "yep", "yeah", "yup", "sure", "ok", "okay", "confirm", "please", "do it", "absolutely", "yessir"]);
+const DECLINE_WORDS = new Set(["no", "n", "nope", "nah", "skip", "cancel", "decline", "never", "no thanks", "nope thanks", "nada"]);
+
+function isAffirmative(value: string): boolean {
+  return AFFIRMATIVE_WORDS.has(value);
+}
+
+function isDecline(value: string): boolean {
+  return DECLINE_WORDS.has(value);
+}
+
+/**
+ * If a near-miss option exists, return the index of the closest match. Used by
+ * the CLI to surface "did you mean X?" when the user's answer isn't a direct
+ * choice. Distance is normalized Levenshtein in [0, 1]; 0.6 is the
+ * permissive threshold that catches typos and paraphrases without suggesting
+ * unrelated options.
+ */
+export function nearestGateChoice(gate: GateId, choice: GateChoice, values: Record<string, string | number> = {}): { index: number; option: string; distance: number } | undefined {
+  const options = getGate(gate).options;
+  if (options.length === 0) return undefined;
+  if (typeof choice === "number") return { index: choice, option: options[choice] ?? String(choice), distance: 0 };
+  const value = choice.trim().toLowerCase();
+  const rendered = comparableOptions(gate, values);
+  let best: { index: number; option: string; distance: number } | undefined;
+  for (let index = 0; index < options.length; index += 1) {
+    const option = options[index]!;
+    const renderedOption = rendered[index] ?? option;
+    // Compare against the option, the rendered form, and the first word —
+    // typos usually touch the leading token, not the trailing (recommended)
+    // tag, so the first-word comparison is the one that finds "evrywhere" →
+    // "Everywhere".
+    const firstWord = (renderedOption.split(/\s+/)[0] ?? renderedOption).toLowerCase();
+    const distance = Math.min(
+      normalizedLevenshtein(value, option.toLowerCase()),
+      normalizedLevenshtein(value, renderedOption.toLowerCase()),
+      normalizedLevenshtein(value, firstWord),
+    );
+    if (best === undefined || distance < best.distance) {
+      best = { index, option, distance };
+    }
+  }
+  return best !== undefined && best.distance <= 0.5 ? best : undefined;
+}
+
+function normalizedLevenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  if (!a.length || !b.length) return 1;
+  const distance = levenshtein(a, b);
+  return distance / Math.max(a.length, b.length);
+}
+
+function levenshtein(a: string, b: string): number {
+  const m = a.length, n = b.length;
+  const previous = new Array<number>(n + 1);
+  const current = new Array<number>(n + 1);
+  for (let j = 0; j <= n; j += 1) previous[j] = j;
+  for (let i = 1; i <= m; i += 1) {
+    current[0] = i;
+    for (let j = 1; j <= n; j += 1) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      current[j] = Math.min(current[j - 1]! + 1, previous[j]! + 1, previous[j - 1]! + cost);
+    }
+    for (let j = 0; j <= n; j += 1) previous[j] = current[j]!;
+  }
+  return previous[n]!;
 }
 
 export function canonicalGateChoice(gate: GateId, choice: GateChoice, values: Record<string, string | number> = {}): string {
