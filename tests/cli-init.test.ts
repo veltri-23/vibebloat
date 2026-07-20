@@ -139,11 +139,11 @@ test("init advances only silent gates after a valid human answer", () => {
   writeFileSync(join(home, "onboarding.json"), JSON.stringify({ gate: "F2", answers: {} }));
   const result = initAt(join(import.meta.dir, ".."), home, {
     VIBEBLOAT_LOCAL_MODEL_COMMAND: JSON.stringify(["ollama", "run", "local-model"]),
-  }, "--answer", "Run it locally and free (a bit slower)");
+  }, "--answer", "Run it locally and free (advanced: needs a large local model, small ones cannot do this reliably)");
   expect(JSON.parse(result.stdout.toString())).toMatchObject({ gate: "F4" });
   expect(JSON.parse(readFileSync(join(home, "onboarding.json"), "utf8"))).toMatchObject({
     gate: "F4",
-    answers: { F2: "Run it locally and free (a bit slower)" },
+    answers: { F2: "Run it locally and free (advanced: needs a large local model, small ones cannot do this reliably)" },
     preferences: { modelRoute: "local" },
   });
 });

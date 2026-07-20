@@ -168,5 +168,8 @@ export function parseModelIncidentOutput(raw: string): unknown[] {
       continue;
     }
   }
-  throw new Error("model command did not return a JSON incident array");
+  // Named the likely cause: measured against real history, this is almost
+  // always a model too small to hold the schema over a long prompt, not a
+  // transport problem the user can debug from the message alone.
+  throw new Error("model command did not return a JSON incident array (a small local model usually cannot; try a larger model or an API route)");
 }

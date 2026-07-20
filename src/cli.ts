@@ -159,8 +159,15 @@ function defaultOpenAiModelCommand(): string[] {
   ];
 }
 
+/**
+ * Local mining needs a model that can hold a schema over a long transcript
+ * prompt. Measured against real history, small local models return prose or
+ * malformed JSON and mine nothing, so the default points at a capable size
+ * rather than the smallest thing that will load.
+ */
 function defaultLocalModelCommand(): string[] {
-  return ["ollama", "run", "llama3.1:8b"];
+  const model = process.env.VIBEBLOAT_LOCAL_MODEL?.trim() || "llama3.1:70b";
+  return ["ollama", "run", model];
 }
 
 function defaultAgentModelCommand(): string[] | undefined {
