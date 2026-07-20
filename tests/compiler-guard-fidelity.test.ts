@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { compileGuard } from "../src/compiler/codex-fill";
+import { compileGuard, compileRankedIncidents } from "../src/compiler/codex-fill";
 import { renderGuardReceipt } from "../src/block-receipt";
 import { match } from "../src/match";
 import { syntheticEvent } from "../src/compiler/synthetic-event";
@@ -92,4 +92,22 @@ test("an over-long or malformed args list is rejected, never silently dropped", 
   expect(() => assertSafeIncident(longRemediation)).toThrow();
 
   expect(() => assertSafeIncident(stashIncident)).not.toThrow();
+});
+
+test("duplicate incidents from one model response collapse to one guard", () => {
+  // A local model returned the same incident three times on real data; three
+  // identical guards would install, each firing on the same command.
+  const duplicated = [stashIncident, { ...stashIncident }, { ...stashIncident, frequency: 9 }];
+  const guards = compileRankedIncidents(duplicated);
+  expect(guards).toHaveLength(1);
+  // The highest-frequency copy wins, since ranking already prefers it.
+  expect(guards[0]!.id).toBe("git-stash-untracked");
+});
+
+test("distinct incidents are all kept", () => {
+  const guards = compileRankedIncidents([
+    stashIncident,
+    { ...stashIncident, incident_id: "docker-volumes", command: "docker compose", args_contains: ["down", "-v"] },
+  ]);
+  expect(guards).toHaveLength(2);
 });

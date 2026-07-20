@@ -28,11 +28,22 @@ export function shannonEntropy(value: string): number {
 /** Keywords whose adjacent value is a credential. */
 const secretKeyword = "(?:password|passwd|pwd|pass|secret|client[_-]?secret|api[_-]?key|access[_-]?key|auth[_-]?token|token)";
 
-/** Keeps the final path segment: the model still needs to know WHICH file an incident touched. */
-function redactPathKeepingTail(match: string, separator: string): string {
+/** A JSON key that names a credential, whatever the value looks like. */
+const secretKeyPattern = new RegExp(`^${secretKeyword}$`, "i");
+
+/**
+ * Keeps the final path segment: the model still needs to know WHICH file an
+ * incident touched.
+ *
+ * Always joins with a forward slash. The pipeline scrubs a SERIALIZED payload
+ * and parses it back (ingest/scan.ts), so emitting a backslash produces an
+ * invalid JSON escape and kills the entire scan — which is exactly what
+ * happened on the first run against real Windows transcripts.
+ */
+function redactPathKeepingTail(match: string): string {
   const segments = match.split(/[\\/]+/).filter(Boolean);
   const tail = segments.at(-1);
-  return tail ? `<path>${separator}${tail}` : "<path>";
+  return tail ? `<path>/${tail}` : "<path>";
 }
 
 const namedPatterns: Array<{ name: string; re: RegExp; replace: string | ((match: string) => string) }> = [
@@ -52,9 +63,11 @@ const namedPatterns: Array<{ name: string; re: RegExp; replace: string | ((match
   // Truncated PEM blocks are common in chat logs, so END is optional.
   { name: "private_key_block", re: /-----BEGIN [A-Z ]*PRIVATE KEY-----(?:[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----)?/g, replace: "<redacted-private-key>" },
   { name: "email", re: /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, replace: "<redacted-email>" },
-  { name: "absolute_path", re: /\b[A-Z]:[\\/][^\s"'`<>|]+/gi, replace: (match) => redactPathKeepingTail(match, "\\") },
+  // UNC shares carry backslashes too, and matched no pattern at all before.
+  { name: "unc_path", re: /\\\\[^\s"'`<>|]+/g, replace: (match) => redactPathKeepingTail(match) },
+  { name: "absolute_path", re: /\b[A-Z]:[\\/][^\s"'`<>|]+/gi, replace: (match) => redactPathKeepingTail(match) },
   // Two or more segments, so slash commands (/ship) are not mistaken for paths.
-  { name: "absolute_path_unix", re: /(?<=^|[\s("'`])(?:\/[\w.\-]+){2,}\/?/g, replace: (match) => redactPathKeepingTail(match, "/") },
+  { name: "absolute_path_unix", re: /(?<=^|[\s("'`])(?:\/[\w.\-]+){2,}\/?/g, replace: (match) => redactPathKeepingTail(match) },
 ];
 
 /**
@@ -66,7 +79,63 @@ const namedPatterns: Array<{ name: string; re: RegExp; replace: string | ((match
 const entropyCandidate = /\b(?=[A-Za-z0-9+=_-]*[0-9+=_-])(?=[A-Za-z0-9+=_-]*[A-Za-z])[A-Za-z0-9+=_-]{24,}\b/g;
 const entropyThresholdBitsPerChar = 3.5;
 
+/**
+ * The ingest gate hands us a serialized document, not prose. These patterns
+ * are prose-oriented and greedy: over raw JSON text, `"token":"abc"}` matches
+ * through the closing quote and brace, so the payload no longer parses and the
+ * scan dies before the model is ever reached. Scrub the string VALUES and
+ * leave the structure alone.
+ */
 export function builtinRedact(text: string): RedactionResult {
+  const document = parseDocument(text);
+  if (document !== undefined) {
+    const findings: RedactionFinding[] = [];
+    const scrubbed = redactJsonValues(document, findings);
+    return { payload: JSON.stringify(scrubbed), findings: mergeFindings(findings) };
+  }
+  return redactText(text);
+}
+
+function parseDocument(text: string): unknown {
+  const trimmed = text.trimStart();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return typeof parsed === "object" && parsed !== null ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Values only. Keys are structure, and rewriting them corrupts the document. */
+function redactJsonValues(value: unknown, findings: RedactionFinding[]): unknown {
+  if (typeof value === "string") {
+    const result = redactText(value);
+    findings.push(...result.findings);
+    return result.payload;
+  }
+  if (Array.isArray(value)) return value.map((entry) => redactJsonValues(entry, findings));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => {
+      // A revealing key names the secret even when the value looks innocuous:
+      // {"token": "abc123"} has nothing in the value for a pattern to catch.
+      if (typeof entry === "string" && secretKeyPattern.test(key)) {
+        findings.push({ name: "keyword_secret", count: 1 });
+        return [key, "<redacted-secret>"];
+      }
+      return [key, redactJsonValues(entry, findings)];
+    }));
+  }
+  return value;
+}
+
+function mergeFindings(findings: readonly RedactionFinding[]): RedactionFinding[] {
+  const totals = new Map<string, number>();
+  for (const finding of findings) totals.set(finding.name, (totals.get(finding.name) ?? 0) + finding.count);
+  return [...totals].map(([name, count]) => ({ name, count }));
+}
+
+function redactText(text: string): RedactionResult {
   let cleaned = text;
   const findings: RedactionFinding[] = [];
 
@@ -123,7 +192,29 @@ export function builtinGitleaksScrubber(options: BuiltinScrubberOptions = {}): S
   const redact = options.redact ?? builtinRedact;
   return async (payload) => {
     const { payload: cleaned } = redact(payload);
-    if (survivingSecret.test(cleaned)) throw new Error("Built-in scrubber left a secret in the payload");
+    if (retainsSecret(cleaned)) throw new Error("Built-in scrubber left a secret in the payload");
     return cleaned;
   };
+}
+
+/**
+ * Checks string VALUES, not the serialized document.
+ *
+ * Testing the raw JSON text lets a keyword at the end of one value run into
+ * the next field's punctuation -- a transcript containing "second pass:"
+ * became `pass:","timestamp":"..."`, which reads as an unredacted secret and
+ * halted the entire scan. Found against real history.
+ */
+function retainsSecret(payload: string): boolean {
+  const document = parseDocument(payload);
+  if (document === undefined) return survivingSecret.test(payload);
+  let found = false;
+  const walk = (value: unknown): void => {
+    if (found) return;
+    if (typeof value === "string") { found = survivingSecret.test(value); return; }
+    if (Array.isArray(value)) { value.forEach(walk); return; }
+    if (value && typeof value === "object") Object.values(value).forEach(walk);
+  };
+  walk(document);
+  return found;
 }

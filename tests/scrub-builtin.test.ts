@@ -116,3 +116,83 @@ test("fail-closed check is broader than the redactor, not a subset of it", async
     await expect(leaky(secret)).rejects.toThrow(/secret/i);
   }
 });
+
+// The pipeline scrubs a SERIALIZED payload and parses it back, so a
+// replacement containing a backslash produces an invalid JSON escape and kills
+// the whole scan. Found by dogfooding on real Windows transcripts.
+test("redacted output survives a JSON round trip", () => {
+  const chunks = [{ role: "user", content: String.raw`git stash -u deleted D:\AI\AIOS\launchers again` }];
+  const scrubbed = builtinRedact(JSON.stringify(chunks)).payload;
+  expect(() => JSON.parse(scrubbed)).not.toThrow();
+  // The final segment still survives, so the incident stays specific.
+  expect(scrubbed).toContain("launchers");
+});
+
+test("every redacted path token is backslash-free", () => {
+  const paths = [
+    String.raw`C:\Users\me\project\file.ts`,
+    String.raw`D:\AI\notes`,
+    "/home/hunter/projects/app",
+    // UNC share: two leading backslashes, and previously matched no pattern.
+    "\\\\server\\share\\file",
+  ];
+  for (const path of paths) {
+    const { payload } = builtinRedact(path);
+    expect(payload).toStartWith("<path>/");
+    expect(payload).not.toContain("\\");
+  }
+});
+
+// The pipeline hands the scrubber a SERIALIZED document. A prose-oriented
+// pattern with a greedy tail eats the closing quote and brace, so the payload
+// no longer parses and the whole scan dies before the model is ever called.
+test("scrubbing a serialized document preserves its structure", () => {
+  const document = JSON.stringify([
+    { role: "user", content: "my token: abc123def456 and password=hunter2" },
+    { role: "user", content: String.raw`git stash -u deleted D:\AI\launchers` },
+  ]);
+  const scrubbed = builtinRedact(document).payload;
+
+  const parsed = JSON.parse(scrubbed) as Array<{ role: string; content: string }>;
+  expect(parsed).toHaveLength(2);
+  expect(parsed[0]!.role).toBe("user");
+  expect(parsed[0]!.content).not.toContain("abc123def456");
+  expect(parsed[0]!.content).not.toContain("hunter2");
+  expect(parsed[1]!.content).toContain("launchers");
+});
+
+test("keys are never rewritten, only values", () => {
+  const document = JSON.stringify({ token: "abc123def456", password: "hunter2", role: "user" });
+  const parsed = JSON.parse(builtinRedact(document).payload) as Record<string, string>;
+  expect(Object.keys(parsed).sort()).toEqual(["password", "role", "token"]);
+  expect(parsed.token).not.toContain("abc123def456");
+  expect(parsed.role).toBe("user");
+});
+
+// Real transcripts are full of prose like "all tests pass:" and "no pass".
+// Treating that as an unredacted secret halts the user's entire scan with
+// "Scrub failed, ingest paused" — found by dogfooding real history.
+test("ordinary prose does not halt ingest", async () => {
+  const scrubber = builtinGitleaksScrubber();
+  for (const text of [
+    "all tests pass: 5 failed: 0",
+    "the second pass: mine candidates",
+    "we should pass: true through",
+  ]) {
+    await expect(scrubber(text)).resolves.toBeString();
+  }
+});
+
+test("a serialized document does not halt on structure adjacent to a keyword", async () => {
+  const document = JSON.stringify([
+    { content: "second pass:", timestamp: "2026-07-19T20:45:33.737Z" },
+    { content: "nothing to see" },
+  ]);
+  await expect(builtinGitleaksScrubber()(document)).resolves.toBeString();
+});
+
+test("a real secret in a document still halts", async () => {
+  const document = JSON.stringify([{ content: "Authorization: Bearer abcdefgh12345678" }]);
+  const leaky = builtinGitleaksScrubber({ redact: (text) => ({ payload: text, findings: [] }) });
+  await expect(leaky(document)).rejects.toThrow(/secret/i);
+});

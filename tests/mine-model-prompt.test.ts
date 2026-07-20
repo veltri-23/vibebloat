@@ -66,3 +66,18 @@ test("an unrecognized endpoint can be told which wire format to use", () => {
   // An explicit raw setting wins over URL sniffing.
   expect(usesChatCompletionsWire(["curl", "https://api.openai.com/v1/chat/completions"], { VIBEBLOAT_MODEL_WIRE: "raw" })).toBe(false);
 });
+
+// Found by dogfooding against real transcripts: prose brackets before the
+// real array killed the scan with a raw "Invalid escape character" error.
+test("prose containing brackets does not break extraction", () => {
+  const manifest = [{ incident_id: "a", class: "A", chokepoint: "shell", command: "git stash", condition: "c", evidence_refs: [], severity: 5, frequency: 2, recency: "2026-07-15" }];
+  const json = JSON.stringify(manifest);
+
+  expect(parseModelIncidentOutput(String.raw`I looked [in D:\AI\notes] and found:` + "\n" + json)).toHaveLength(1);
+  expect(parseModelIncidentOutput("Findings [1] and [2] below:\n" + json)).toHaveLength(1);
+  expect(parseModelIncidentOutput("Nothing here [see above]\n[]")).toEqual([]);
+});
+
+test("a bracketed region that is not JSON is skipped, not fatal", () => {
+  expect(() => parseModelIncidentOutput(String.raw`[C:\Users\me] no findings`)).toThrow(/JSON incident array/);
+});

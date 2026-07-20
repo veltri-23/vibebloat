@@ -1,5 +1,6 @@
 import { isUntrustedSemanticContext, type UntrustedSemanticContext } from "../ingest/semantic-context";
 import type { HistoryChunk } from "../ingest/types";
+import { stripTerminalControl } from "./terminal-output";
 
 /**
  * Model used when the OpenAI route builds its own request body. Overridable
@@ -100,8 +101,20 @@ export function buildChatCompletionsBody(serializedInput: string, model = openAi
   });
 }
 
-function firstJsonArray(text: string): string | undefined {
-  const start = text.indexOf("[");
+
+/** Every balanced [...] region, in order, so prose brackets can be skipped. */
+function* jsonArrayCandidates(text: string): Generator<string> {
+  let from = 0;
+  while (from < text.length) {
+    const region = balancedArrayAt(text, from);
+    if (!region) return;
+    yield region.slice;
+    from = region.end;
+  }
+}
+
+function balancedArrayAt(text: string, from: number): { slice: string; end: number } | undefined {
+  const start = text.indexOf("[", from);
   if (start < 0) return undefined;
   let depth = 0;
   let inString = false;
@@ -118,7 +131,7 @@ function firstJsonArray(text: string): string | undefined {
     else if (character === "[") depth += 1;
     else if (character === "]") {
       depth -= 1;
-      if (depth === 0) return text.slice(start, index + 1);
+      if (depth === 0) return { slice: text.slice(start, index + 1), end: index + 1 };
     }
   }
   return undefined;
@@ -130,7 +143,7 @@ function firstJsonArray(text: string): string | undefined {
  * envelope. Anything else throws rather than being guessed at.
  */
 export function parseModelIncidentOutput(raw: string): unknown[] {
-  const text = raw.trim();
+  const text = stripTerminalControl(raw).trim();
   if (!text) throw new Error("model command returned no output");
 
   try {
@@ -143,10 +156,17 @@ export function parseModelIncidentOutput(raw: string): unknown[] {
     // Fall through to extraction below.
   }
 
-  const extracted = firstJsonArray(text);
-  if (extracted) {
-    const parsed: unknown = JSON.parse(extracted);
-    if (Array.isArray(parsed)) return parsed;
+  // Real transcripts are full of bracketed prose, and a model echoes it back.
+  // Taking the first [...] region and parsing it unguarded turned a stray
+  // Windows path inside brackets into a raw "Invalid escape character" that
+  // killed the entire scan. Try each region; keep the first that is an array.
+  for (const candidate of jsonArrayCandidates(text)) {
+    try {
+      const parsed: unknown = JSON.parse(candidate);
+      if (Array.isArray(parsed)) return parsed;
+    } catch {
+      continue;
+    }
   }
   throw new Error("model command did not return a JSON incident array");
 }

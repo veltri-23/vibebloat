@@ -41,5 +41,12 @@ export function compileGuard(incident: IncidentManifest, confidence: "high" | "l
 }
 
 export function compileRankedIncidents(incidents: IncidentManifest[]): Guard[] {
-  return rankIncidents(incidents).map((incident) => compileGuard(incident, incident.severity >= 4 ? "high" : "low"));
+  // Models repeat themselves -- a local model returned the same incident three
+  // times on real history. Compiling each copy installs duplicate guards that
+  // all fire on the same command. Ranking runs first, so the copy kept is the
+  // highest-severity, highest-frequency one.
+  const seen = new Set<string>();
+  return rankIncidents(incidents)
+    .filter((incident) => !seen.has(incident.incident_id) && Boolean(seen.add(incident.incident_id)))
+    .map((incident) => compileGuard(incident, incident.severity >= 4 ? "high" : "low"));
 }
