@@ -1,60 +1,61 @@
 # VibeBloat
 
-**Your agent's memory taxes every prompt. Ours costs nothing and can't be ignored.**
+**Your coding agent keeps making the same mistake. VibeBloat learns it once and never lets it through again.**
 
-VibeBloat reads your AI agent history, finds every time an agent (or you) broke
-something, and compiles each incident into a deterministic guard that blocks
-the mistake before it repeats. One heavy scan up front; zero-token enforcement
-forever.
+Give an agent enough rope and it will eventually run `git stash -u` over untracked files, `docker compose down -v` on the dev database, or `git reset --hard` over an hour of uncommitted work. You fix it, you move on, and three days later a different agent does the same thing. The lesson lives in your head, not in the tools.
 
-Unlike `destructive_command_guard` (5k-star static blocker), VibeBloat learns
-*personalized* guards from your own repeated incidents — not a universal
-command blocklist.
+VibeBloat reads your agent history, finds the commands that actually burned you, and compiles each one into a deterministic guard that blocks it before it runs again. One heavy scan up front. After that the guards enforce for free, on every agent, forever. No tokens, no prompt budget, nothing the model can talk itself out of.
 
-## What a block looks like
+<p align="center">
+  <img src="assets/block.png" alt="A recovered Claude Code session tries git stash -u and gets blocked with exit code 2, citing the exact incident that produced the guard" width="760">
+</p>
 
-```
-BLOCKED  guard: git-stash-u  class: A
-incident: git stash -u deleted operational untracked files  date: 2026-07-15
-why: 07-15 this deleted untracked files. Use git stash -u -- <path> or commit first.
-fix: vibebloat allow git-stash-u --once
-```
+## Quickstart
 
-`BLOCKED` renders red and `WARNING` amber when stdout is a TTY (see
-`src/block-receipt.ts`). Every receipt line passes through the same scrubber
-that protects `vibebloat doctor`, so secrets, tokens, and absolute paths
-become `<redacted-token>` / `<absolute-path>` before they reach the screen.
-
-## Try it in 10 seconds
+Fastest, once the package is published:
 
 ```sh
-npx vibebloat
+npx vibebloat        # zero install, runs on plain Node, bundles its own Bun
 ```
 
-`npx vibebloat` works once published. Until then, open Vibebloat in a
-pre-configured GitHub Codespace — no local install required.
-
-[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://github.com/codespaces/new?hide_repo_select=true&ref=task%2Fvibebloat-mvp&repo=veltri-23%2Fvibebloat)
-
-Once the Codespace boots, run in its terminal:
+Works right now, from a source checkout (needs [Bun](https://bun.sh) >= 1.3):
 
 ```sh
-bun src/cli.ts demo
+git clone https://github.com/veltri-23/vibebloat
+cd vibebloat
+bun install
+bun src/cli.ts demo   # runs the full pipeline over a labelled sample
 ```
 
-A fresh Codespace has no agent history, so the sample stands in for yours. On a
-machine that does have sessions to read, `bun src/cli.ts init --pretty` walks
-the onboarding against your own history instead. `bun src/cli.ts demo` runs
-the real pipeline — scrub, prefilter, mine, compile, block — over a labelled
-sample history and prints the guards it produced. With a model configured it
-mines those findings live; without one it uses the sample's precomputed
-findings and says so.
+`demo` needs no history of your own. It scrubs a sample agent history, prefilters for incident signal, mines the repeated mistakes, compiles guards, then shows those guards blocking the exact commands that caused the incidents and letting the safe variants through. With a model key set it mines the findings live. Without one it uses the sample's precomputed findings and says so plainly.
+
+<p align="center">
+  <img src="assets/pipeline.png" alt="The vibebloat demo pipeline: read, scrub, prefilter, mine, prove, allow" width="760">
+</p>
+
+On a machine with real agent sessions, `bun src/cli.ts init --pretty` (or `npx vibebloat init` once published) runs the same onboarding against your own history and installs only the guards you approve.
+
+## Why this is different
+
+There is a well-loved static blocker out there, `destructive_command_guard`, with 5,000 stars. It ships one universal blocklist of dangerous commands. Useful, but it does not know you, and it blocks the same things for everyone.
+
+VibeBloat is the opposite bet. It does not guess what is dangerous. It watches what already went wrong *for you* and turns those specific incidents into guards. The block quotes the real event, with the date and the one-line reason, so when it fires you know exactly why. Three properties, and no other project we found has all three:
+
+- **Learned, not hand-written.** Guards come from your own repeated incidents, mined by a model, not from a maintainer's opinion of what counts as risky.
+- **Deterministic at enforcement time.** The model runs once, during the scan. The thing standing between your agent and a wiped volume is a plain data rule and an `exit 2`, not another LLM call that can be jailbroken or rate-limited.
+- **Cross-agent.** One guard, learned in Claude Code, also stops Codex, a shell shim, or a git hook. The lesson follows you across every tool that can run a command.
+
+## One lesson, every agent
+
+The guard the scan produces is agent-agnostic. Claude Code gets an `exit 2` at its `PreToolUse` chokepoint. Codex gets a structured deny at the same point. A raw shell gets a shim, git gets a hook, the filesystem gets a quarantine. All of them share one `match(guard, event)` core, so you teach the mistake once.
+
+<p align="center">
+  <img src="assets/cross-agent.png" alt="The same git-stash-u guard producing a structured PreToolUse deny for Codex, a different agent that never saw the original incident" width="760">
+</p>
 
 ## What ships in the library
 
-Every guard here was compiled from a real incident. The `class` field is
-the guard's severity: `A` is destructive (block), `B` is bad edit/config
-(block or warn), `C` is environmental (warn), `D` is wrong result (warn).
+Every guard below was compiled from a real incident, most of them from building this project. `class` is the severity: `A` is destructive (block), `B` is a bad edit or config (block or warn), `C` is environmental (warn), `D` is a wrong result (warn).
 
 | Guard | Class | What it stops |
 |-------|-------|----------------|
@@ -66,63 +67,58 @@ the guard's severity: `A` is destructive (block), `B` is bad edit/config
 | `mcp-config-wrong-file` | A | `.mcp.json` written to the wrong file path |
 | `npx-mcp-hang` | B | `npx -y` re-resolving deps and hanging the agent |
 
-These compile from your history on first install. Add your own with
-`vibebloat allow <guard-id>` after a one-time override.
+These are the seed set. Your own guards compile from your history on first `init`, and you can add or retire any of them with `vibebloat allow <guard-id>`.
 
-## Install
+## How it works
 
-`npx vibebloat` works once published. Until then, source-checkout steps live in
-[`INSTALL.md`](INSTALL.md).
+1. **Discover** local agent histories without printing their paths.
+2. **Consent.** Require explicit source confirmation and privacy opt-in before reading anything.
+3. **Scrub** locally with Presidio and Gitleaks. Any scrub failure halts the ingest. Nothing reaches a model unscrubbed.
+4. **Mine, review, compile, prove.** Turn repeated incidents into declarative guards and prove each one blocks the command that caused it.
+5. **Install** only the guards a human approved, through native agent hooks with shell, git, and filesystem fallbacks.
 
-Release verification is built (`src/doctor/sigstore.ts`): when a signed binary
-is published, it is checked with Sigstore against the public key pinned in
-`src/scrub/controlled-release.ts` before any model pass runs. No signed public
-binary ships yet — run from source per [`INSTALL.md`](INSTALL.md).
+Guards are data, never code. A guard names a condition and one of a fixed set of trusted actions (`block`, `warn`, `require-confirm`, `quarantine-file`, `run-check`). The runtime performs the effect. A contributed guard can describe a mistake, but it can never ship you an executable payload. Command matching runs on a real `tree-sitter-bash` parse, not a regex, so `git stash --include-untracked` and `git stash -u` resolve to the same thing. The matcher fails closed on a match and open on a parse error, so a guard it cannot understand never silently disarms.
 
-## Demo
+### Recall: the guards learn to generalize
 
-The cross-agent block acceptance path is reproducible locally:
+A blocklist only stops the exact string it was built from. VibeBloat can go one step further with semantic recall (`[semantic] recall = lexical | embed | local | off`). When an agent runs a command that *rhymes* with a past incident but is worded differently, recall surfaces the old lesson as a warning instead of missing it. `local` runs a real offline neural embedder (MiniLM, cached after first use, no network, no API key), so a reworded command lands near its incident by meaning, not by shared tokens. It is warn-tier and opt-in, and every promotion to a hard block still goes through a human.
+
+## Built with Codex and GPT-5.6
+
+The core of VibeBloat was designed and built with Codex on GPT-5.6 during OpenAI Build Week. Codex did the heavy structural work: the agent-agnostic `match(guard, event)` engine, the scrub-before-model pipeline, the tree-sitter command parser, and the native-plus-fallback chokepoint system that lets one guard cover Claude Code, Codex, shell, and git.
+
+Where it earned its keep was the boring, load-bearing parts that are easy to get wrong: making the scrubber fail closed instead of fail open, proving each compiled guard against the incident that produced it, and keeping guards as inert data so a community contribution can never become a code-execution vector. Those were the decisions worth getting right, and they are the ones Codex moved fastest on.
+
+> **Codex session ID:** `TBD` — the core-build session, required for submission eligibility. Fill in from the `/feedback` session before submitting.
+
+## Watch the 3-minute demo
+
+<!-- Replace the URL and thumbnail once the video is public -->
+[![VibeBloat demo](assets/block.png)](https://youtu.be/YOUR_VIDEO_ID)
+
+The same block acceptance path is reproducible locally, no video needed:
 
 ```sh
 bun test tests/e2e/demo-shot-5.test.ts tests/e2e/demo-shot-6.test.ts
 ```
 
-Shot 5 — the kill shot — shows a fresh Claude Code session hitting the
-`git stash -u` block in a live tree. Shot 6 — a different agent (Codex,
-fresh session, never saw the incident) — hitting the same block at a
-different chokepoint.
+Shot 5 is the kill shot: a fresh Claude Code session hitting the `git stash -u` block in a live tree. Shot 6 is a different agent, Codex, in a fresh session that never saw the incident, hitting the same guard at a different chokepoint.
 
-## How it works
+## Platforms and release verification
 
-1. Discover local histories without exposing their paths.
-2. Require explicit source confirmation and privacy consent.
-3. Scrub locally with Presidio and Gitleaks; any failure halts ingest.
-4. Mine, review, compile, and prove declarative guards.
-5. Install only human-approved guards through native and fallback chokepoints.
+Supported platforms are Windows x64, macOS x64 and arm64, and Linux x64. Full source-checkout steps are in [`INSTALL.md`](INSTALL.md).
 
-Guards are declarative data. Trusted runtime actions (`block`, `warn`,
-`require-confirm`, `quarantine-file`, `run-check`) perform every effect.
+Release binaries are verified with Sigstore against a pinned public key before any model pass runs (`src/doctor/sigstore.ts`). No signed public binary ships yet, so for now run from source and `vibebloat doctor` will tell you honestly that the build is unsigned.
 
-## Custom guards
+## Custom guards and contributing
 
-Guards contain data, never executable code. Validate a guard and synthetic
-event with:
+Guards are data. Validate a guard and a synthetic event with:
 
 ```sh
 vibebloat eval < test-case.json
 ```
 
-Community contribution rules live in [`CONTRIBUTING.md`](CONTRIBUTING.md).
-
-## Build Week provenance
-
-Core implementation was built with Codex for OpenAI Build Week. The Codex
-session that produced the core build thread:
-
-- **Codex session ID:** `TBD` (fill in from the core-build Codex session before
-  submission; required for eligibility per hackathon rules)
-
-Hackathon-eligible product work in this repository begins after 2026-07-13.
+Contribution rules are in [`CONTRIBUTING.md`](CONTRIBUTING.md), community guard submissions in [`docs/community.md`](docs/community.md).
 
 ## Development
 
@@ -131,23 +127,13 @@ bun test
 bun src/cli.ts doctor
 ```
 
-Build host standalone binary with `bun run build`. Build supported Windows
-x64, macOS x64/arm64, and Linux x64 artifacts with `bun run build:release`.
-Sign a release with:
+Build a host binary with `bun run build`, or all release targets with `bun run build:release`. Sign a release with:
 
 ```sh
 COSIGN_PASSWORD=... cosign sign-blob --key release/vibebloat.key \
   --bundle release/vibebloat-windows-x64.bundle dist/vibebloat-windows-x64.exe
 ```
 
-## Architecture
-
-- Guards are declarative data.
-- Trusted runtime actions perform every effect.
-- History is scrubbed before any model pass.
-- Native agent hooks and fallback chokepoints share one matcher.
-
 ## License
 
-Apache-2.0. See `LICENSE`.
-
+Apache-2.0 with DCO. See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
