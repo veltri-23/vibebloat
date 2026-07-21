@@ -1417,7 +1417,10 @@ if (mode === "init") {
       await coordinator.permitSetupAndDiscover(true);
     }
     if (validChoice && before.gate === "B1" && next.gate === "D1") coordinator.confirmEnvironments(true);
-    if (validChoice && before.gate === "B1.missing") addMissingEnvironment(coordinator, home, effectiveAnswer);
+    if (validChoice && before.gate === "B1.missing") {
+      addMissingEnvironment(coordinator, home, effectiveAnswer);
+      delete next.answers["B1.missing"];
+    }
     if (validChoice && before.gate === "B1.ignore") ignoreEnvironments(coordinator, home, effectiveAnswer);
     if (validChoice && before.gate === "D1" && next.gate === "D1") {
       const requested = argumentAssignment("--sources")?.split(",").map((id) => id.trim()).filter(Boolean);
