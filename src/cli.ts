@@ -38,9 +38,9 @@ import { scanHistory } from "./ingest/scan";
 import type { UntrustedSemanticContext } from "./ingest/semantic-context";
 import { rankIncidents, type IncidentManifest } from "./ingest/rank";
 import { IncidentStore, defaultIncidentStorePath } from "./ingest/incidents-store";
-import { buildRecall } from "./ingest/recall-factory";
+import { buildRecall, buildSyncRecall } from "./ingest/recall-factory";
 import { readRecallConfig } from "./ingest/recall-config";
-import type { SemanticRecall } from "./ingest/semantic-recall";
+import type { SemanticRecall, SyncSemanticRecall } from "./ingest/semantic-recall";
 import { detectRecallKey, onboardingGateValues } from "./onboarding/gate-measurements";
 import type { HistoryChunk } from "./ingest/types";
 import { buildChatCompletionsBody, parseModelIncidentOutput, serializeModelCommandInput, usesChatCompletionsWire } from "./mine/model-command-input";
@@ -153,19 +153,26 @@ function runtimeGuards(): Guard[] {
   return [...guards, ...installed];
 }
 
-/**
- * Opted-in recall for an enforcement allow path. No config means no storage
- * I/O, even though lexical is the product default. Recall runs only after the
- * enforcement verdict exists, so any backend or cleanup failure can suppress
- * an advisory but can never change that verdict.
- */
-async function recallAdvisory(event: Event, repoRoot = process.cwd()): Promise<string | undefined> {
+/** Lexical-only adapter for the synchronous enforcement allow path. */
+function buildRuntimeRecall(repoRoot = process.cwd()): SyncSemanticRecall | undefined {
+  try {
+    const configPath = join(repoRoot, ".vibebloat", "config.toml");
+    if (!existsSync(configPath) || readRecallConfig(configPath)?.mode !== "lexical") return undefined;
+    const store = new IncidentStore({ path: defaultIncidentStorePath(repoRoot, globalGuardHome()) });
+    return buildSyncRecall({ store, configPath });
+  } catch {
+    return undefined;
+  }
+}
+
+/** Async advisory exclusively for local/embed recall after enforcement allows. */
+async function neuralRecallAdvisory(event: Event, repoRoot = process.cwd()): Promise<string | undefined> {
   const configPath = join(repoRoot, ".vibebloat", "config.toml");
   let closeResource: (() => void) | undefined;
   try {
     if (!existsSync(configPath)) return undefined;
     const mode = readRecallConfig(configPath)?.mode;
-    if (!mode || mode === "off") return undefined;
+    if (mode !== "local" && mode !== "embed") return undefined;
     const store = new IncidentStore({ path: defaultIncidentStorePath(repoRoot, globalGuardHome()) });
     closeResource = () => store.close();
     const adapter: SemanticRecall = buildRecall({ store, configPath });
@@ -179,10 +186,10 @@ async function recallAdvisory(event: Event, repoRoot = process.cwd()): Promise<s
   }
 }
 
-async function hookRecallAdvisory(payload: unknown): Promise<string | undefined> {
+async function hookNeuralRecallAdvisory(payload: unknown): Promise<string | undefined> {
   try {
     const binding = bindingFromPreToolUse(runtimeGuards(), payload, hookAgent());
-    return binding ? await recallAdvisory(binding.event) : undefined;
+    return binding ? await neuralRecallAdvisory(binding.event) : undefined;
   } catch {
     return undefined;
   }
@@ -1725,13 +1732,14 @@ if (mode === "git-hook") {
       (guardId) => consumeAllowedOnce(guardId, guardHomeForScope(guardScope())),
       undefined,
       createFiringRecorder(globalGuardHome()),
+      buildRuntimeRecall(),
     ).evaluate(runtimeGuards(), event);
     response = hookResponseForVerdict(verdict);
   } catch {
     process.stderr.write("WHAT failed: Git hook evaluation stopped.\nWHY: installed guards or Git hook arguments could not be evaluated.\nFIX: vibebloat doctor\n");
     process.exit(1);
   }
-  const recallWarning = response.exitCode === 0 ? await recallAdvisory(event) : undefined;
+  const recallWarning = response.exitCode === 0 ? await neuralRecallAdvisory(event) : undefined;
   if (response.stderr) process.stderr.write(`${response.stderr}\n`);
   if (response.localWarning) process.stderr.write(`${response.localWarning}\n`);
   if (recallWarning) process.stderr.write(`${recallWarning}\n`);
@@ -1784,13 +1792,14 @@ if (mode === "hook") {
       (guardId) => consumeAllowedOnce(guardId, guardHomeForScope(guardScope())),
       undefined,
       createFiringRecorder(globalGuardHome()),
+      buildRuntimeRecall(),
     ), hookAgent());
   } catch {
     response = { exitCode: 2 as const, stderr: formatGuardRuntimeFailure("guard hook evaluation stopped") };
   }
   // Advisory runs only after enforcement succeeds and cannot change verdict.
   const recallWarning = response.exitCode === 0 && hookPayload !== undefined
-    ? await hookRecallAdvisory(hookPayload)
+    ? await hookNeuralRecallAdvisory(hookPayload)
     : undefined;
   if (response.exitCode === 2 && process.argv[3] === "--agent=codex") {
     if (response.localWarning) process.stderr.write(`${response.localWarning}\n`);

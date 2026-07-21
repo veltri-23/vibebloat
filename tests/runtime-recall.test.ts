@@ -74,6 +74,16 @@ test("zero-cost: runtime without recall behaves exactly like the legacy loop", (
   expect(verdict).toEqual({ fired: false });
 });
 
+test("sync recall failure cannot block the enforcement allow path", () => {
+  const recall: SyncSemanticRecall = {
+    mode: "lexical",
+    recall: () => { throw new Error("recall unavailable"); },
+    record: () => {},
+  };
+  const runtime = new Runtime([], undefined, undefined, undefined, recall);
+  expect(runtime.evaluate([], { chokepoint: "shell", command: "echo safe" })).toEqual({ fired: false });
+});
+
 test("off recall adapter is a true no-op on the hot path", () => {
   const runtime = new Runtime([], undefined, undefined, undefined, new OffRecall());
   const verdict = runtime.evaluate([], { chokepoint: "shell", command: "git stash -u" });

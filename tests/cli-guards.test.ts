@@ -119,6 +119,41 @@ test("safe hook with default recall creates no SQLite database", () => {
   expect(existsSync(defaultIncidentStorePath(project, globalGuardHome({ USERPROFILE: home })))).toBeFalse();
 });
 
+test("local recall hook prints exactly one advisory warning", () => {
+  const root = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-local-recall-once-"));
+  tempDirectories.push(root);
+  const project = join(root, "project");
+  const home = join(root, "home");
+  const preload = join(root, "recall-hit.ts");
+  mkdirSync(join(project, ".vibebloat"), { recursive: true });
+  writeFileSync(join(project, ".vibebloat", "config.toml"), "[semantic]\nrecall = local\n");
+  writeFileSync(preload, `
+    import { LexicalRecall } from ${JSON.stringify(pathToFileURL(join(import.meta.dir, "..", "src", "ingest", "recall-lexical.ts")).href)};
+    import { LocalRecall } from ${JSON.stringify(pathToFileURL(join(import.meta.dir, "..", "src", "ingest", "recall-local.ts")).href)};
+    const hit = [{
+      incidentId: "prior-stash",
+      command: "git stash -u",
+      condition: "untracked files disappeared",
+      consequence: "manual restore was required",
+      similarity: 1,
+    }];
+    LexicalRecall.prototype.recall = function () { return hit; };
+    LocalRecall.prototype.recall = async function () { return hit; };
+  `);
+
+  const result = Bun.spawnSync(["bun", "--preload", preload, cliPath, "hook"], {
+    cwd: project,
+    env: { ...process.env, USERPROFILE: home, HOME: home, VIBEBLOAT_HOME: home },
+    stdin: new Blob([JSON.stringify({ tool_input: { command: "git stash --include-untracked" } })]),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const warningLines = result.stderr.toString().split(/\r?\n/).filter((line) => line.startsWith("Looks like the `git stash -u` mistake"));
+  expect(result.exitCode).toBe(0);
+  expect(warningLines).toHaveLength(1);
+});
+
 test("neural advisory closes once and a throwing close cannot kill the hook", () => {
   const root = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-recall-close-"));
   tempDirectories.push(root);

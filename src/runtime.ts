@@ -70,7 +70,12 @@ export class Runtime {
         ...(auditWarnings.length ? { auditWarnings } : {}),
       };
     }
-    return this.recall ? this.recallAdvisorySync(normalizedEvent) ?? { fired: false } : { fired: false };
+    if (!this.recall) return { fired: false };
+    try {
+      return this.recallAdvisorySync(normalizedEvent) ?? { fired: false };
+    } catch {
+      return { fired: false };
+    }
   }
 
   /**
