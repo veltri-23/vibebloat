@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import type { Event, Guard } from "../types";
 
 /**
@@ -6,9 +6,9 @@ import type { Event, Guard } from "../types";
  * on demand -- see enrichEventWithContext, which gathers a fact only when an
  * enabled situational guard both needs it and could match the command.
  */
-export function gitHasUnstagedChanges(cwd: string): boolean {
+export function gitHasUnstagedChanges(cwd: string, gitExecutable: string = "git"): boolean {
   try {
-    const out = execSync("git status --porcelain", { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    const out = execFileSync(gitExecutable, ["status", "--porcelain"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
     return out.trim().length > 0;
   } catch {
     return false;
@@ -62,7 +62,7 @@ export function neededFacts(guards: readonly Guard[], event: Event): NeededFacts
  * situational guard is in play (the common case) this returns the event
  * untouched and does zero I/O -- enforcement stays exactly as fast as before.
  */
-export function enrichEventWithContext(event: Event, guards: readonly Guard[]): Event {
+export function enrichEventWithContext(event: Event, guards: readonly Guard[], gitExecutable: string = "git"): Event {
   const needs = neededFacts(guards, event);
   if (!needs.cwd && !needs.processes && !needs.unstaged) return event;
   const cwd = process.cwd();
@@ -70,7 +70,7 @@ export function enrichEventWithContext(event: Event, guards: readonly Guard[]): 
     ...event,
     ...(needs.cwd ? { cwd } : {}),
     ...(needs.processes ? { runningProcesses: runningProcessNames() } : {}),
-    ...(needs.unstaged ? { hasUnstagedChanges: gitHasUnstagedChanges(cwd) } : {}),
+    ...(needs.unstaged ? { hasUnstagedChanges: gitHasUnstagedChanges(cwd, gitExecutable) } : {}),
   };
 }
 
