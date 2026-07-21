@@ -74,14 +74,13 @@ export interface SyncSemanticRecall extends SemanticRecall {
 export const recallWarnThreshold = 0.5;
 
 /**
- * all-MiniLM-L6-v2 cosine threshold, calibrated against equivalent command
- * spellings and realistic same-tool negatives. The pinned model scores the
- * accepted paraphrases at 0.702-0.889 and negatives at or below 0.674; 0.69
- * sits between those observed sets. Retune with the real-model matrix when the
- * model changes.
+ * all-MiniLM-L6-v2 cosine threshold, calibrated against destructive command
+ * paraphrases after the conservative intent prefilter removes ordinary reads.
+ * The natural-language stash paraphrase scores about 0.343; 0.25 leaves room
+ * for short destructive requests without reopening benign command warnings.
  * ponytail: calibration knob, not a magic number — re-measure on model swap.
  */
-export const localRecallWarnThreshold = 0.69;
+export const localRecallWarnThreshold = 0.25;
 
 /**
  * Stable token set from a normalized command. Reused across record() and

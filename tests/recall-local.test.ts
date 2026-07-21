@@ -180,6 +180,68 @@ test("recall surfaces a stored incident for a reworded command by meaning (cosin
   expect(hits[0]?.similarity).toBeGreaterThan(0);
 });
 
+test("destructive-command prefilter skips benign commands before embedding", async () => {
+  const embedded: string[] = [];
+  setEmbedderForTesting((texts) => {
+    embedded.push(...texts);
+    return texts.map(() => {
+      const vector = new Float32Array(384);
+      vector[0] = 1;
+      return vector;
+    });
+  });
+  const store = makeStore();
+  const seedEmbedding = new Float32Array(384);
+  seedEmbedding[0] = 1;
+  store.record({
+    incidentId: "stash-u",
+    command: "git stash -u",
+    condition: "121 untracked files left the live tree",
+    consequence: "the deploy script was missing its scratch dir",
+    signature: "git|stash|u",
+    embedding: seedEmbedding,
+  });
+  const recall = new LocalRecall({ store });
+
+  for (const command of [
+    "git log --oneline",
+    "git status",
+    "git diff",
+    "git worktree add ../wt",
+    "docker ps",
+    "docker logs app",
+    "ls",
+    "cat package.json",
+    "npm run test",
+  ]) {
+    expect(await recall.recall({
+      event: { chokepoint: "shell", command },
+      canonicalCommand: command,
+    }), command).toEqual([]);
+  }
+  expect(embedded).toEqual([]);
+
+  const destructiveIntents = [
+    "shelve my uncommitted changes",
+    "stash these edits",
+    "delete generated files",
+    "remove the old directory",
+    "wipe the cache",
+    "reset the repository",
+    "clean the workspace",
+    "destroy the cluster",
+    "prune unused images",
+    "take the services down",
+  ];
+  for (const command of destructiveIntents) {
+    expect(await recall.recall({
+      event: { chokepoint: "shell", command },
+      canonicalCommand: command,
+    }), command).toHaveLength(1);
+  }
+  expect(embedded).toEqual(destructiveIntents);
+});
+
 test("local cosine ranks a related command above an unrelated distractor", async () => {
   installEmbedder();
   const store = makeStore();

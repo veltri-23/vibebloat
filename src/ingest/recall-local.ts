@@ -21,6 +21,17 @@ const unavailableAdvisory =
   "WHY: optional @huggingface/transformers and onnxruntime-node runtime could not load.\n" +
   "FIX: npm install @huggingface/transformers onnxruntime-node";
 
+const destructiveIntent = /\b(?:shelv(?:e|es|ed|ing)|stash(?:es|ed|ing)?|delet(?:e|es|ed|ing)|remov(?:e|es|ed|ing)|wip(?:e|es|ed|ing)|reset(?:s|ting)?|clean(?:s|ed|ing)?|destroy(?:s|ed|ing)?|prun(?:e|es|ed|ing)|down|renam(?:e|es|ed|ing))\b/i;
+
+function isDestructiveRecallCandidate(command: string): boolean {
+  const [tool, action] = command.trim().split(/\s+/);
+  if ((tool === "git" && ["log", "status", "diff", "worktree"].includes(action ?? ""))
+    || (tool === "docker" && ["ps", "logs"].includes(action ?? ""))
+    || ["ls", "cat"].includes(tool ?? "")
+    || (tool === "npm" && action === "run")) return false;
+  return destructiveIntent.test(command) || tool === "rm";
+}
+
 /** Response shape from `embed-worker.mjs`. */
 interface WorkerResponse {
   ok: boolean;
@@ -223,7 +234,9 @@ export class LocalRecall implements SemanticRecall {
   async recall(request: RecallRequest): Promise<RecallHit[]> {
     if (this.#store.isEmpty()) return [];
     const query = request.canonicalCommand.trim();
-    if (!query) return [];
+    // ponytail: explicit read-only commands plus destructive intent vocabulary.
+    // Expand only from measured false negatives; full intent classification belongs in the model.
+    if (!query || !isDestructiveRecallCandidate(query)) return [];
     const queryVector = await this.#embedOne(query);
     if (!queryVector) return [];
     const limit = request.limit ?? 5;
