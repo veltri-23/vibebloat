@@ -2,13 +2,15 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { allowOnce } from "../src/runtime/override";
+import { createDirtyGitCwd } from "./helpers/dirty-git-cwd";
 
 const tempDirectories: string[] = [];
+const cliPath = join(import.meta.dir, "..", "src", "cli.ts");
 afterEach(() => { for (const directory of tempDirectories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
 
-function invoke(home: string, mode: string, args: string[] = [], payload?: unknown) {
-  return Bun.spawnSync(["bun", "src/cli.ts", mode, ...args], {
-    cwd: import.meta.dir + "/..",
+function invoke(home: string, mode: string, args: string[] = [], payload?: unknown, cwd = join(import.meta.dir, "..")) {
+  return Bun.spawnSync(["bun", cliPath, mode, ...args], {
+    cwd,
     env: { ...process.env, USERPROFILE: join(home, "user"), HOME: join(home, "user"), VIBEBLOAT_HOME: home },
     stdin: payload === undefined ? undefined : new Blob([JSON.stringify(payload)]),
     stdout: "pipe",
@@ -39,10 +41,11 @@ test("allow persists for the next matching hook only", () => {
 
 test("legacy persisted stash override allows the canonical guard once", () => {
   const home = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-allow-"));
-  tempDirectories.push(home);
+  const dirtyGit = createDirtyGitCwd("vibebloat-cli-allow-git-");
+  tempDirectories.push(home, dirtyGit.cwd);
   allowOnce("git-stash-untracked", home);
-  expect(invoke(home, "hook", [], { tool_input: { command: "git stash -u" } }).exitCode).toBe(0);
-  expect(invoke(home, "hook", [], { tool_input: { command: "git stash -u" } }).exitCode).toBe(2);
+  expect(invoke(home, "hook", [], { tool_input: { command: "git stash -u" } }, dirtyGit.cwd).exitCode).toBe(0);
+  expect(invoke(home, "hook", [], { tool_input: { command: "git stash -u" } }, dirtyGit.cwd).exitCode).toBe(2);
 });
 
 test("allow rejects a malformed pending override at hook time", () => {
