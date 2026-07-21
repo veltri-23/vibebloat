@@ -8,8 +8,8 @@ import {
 } from "./semantic-recall";
 
 const maximumCandidates = 64;
-const embeddingDimensions = 1536;
-const openAiEndpoint = "https://api.openai.com/v1/embeddings";
+const defaultEmbeddingDimensions = 1536;
+const defaultEndpoint = "https://api.openai.com/v1/embeddings";
 const embedModel = "text-embedding-3-small";
 
 export interface EmbedRecallOptions {
@@ -19,6 +19,18 @@ export interface EmbedRecallOptions {
   fetchImpl?: typeof fetch;
   /** Override the model id when the mining key has a preferred variant. */
   model?: string;
+  /**
+   * Embeddings endpoint. Defaults to OpenAI. Override (config or
+   * VIBEBLOAT_EMBED_ENDPOINT) when the mining key points at a proxy so recall
+   * doesn't silently talk to the wrong host.
+   */
+  endpoint?: string;
+  /**
+   * Expected vector width. Defaults to text-embedding-3-small's 1536. A
+   * mismatch means the model returned a different width — we skip rather than
+   * compare garbage, so a wrong dimension config makes recall inert, not wrong.
+   */
+  dimensions?: number;
   /** Short-circuit while we're already embedding the same canonical command. */
   emptyCacheMs?: number;
 }
@@ -31,8 +43,8 @@ interface EmbeddingResponse {
   data: Array<{ embedding: number[] }>;
 }
 
-async function fetchEmbedding(text: string, apiKey: string, model: string, fetchImpl: typeof fetch): Promise<Float32Array> {
-  const response = await fetchImpl(openAiEndpoint, {
+async function fetchEmbedding(text: string, apiKey: string, model: string, fetchImpl: typeof fetch, endpoint: string): Promise<Float32Array> {
+  const response = await fetchImpl(endpoint, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -53,6 +65,8 @@ export class EmbedRecall implements SemanticRecall {
   readonly #apiKey: string;
   readonly #fetch: typeof fetch;
   readonly #model: string;
+  readonly #endpoint: string;
+  readonly #dimensions: number;
   readonly #emptyCacheMs: number;
   #cache: CacheState | undefined;
 
@@ -60,7 +74,10 @@ export class EmbedRecall implements SemanticRecall {
     this.#store = options.store;
     this.#apiKey = options.apiKey;
     this.#fetch = options.fetchImpl ?? fetch;
-    this.#model = options.model ?? embedModel;
+    this.#model = options.model ?? process.env.VIBEBLOAT_EMBED_MODEL ?? embedModel;
+    this.#endpoint = options.endpoint ?? process.env.VIBEBLOAT_EMBED_ENDPOINT ?? defaultEndpoint;
+    const configuredDimensions = options.dimensions ?? Number(process.env.VIBEBLOAT_EMBED_DIMENSIONS);
+    this.#dimensions = Number.isInteger(configuredDimensions) && configuredDimensions > 0 ? configuredDimensions : defaultEmbeddingDimensions;
     this.#emptyCacheMs = options.emptyCacheMs ?? 1_000;
   }
 
@@ -72,14 +89,14 @@ export class EmbedRecall implements SemanticRecall {
       return [];
     }
     if (!request.canonicalCommand.trim()) return [];
-    const query = await fetchEmbedding(request.canonicalCommand, this.#apiKey, this.#model, this.#fetch);
-    if (query.length !== embeddingDimensions) return [];
+    const query = await fetchEmbedding(request.canonicalCommand, this.#apiKey, this.#model, this.#fetch, this.#endpoint);
+    if (query.length !== this.#dimensions) return [];
     const limit = request.limit ?? 5;
     const scored: { incidentId: string; command: string; condition: string; consequence: string; similarity: number }[] = [];
     for (const incident of this.#store.all()) {
       if (!incident.embedding) continue;
       const stored = new Float32Array(incident.embedding.buffer, incident.embedding.byteOffset, incident.embedding.byteLength / 4);
-      if (stored.length !== embeddingDimensions) continue;
+      if (stored.length !== this.#dimensions) continue;
       const similarity = cosineSimilarity(query, stored);
       if (similarity <= 0) continue;
       scored.push({
@@ -104,7 +121,7 @@ export class EmbedRecall implements SemanticRecall {
     canonicalCommand: string;
     recordedAt?: string;
   }): Promise<void> {
-    const embedding = await fetchEmbedding(args.canonicalCommand, this.#apiKey, this.#model, this.#fetch);
+    const embedding = await fetchEmbedding(args.canonicalCommand, this.#apiKey, this.#model, this.#fetch, this.#endpoint);
     this.#store.record({
       incidentId: args.incidentId,
       command: args.command,
@@ -128,4 +145,4 @@ export function createEmbedRecall(options: EmbedRecallOptions): EmbedRecall {
   return new EmbedRecall(options);
 }
 
-export const embedRecallDimensions = embeddingDimensions;
+export const embedRecallDimensions = defaultEmbeddingDimensions;
