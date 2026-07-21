@@ -18,6 +18,8 @@ import { applyAtomicFilePlans } from "../install/atomic-files";
 import type { IncidentManifest } from "../ingest/rank";
 import { IncidentStore, defaultIncidentStorePath } from "../ingest/incidents-store";
 import { buildSyncRecall } from "../ingest/recall-factory";
+import { readRecallConfig } from "../ingest/recall-config";
+import { createGbrainRecallExporter, type ExportedIncident } from "../ingest/gbrain-recall";
 import { detectRunnerDetails, type RunnerSignals } from "../onboarding/detect-runner";
 import { Runtime } from "../runtime";
 import { parseGuard } from "../schema";
@@ -31,13 +33,21 @@ export interface GitTreeSnapshot {
  * Feed a proposed incident into the semantic-recall store so a reworded repeat
  * of the same mistake gets recognized later. Uses the sync (lexical/off)
  * adapter — recording is best-effort and must never fail the proposal.
+ *
+ * When `[semantic] gbrain_export = true` is configured, also push the incident
+ * to GBrain via the optional external-process bridge. The export runs in a
+ * fire-and-forget Promise so it never blocks or fails this path.
+ *
+ * Exported for tests; production callers stay in-process via
+ * `processQueuedLiveProposal`.
  */
-function recordIncidentForRecall(incident: IncidentManifest): void {
+export function recordIncidentForRecall(incident: IncidentManifest): void {
   if (!incident.command) return;
   try {
     const repoRoot = incident.context_cwd_under ?? process.cwd();
+    const configPath = join(repoRoot, ".vibebloat", "config.toml");
     const store = new IncidentStore({ path: defaultIncidentStorePath(repoRoot, globalGuardHome()) });
-    const recall = buildSyncRecall({ store, configPath: join(repoRoot, ".vibebloat", "config.toml") });
+    const recall = buildSyncRecall({ store, configPath });
     recall.record({
       incidentId: incident.incident_id,
       command: incident.command,
@@ -47,8 +57,53 @@ function recordIncidentForRecall(incident: IncidentManifest): void {
       canonicalCommand: incident.command,
     });
     recall.close?.();
+    scheduleGbrainExport(incident, configPath);
   } catch {
     // Recall is advisory; a record failure must never fail the proposal.
+  }
+}
+
+/**
+ * Fire-and-forget GBrain exporter for the optional recall→brain bridge.
+ * Always returns synchronously; any error from the exporter is swallowed
+ * so the proposal path stays safe even when GBrain is unreachable.
+ *
+ * Exported for tests; production callers invoke via `recordIncidentForRecall`.
+ */
+export function scheduleGbrainExport(
+  incident: IncidentManifest,
+  configPath: string,
+  options: { exporter?: ReturnType<typeof createGbrainRecallExporter> } = {},
+): void {
+  try {
+    const config = readRecallConfig(configPath);
+    if (!config || config.gbrainExport !== true) return;
+    const exporter = options.exporter ?? createGbrainRecallExporter();
+    const payload: ExportedIncident = {
+      incidentId: incident.incident_id,
+      command: incident.command,
+      argsContains: incident.args_contains,
+      condition: incident.condition,
+      consequence: incident.remediation ?? incident.condition,
+      signature: incident.incident_id,
+      canonicalCommand: incident.command,
+    };
+    void Promise.resolve()
+      .then(() => exporter.probe(new AbortController().signal))
+      .then((available) => available
+        ? exporter.exportIncident(payload)
+        : Promise.resolve(undefined))
+      .then((outcome) => {
+        if (outcome && outcome.ok === false) {
+          // Surface in test logs only — never propagate.
+          void outcome.reason;
+        }
+      })
+      .catch(() => {
+        // Best-effort: never let an exporter failure escape.
+      });
+  } catch {
+    // Config read failure must not block the proposal path.
   }
 }
 
