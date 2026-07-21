@@ -33,10 +33,9 @@ test("packed npx CLI works without optional neural dependencies", () => {
   const packed = run([npm, "pack", repositoryRoot, "--ignore-scripts", "--json"], packageRoot);
   expect(packed.exitCode, packed.stderr.toString()).toBe(0);
   const [{ filename }] = JSON.parse(packed.stdout.toString()) as [{ filename: string }];
-  const sourceTarball = join(packageRoot, basename(filename));
   const strippedRoot = join(root, "stripped");
   mkdirSync(strippedRoot);
-  const extracted = run(["tar", "-xzf", sourceTarball, "-C", strippedRoot], root);
+  const extracted = run(["tar", "-xzf", basename(filename), "-C", strippedRoot], packageRoot);
   expect(extracted.exitCode, extracted.stderr.toString()).toBe(0);
   const strippedPackage = join(strippedRoot, "package");
   const manifestPath = join(strippedPackage, "package.json");
