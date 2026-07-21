@@ -389,3 +389,67 @@ test("checkpoint from another onboarding run cannot skip current history", async
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+// Issue #55: a single chunk that trips the second-pass scrubber must not halt
+// the whole run. The offending chunk is quarantined to the local sink and the
+// clean chunks still reach the model.
+test("one poisoned chunk is quarantined and the scan still completes (#55)", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vibebloat-quarantine-"));
+  const modeled: string[] = [];
+  try {
+    const result = await scanHistory([
+      { source: "hermes", sessionId: "a", messageIndex: 0, chunkIndex: 0, role: "user", content: "clean chunk one failed" },
+      { source: "hermes", sessionId: "b", messageIndex: 0, chunkIndex: 0, role: "user", content: "POISON chunk failed" },
+      { source: "hermes", sessionId: "c", messageIndex: 0, chunkIndex: 0, role: "user", content: "clean chunk two failed" },
+    ], {
+      presidioCommand: [],
+      gitleaksCommand: [],
+      presidio: async (payload) => payload,
+      gitleaks: async (payload) => {
+        if (payload.includes("POISON")) throw new Error("Built-in scrubber left a secret in the payload");
+        return payload;
+      },
+      localSink: createLocalOnlySink(directory),
+      modelPass: async (candidates) => { for (const candidate of candidates) modeled.push(candidate.content); return []; },
+      publish: async () => {},
+    });
+
+    expect(result).toEqual({ status: "ingested", quarantined: 1 });
+    expect(modeled.join("\n")).not.toContain("POISON");
+    const stored = await readdir(directory);
+    expect(stored).toHaveLength(1);
+    expect(await readFile(join(directory, stored[0]!), "utf8")).toContain("POISON");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+// Every chunk failing is a systemic scrubber fault, not isolated false
+// positives, so the run still pauses and asks the user to fix and rerun.
+test("all chunks failing scrub still pauses instead of dropping all history (#55)", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vibebloat-quarantine-all-"));
+  let modeled = 0;
+  let published = 0;
+  try {
+    const result = await scanHistory([
+      { source: "hermes", sessionId: "a", messageIndex: 0, chunkIndex: 0, role: "user", content: "POISON one failed" },
+      { source: "hermes", sessionId: "b", messageIndex: 0, chunkIndex: 0, role: "user", content: "POISON two failed" },
+    ], {
+      presidioCommand: [],
+      gitleaksCommand: [],
+      presidio: async (payload) => payload,
+      gitleaks: async (payload) => {
+        if (payload.includes("POISON")) throw new Error("Built-in scrubber left a secret in the payload");
+        return payload;
+      },
+      localSink: createLocalOnlySink(directory),
+      modelPass: async () => { modeled += 1; return []; },
+      publish: async () => { published += 1; },
+    });
+
+    expect(result).toEqual({ status: "paused", message: "Scrub failed, ingest paused, fix and rerun" });
+    expect({ modeled, published }).toEqual({ modeled: 0, published: 0 });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

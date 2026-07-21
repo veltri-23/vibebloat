@@ -1594,6 +1594,7 @@ if (mode === "scan") {
     process.stdout.write(`${JSON.stringify({
       status: result.status,
       chunks_scanned: parsed.length,
+      chunks_quarantined: result.quarantined ?? 0,
       candidates_scanned: candidateCount,
       incidents_found: ranked.length,
       ranked_incidents: ranked,
