@@ -84,6 +84,22 @@ test("an option answered with its displayed text still advances the gate", () =>
   expect(runner.snapshot().answers.F2).toBeDefined();
 });
 
+test("F2 chosen answer is the rendered form, not the raw [runnerAgent] template (#59)", () => {
+  // The persisted answer is what gets echoed back to the user later (e.g. in
+  // a summary, in audit receipts, or when re-rendering the gate for a returning
+  // user). Storing the raw template means [runnerAgent] shows up literally
+  // instead of the resolved agent name.
+  const values = gateValues({ runnerAgent: "Claude Code" });
+  const runner = new OnboardingRunner({ gate: "F2", answers: {} }, {}, {}, values);
+  const displayed = runner.current().options[0]!;
+  runner.choose(displayed);
+
+  const stored = runner.snapshot().answers.F2 ?? "";
+  expect(stored).toContain("Claude Code");
+  expect(stored).not.toContain("[runnerAgent]");
+  expect(stored).not.toMatch(/\[/);
+});
+
 test("the incident effect matches what the incident actually did", () => {
   const destructive = renderGate("J1", gateValues({ topIncidentCommand: "git stash -u", incidentClass: "A" }));
   expect(destructive.question).toContain("git stash -u");

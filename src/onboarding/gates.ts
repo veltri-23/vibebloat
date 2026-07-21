@@ -176,26 +176,32 @@ export function canonicalGateChoice(gate: GateId, choice: GateChoice, values: Re
   if (typeof choice === "number") return options[choice] ?? String(choice);
   const rendered = comparableOptions(gate, options.length > 0 ? values : {});
   const displayed = rendered.findIndex((option) => option.toLowerCase() === choice.trim().toLowerCase());
-  if (displayed >= 0) return options[displayed]!;
+  if (displayed >= 0) return rendered[displayed]!;
   // Apply intent-alias canonicalization: "yes" → recommended, "no" → a
   // non-recommended option (last when multiple). When the gate has no
   // options (free-form gates like A0), preserve the original choice so
-  // the answer is recorded as-given.
+  // the answer is recorded as-given. Intent aliases resolve against the
+  // raw template; the caller renders that template against the same
+  // values when it needs the displayed form (see F2 stored answer).
   const value = choice.trim().toLowerCase();
   if (options.length === 0) return choice;
   if (AFFIRMATIVE_WORDS.has(value)) {
     const recommended = options.findIndex((option) => /recommended/i.test(option));
-    return recommended >= 0 ? options[recommended]! : options[0]!;
+    const index = recommended >= 0 ? recommended : 0;
+    return rendered[index] ?? options[index]!;
   }
   if (DECLINE_WORDS.has(value)) {
     const recommended = options.findIndex((option) => /recommended/i.test(option));
-    if (recommended < 0) return options[options.length - 1]!;
+    if (recommended < 0) return rendered[rendered.length - 1] ?? options[options.length - 1]!;
     // The non-recommended option nearest the end is the canonical decline.
-    const nonRecommended = options.filter((_, index) => index !== recommended);
-    return nonRecommended[nonRecommended.length - 1]!;
+    const nonRecommendedRendered = options
+      .map((option, index) => ({ option, index }))
+      .filter(({ index }) => index !== recommended);
+    const last = nonRecommendedRendered[nonRecommendedRendered.length - 1];
+    return last ? (rendered[last.index] ?? last.option) : choice;
   }
   const index = /^[a-z]$/i.test(choice) ? choice.toLowerCase().charCodeAt(0) - 97 : Number(choice) - 1;
-  return Number.isInteger(index) && options[index] ? options[index] : choice;
+  return Number.isInteger(index) && options[index] ? (rendered[index] ?? options[index]!) : choice;
 }
 
 export function autoAdvances(gate: GateId): boolean {
