@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { readAndPruneFirings, type FiringMetadata } from "../src/audit/firings";
@@ -6,11 +6,21 @@ import { gitStashUntrackedGuard } from "../src/guards";
 import { runPreToolUse } from "../src/hooks";
 import { guardedBeforeToolCall } from "../src/hooks/openclaw-plugin";
 import { Runtime } from "../src/runtime";
+import { type DirtyGitContext, restoreCwd, useDirtyGitCwd } from "./helpers/dirty-git-cwd";
 
 const temporaryDirectories: string[] = [];
 const repositoryRoot = join(import.meta.dir, "..");
 const cliPath = join(repositoryRoot, "src", "cli.ts");
+const shellShimPath = join(repositoryRoot, "src", "hooks", "shell-shim-cli.ts");
 const auditWarning = "WHAT failed: firing audit update stopped.\nWHY: local firing audit storage or retention failed.\nFIX: vibebloat doctor";
+
+let dirtyCtx: DirtyGitContext;
+let originalCwd: string;
+beforeAll(() => {
+  originalCwd = process.cwd();
+  dirtyCtx = useDirtyGitCwd();
+});
+afterAll(() => { restoreCwd(originalCwd, dirtyCtx); });
 
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
@@ -31,7 +41,7 @@ test("runtime firing callback receives closed metadata only and skips non-firing
     action: { ...gitStashUntrackedGuard.action, message: "Bearer message-secret" },
   };
 
-  expect(runtime.evaluate([secretGuard], { chokepoint: "shell", command: "git stash -u Bearer command-secret" }, { agent: "codex" })).toMatchObject({ fired: true, blocked: true });
+  expect(runtime.evaluate([secretGuard], { chokepoint: "shell", command: "git stash -u Bearer command-secret", hasUnstagedChanges: true }, { agent: "codex" })).toMatchObject({ fired: true, blocked: true });
   expect(runtime.evaluate([secretGuard], { chokepoint: "shell", command: "git status" }, { agent: "codex" })).toEqual({ fired: false });
   expect(received).toEqual([{
     guardId: "git-stash-u",
@@ -60,7 +70,7 @@ test("Claude, Codex, and Hermes CLI hooks append agent-only firing metadata", ()
   const environment = { ...process.env, USERPROFILE: user, HOME: user, VIBEBLOAT_HOME: guardHome };
   for (const argument of [undefined, "--agent=codex", "--agent=hermes"]) {
     const result = Bun.spawnSync(["bun", cliPath, "hook", ...(argument ? [argument] : [])], {
-      cwd: repositoryRoot,
+      cwd: dirtyCtx.cwd,
       env: environment,
       stdin: new Blob([JSON.stringify({ tool_input: { command: "git stash -u" } })]),
       stdout: "pipe",
@@ -91,8 +101,8 @@ test("shell shim appends through its native transport", () => {
   const shellUser = join(root, "shell-user");
   const gitExecutable = Bun.which("git");
   expect(gitExecutable).toBeTruthy();
-  const shell = Bun.spawnSync(["bun", join(repositoryRoot, "src", "hooks", "shell-shim-cli.ts"), gitExecutable!, "stash", "-u"], {
-    cwd: root,
+  const shell = Bun.spawnSync(["bun", shellShimPath, gitExecutable!, "stash", "-u"], {
+    cwd: dirtyCtx.cwd,
     env: { ...process.env, USERPROFILE: shellUser, HOME: shellUser, VIBEBLOAT_HOME: join(root, "shell-guards") },
     stdout: "pipe",
     stderr: "pipe",

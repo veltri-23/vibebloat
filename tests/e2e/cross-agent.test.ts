@@ -1,8 +1,10 @@
 import { afterEach, expect, test } from "bun:test";
+import { execSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { guardedBeforeToolCall } from "../../src/hooks/openclaw-plugin";
+import { makeDirtyGitRepo } from "../helpers/dirty-git-cwd";
 
 const temporaryDirectories: string[] = [];
 const repositoryRoot = join(import.meta.dir, "../..");
@@ -115,8 +117,14 @@ test("Hermes bridge resolves a repository Git alias before blocking a compiled g
   temporaryDirectories.push(root);
   const guardHome = join(root, "guard-home");
   const incidentPath = join(root, "incident.json");
-  mkdirSync(join(root, ".git"));
-  writeFileSync(join(root, ".git", "config"), "[alias]\n  rh = reset --hard\n");
+  // Build a real working tree: the built-in `git-reset-hard` is now
+  // situational on `whenUnstagedChanges`, so the cwd needs `git status` to
+  // report a diff. The alias is registered via `git config` so it lives in
+  // the real config the spawned git reads.
+  makeDirtyGitRepo(root);
+  // Quote the value: `git config alias.rh reset --hard` would let git
+  // consume `--hard` as a config-flag and store the alias as just "reset".
+  execSync(`git config alias.rh "reset --hard"`, { cwd: root, stdio: "ignore" });
   writeFileSync(incidentPath, JSON.stringify({
     incident_id: "no-git-reset-hard",
     class: "A",

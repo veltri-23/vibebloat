@@ -1,9 +1,11 @@
 import { afterEach, expect, test } from "bun:test";
+import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { installGitShellShim } from "../src/install/shell-shim";
 import { ownedShellShimTarget } from "../src/install/shell-shim-ownership";
 import { shellPathProbe, verifyShellPaths } from "../src/install/shim";
+import { createDirtyGitCwd, makeDirtyGitRepo } from "./helpers/dirty-git-cwd";
 
 const shimDirectory = "C:/tools/vibebloat";
 const temporaryDirectories: string[] = [];
@@ -90,8 +92,12 @@ test("Windows git.cmd ignores hostile Bun environment and PATH before blocking d
     gitExecutable: gitExecutable!,
   });
   const shimPath = join(directory, "git.cmd");
+  // The shim child runs with this cwd; the situational git-stash-u guard
+  // only fires when the working tree has uncommitted changes.
+  const dirtyCtx = createDirtyGitCwd("vibebloat-shim-hostile-");
+  temporaryDirectories.push(dirtyCtx.cwd);
   const result = Bun.spawnSync([shimPath, "stash", "--all"], {
-    cwd: directory,
+    cwd: dirtyCtx.cwd,
     env: {
       ...process.env,
       BUN_EXECUTABLE: `C:\\missing.exe" & echo ENV > "${marker}" & rem`,
@@ -149,8 +155,12 @@ test("shell shim resolves a repository Git alias before blocking Class A work", 
   const shell = Bun.which("sh");
   expect(gitExecutable).toBeTruthy();
   expect(shell).toBeTruthy();
-  mkdirSync(join(repository, ".git"), { recursive: true });
-  writeFileSync(join(repository, ".git", "config"), "[alias]\n  st = stash\n");
+  mkdirSync(repository, { recursive: true });
+  // Build a real git working tree (the manual `.git/config` trick no longer
+  // works: the situational `whenUnstagedChanges` context needs `git status`
+  // to report a real diff, and the alias must live in a real `config`).
+  makeDirtyGitRepo(repository);
+  execSync(`git config alias.st stash`, { cwd: repository, stdio: "ignore" });
   const shim = installGitShellShim({
     shimDirectory,
     runtimePath: join(import.meta.dir, "..", "src", "hooks", "shell-shim-cli.ts"),

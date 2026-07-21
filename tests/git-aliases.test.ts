@@ -29,12 +29,12 @@ test("local repository aliases override global aliases before runtime evaluation
 
   expect(readGitAliases(options)).toEqual({ st: "stash --include-untracked" });
   const runtime = new Runtime([], undefined, (event) => withGitAliases(event, options));
-  expect(runtime.evaluate([gitStashUntrackedGuard], { chokepoint: "shell", command: "git st" })).toMatchObject({ fired: true, blocked: true });
+  expect(runtime.evaluate([gitStashUntrackedGuard], { chokepoint: "shell", command: "git st", hasUnstagedChanges: true })).toMatchObject({ fired: true, blocked: true });
 });
 
 test("unsafe shell aliases fail closed for Class A and do not leak into events", () => {
   const event = withGitAliases(
-    { chokepoint: "shell", command: "git st -u" },
+    { chokepoint: "shell", command: "git st -u", hasUnstagedChanges: true },
     { cwd: directory(), environment: { HOME: directory() } },
   );
   const runtime = new Runtime([], undefined, () => ({ ...event, aliases: { st: "!git stash -u" } }));
@@ -49,7 +49,7 @@ test("unreadable Git alias configuration fails closed for Class A", () => {
   mkdirSync(home);
   writeFileSync(join(home, ".gitconfig"), "x".repeat(256 * 1024 + 1));
   const event = withGitAliases(
-    { chokepoint: "shell", command: "git st -u" },
+    { chokepoint: "shell", command: "git st -u", hasUnstagedChanges: true },
     { cwd: root, environment: { HOME: home } },
   );
 

@@ -6,7 +6,7 @@ import type { Guard } from "../src/types";
 
 describe("Phase 0 matcher", () => {
   test("eval fires for a synthetic destructive event", () => {
-    expect(match(gitStashUntrackedGuard, { chokepoint: "shell", command: "git stash -u" })).toMatchObject({ fired: true });
+    expect(match(gitStashUntrackedGuard, { chokepoint: "shell", command: "git stash -u", hasUnstagedChanges: true })).toMatchObject({ fired: true });
   });
 
   test("eval CLI replays a synthetic event", () => {
@@ -28,7 +28,7 @@ describe("Phase 0 matcher", () => {
   });
 
   test("normalizes an absolute git path", () => {
-    expect(match(gitStashUntrackedGuard, { chokepoint: "shell", command: "/usr/bin/git stash -u" })).toMatchObject({ fired: true });
+    expect(match(gitStashUntrackedGuard, { chokepoint: "shell", command: "/usr/bin/git stash -u", hasUnstagedChanges: true })).toMatchObject({ fired: true });
   });
 
   test("expands environment variables before evaluation", () => {
@@ -36,6 +36,7 @@ describe("Phase 0 matcher", () => {
       chokepoint: "shell",
       command: "$GIT_BIN stash -u",
       variables: { GIT_BIN: "/usr/bin/git" },
+      hasUnstagedChanges: true,
     })).toMatchObject({ fired: true });
   });
 
@@ -44,11 +45,12 @@ describe("Phase 0 matcher", () => {
       chokepoint: "shell",
       command: "git config alias.st stash && git st -u",
       aliases: { st: "stash" },
+      hasUnstagedChanges: true,
     })).toMatchObject({ fired: true });
   });
 
   test("fails closed on a Class A parse error and open for Class B, C, and D", () => {
-    const malformed = { chokepoint: "shell" as const, command: "git stash -u '" };
+    const malformed = { chokepoint: "shell" as const, command: "git stash -u '", hasUnstagedChanges: true };
     expect(match(gitStashUntrackedGuard, malformed)).toMatchObject({ fired: true, parseError: true });
     for (const guardClass of ["B", "C", "D"] as const) {
       expect(match({ ...gitStashUntrackedGuard, class: guardClass }, malformed)).toMatchObject({ fired: false, parseError: true });
@@ -56,16 +58,16 @@ describe("Phase 0 matcher", () => {
   });
 
   test("fails closed for Class A syntax errors before the keyword fast path", () => {
-    expect(match(gitStashUntrackedGuard, { chokepoint: "shell", command: "echo 'unterminated" })).toMatchObject({ fired: true, parseError: true });
-    expect(match(gitStashUntrackedGuard, { chokepoint: "shell", command: "if then" })).toMatchObject({ fired: true, parseError: true });
-    expect(match(gitStashUntrackedGuard, { chokepoint: "shell", command: "echo )" })).toMatchObject({ fired: true, parseError: true });
+    expect(match(gitStashUntrackedGuard, { chokepoint: "shell", command: "echo 'unterminated", hasUnstagedChanges: true })).toMatchObject({ fired: true, parseError: true });
+    expect(match(gitStashUntrackedGuard, { chokepoint: "shell", command: "if then", hasUnstagedChanges: true })).toMatchObject({ fired: true, parseError: true });
+    expect(match(gitStashUntrackedGuard, { chokepoint: "shell", command: "echo )", hasUnstagedChanges: true })).toMatchObject({ fired: true, parseError: true });
   });
 
   test("bounds oversized shell input before normalization or parsing", () => {
     const oversized = `git stash -u # ${"x".repeat(64 * 1024)}`;
-    expect(match(gitStashUntrackedGuard, { chokepoint: "shell", command: oversized })).toMatchObject({ fired: true, parseError: true });
+    expect(match(gitStashUntrackedGuard, { chokepoint: "shell", command: oversized, hasUnstagedChanges: true })).toMatchObject({ fired: true, parseError: true });
     for (const guardClass of ["B", "C", "D"] as const) {
-      expect(match({ ...gitStashUntrackedGuard, class: guardClass }, { chokepoint: "shell", command: oversized })).toMatchObject({ fired: false, parseError: true });
+      expect(match({ ...gitStashUntrackedGuard, class: guardClass }, { chokepoint: "shell", command: oversized, hasUnstagedChanges: true })).toMatchObject({ fired: false, parseError: true });
     }
   });
 
@@ -74,6 +76,7 @@ describe("Phase 0 matcher", () => {
       chokepoint: "shell" as const,
       command: `git stash -u ${"$FILL".repeat(128)}`,
       variables: { FILL: "x".repeat(1024) },
+      hasUnstagedChanges: true,
     };
     expect(match(gitStashUntrackedGuard, event)).toMatchObject({ fired: true, parseError: true });
     for (const guardClass of ["B", "C", "D"] as const) {
@@ -84,14 +87,14 @@ describe("Phase 0 matcher", () => {
   test("allows exactly one override", () => {
     const runtime = new Runtime();
     runtime.allowOnce(gitStashUntrackedGuard.id);
-    expect(runtime.evaluate([gitStashUntrackedGuard], { chokepoint: "shell", command: "git stash -u" }).fired).toBeFalse();
-    expect(runtime.evaluate([gitStashUntrackedGuard], { chokepoint: "shell", command: "git stash -u" }).fired).toBeTrue();
+    expect(runtime.evaluate([gitStashUntrackedGuard], { chokepoint: "shell", command: "git stash -u", hasUnstagedChanges: true }).fired).toBeFalse();
+    expect(runtime.evaluate([gitStashUntrackedGuard], { chokepoint: "shell", command: "git stash -u", hasUnstagedChanges: true }).fired).toBeTrue();
   });
 
   test("applies explicit agent binds and treats empty binds as all agents", () => {
     const claudeOnly: Guard = { ...gitStashUntrackedGuard, binds: ["claude-code"] };
     const allAgents: Guard = { ...gitStashUntrackedGuard, binds: [] };
-    const event = { chokepoint: "shell" as const, command: "git stash -u" };
+    const event = { chokepoint: "shell" as const, command: "git stash -u", hasUnstagedChanges: true };
 
     expect(new Runtime().evaluate([claudeOnly], event, { agent: "codex" })).toEqual({ fired: false });
     expect(new Runtime().evaluate([claudeOnly], event, { agent: "claude-code" })).toMatchObject({ fired: true });

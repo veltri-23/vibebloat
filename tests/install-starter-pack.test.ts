@@ -27,11 +27,14 @@ describe("starter guard pack", () => {
     expect(first.map(({ id }) => id)).toEqual([...destructiveCommands.keys(), ...fileGuards.keys()]);
     for (const guard of first) {
       // The .env guard is class B and asks for confirmation rather than
-      // blocking outright: writing a secret file is not always a mistake.
+      // warning outright: writing a secret file is not always a mistake.
+      // The shell rules are `warn` (not `block`) because the pack is generic
+      // cold-start -- a false-positive block would get the whole pack disabled.
       expect(guard.class).toBe(fileGuards.has(guard.id) ? "B" : "A");
-      expect(guard.action.type).toBe(fileGuards.has(guard.id) ? "require-confirm" : "block");
+      expect(guard.action.type).toBe(fileGuards.has(guard.id) ? "require-confirm" : "warn");
       expect(guard.provenance.source).toBe("vibebloat-starter-pack");
-      expect(guard.provenance.incident).toStartWith("Preventive starter-pack rule for ");
+      expect(guard.provenance.incident).toStartWith("Generic cold-start rule for ");
+      expect(guard.provenance.incident).toContain("not from your history");
       expect(guard.provenance.incident).not.toContain("deleted");
     }
   });

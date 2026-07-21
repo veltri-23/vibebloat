@@ -6,7 +6,7 @@ import { match } from "../src/match";
 test("tier-1 keyword misses skip the Bash parser for fail-open classes", () => {
   const parse = spyOn(Parser.prototype, "parse");
   try {
-    const verdict = match({ ...gitStashUntrackedGuard, class: "B" }, { chokepoint: "shell", command: "echo harmless" });
+    const verdict = match({ ...gitStashUntrackedGuard, class: "B" }, { chokepoint: "shell", command: "echo harmless", hasUnstagedChanges: true });
     expect(verdict).toEqual({ fired: false });
     expect(parse).not.toHaveBeenCalled();
   } finally {
@@ -17,7 +17,7 @@ test("tier-1 keyword misses skip the Bash parser for fail-open classes", () => {
 test("Class A keyword misses parse before they fail open", () => {
   const parse = spyOn(Parser.prototype, "parse");
   try {
-    expect(match(gitStashUntrackedGuard, { chokepoint: "shell", command: "echo harmless" })).toEqual({ fired: false });
+    expect(match(gitStashUntrackedGuard, { chokepoint: "shell", command: "echo harmless", hasUnstagedChanges: true })).toEqual({ fired: false });
     expect(parse).toHaveBeenCalledTimes(1);
   } finally {
     parse.mockRestore();

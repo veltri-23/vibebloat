@@ -8,7 +8,7 @@ test("huge heredocs are bounded before the Bash parser can exhaust memory", () =
   const command = `cat <<'PAYLOAD'\n${"x".repeat(128 * 1024)}\nPAYLOAD`;
 
   try {
-    expect(match(gitStashUntrackedGuard, { chokepoint: "shell", command })).toMatchObject({
+    expect(match(gitStashUntrackedGuard, { chokepoint: "shell", command, hasUnstagedChanges: true })).toMatchObject({
       fired: true,
       parseError: true,
     });
@@ -22,7 +22,7 @@ test("parser memory exhaustion follows the locked per-class policy", () => {
   const parse = spyOn(Parser.prototype, "parse").mockImplementation(() => {
     throw new RangeError("Out of memory");
   });
-  const event = { chokepoint: "shell" as const, command: "git stash -u" };
+  const event = { chokepoint: "shell" as const, command: "git stash -u", hasUnstagedChanges: true };
 
   try {
     expect(match(gitStashUntrackedGuard, event)).toMatchObject({ fired: true, parseError: true });

@@ -62,14 +62,14 @@ test("a fresh lock queues a durable compile job without writing a guard", () => 
   const result = compileLiveForScope(
     "repo",
     gitStashUntrackedGuard,
-    { chokepoint: "shell", command: "git stash -u" },
+    { chokepoint: "shell", command: "git stash -u", hasUnstagedChanges: true },
     environment,
     project,
     { trigger: "mid-session", now },
   );
 
   expect(result).toMatchObject({ status: "queued", queueId: expect.any(String), warning: expect.stringContaining("another compile claim") });
-  expect(queuedCompileJobs(home)).toMatchObject([{ id: result.queueId, guard: { id: gitStashUntrackedGuard.id }, event: { command: "git stash -u" }, trigger: "mid-session" }]);
+  expect(queuedCompileJobs(home)).toMatchObject([{ id: result.queueId, guard: { id: gitStashUntrackedGuard.id }, event: { command: "git stash -u", hasUnstagedChanges: true }, trigger: "mid-session" }]);
   expect(existsSync(join(home, "guards", "git-stash-u.json"))).toBeFalse();
 });
 
@@ -151,7 +151,7 @@ test("over-budget work persists until a later UTC-day drain writes its guard", (
   const queued = compileLiveForScope(
     "repo",
     gitStashUntrackedGuard,
-    { chokepoint: "shell", command: "git stash -u" },
+    { chokepoint: "shell", command: "git stash -u", hasUnstagedChanges: true },
     environment,
     project,
     { trigger: "mid-session", now: dayOne },

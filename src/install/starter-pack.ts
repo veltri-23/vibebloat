@@ -6,20 +6,27 @@ import { syntheticEvent } from "../compiler/synthetic-event";
 import type { Event, Guard } from "../types";
 import { applyAtomicFilePlans, type AtomicFilePlan } from "./atomic-files";
 
+// Generic cold-start guard pack. These are NOT mined from the user's own
+// history and NOT situational: they ship with the install and fire on common
+// foot-guns across all users. Because they can false-positive (the cost of
+// turning the whole pack off), the shell rules emit `warn` rather than `block`
+// -- the user sees the warning and can override. The `.env` rule keeps
+// `require-confirm` because a confirm prompt is cheap and the cost of an
+// accidental secret write is high.
 const starterGuardValues = [
   {
     schemaVersion: 1,
     id: "starter-git-stash-untracked",
     class: "A",
     provenance: {
-      incident: "Preventive starter-pack rule for git stash -u.",
+      incident: "Generic cold-start rule for git stash -u (not from your history).",
       date: "2026-07-18",
       source: "vibebloat-starter-pack",
     },
     match: { chokepoint: "shell", command: "git stash", argsContains: ["-u"] },
     action: {
-      type: "block",
-      message: "Preventive rule blocked git stash -u. Scope the stash with -- <path> or commit first.",
+      type: "warn",
+      message: "Generic rule: git stash -u can drop untracked files. Scope it with -- <path> or commit first.",
       override: "vibebloat allow starter-git-stash-untracked --once",
     },
     confidence: "high",
@@ -32,14 +39,14 @@ const starterGuardValues = [
     id: "starter-rm-recursive-force",
     class: "A",
     provenance: {
-      incident: "Preventive starter-pack rule for rm -rf.",
+      incident: "Generic cold-start rule for rm -rf (not from your history).",
       date: "2026-07-18",
       source: "vibebloat-starter-pack",
     },
     match: { chokepoint: "shell", command: "rm -rf" },
     action: {
-      type: "block",
-      message: "Preventive rule blocked rm -rf. Inspect the target and use a narrower removal command.",
+      type: "warn",
+      message: "Generic rule: rm -rf is irreversible. Inspect the target and use a narrower removal.",
       override: "vibebloat allow starter-rm-recursive-force --once",
     },
     confidence: "high",
@@ -52,7 +59,7 @@ const starterGuardValues = [
     id: "starter-git-force-push",
     class: "A",
     provenance: {
-      incident: "Preventive starter-pack rule for git push -f.",
+      incident: "Generic cold-start rule for git push -f (not from your history).",
       date: "2026-07-18",
       source: "vibebloat-starter-pack",
     },
@@ -60,8 +67,8 @@ const starterGuardValues = [
     // blocking it would be the false positive that gets the pack turned off.
     match: { chokepoint: "shell", command: "git push", argsAnyOf: ["-f", "--force"] },
     action: {
-      type: "block",
-      message: "Preventive rule blocked git push -f. Review remote history before overriding.",
+      type: "warn",
+      message: "Generic rule: git push -f rewrites remote history. Review before overriding.",
       override: "vibebloat allow starter-git-force-push --once",
     },
     confidence: "high",
@@ -74,14 +81,14 @@ const starterGuardValues = [
     id: "starter-git-reset-hard",
     class: "A",
     provenance: {
-      incident: "Preventive starter-pack rule for git reset --hard.",
+      incident: "Generic cold-start rule for git reset --hard (not from your history).",
       date: "2026-07-18",
       source: "vibebloat-starter-pack",
     },
     match: { chokepoint: "shell", command: "git reset", argsContains: ["--hard"] },
     action: {
-      type: "block",
-      message: "Preventive rule blocked git reset --hard. Preserve wanted work before overriding.",
+      type: "warn",
+      message: "Generic rule: git reset --hard drops uncommitted work. Stash or use --soft first.",
       override: "vibebloat allow starter-git-reset-hard --once",
     },
     confidence: "high",
@@ -94,14 +101,14 @@ const starterGuardValues = [
     id: "starter-git-checkout-discard",
     class: "A",
     provenance: {
-      incident: "Preventive starter-pack rule for git checkout . discarding uncommitted edits.",
+      incident: "Generic cold-start rule for git checkout . discarding uncommitted edits (not from your history).",
       date: "2026-07-18",
       source: "vibebloat-starter-pack",
     },
     match: { chokepoint: "shell", command: "git checkout", argsContains: ["."] },
     action: {
-      type: "block",
-      message: "Blocked git checkout . - it discards every uncommitted edit. Scope to git checkout -- <path>.",
+      type: "warn",
+      message: "Generic rule: git checkout . discards every uncommitted edit. Scope to git checkout -- <path>.",
       override: "vibebloat allow starter-git-checkout-discard --once",
     },
     confidence: "high",
@@ -114,14 +121,14 @@ const starterGuardValues = [
     id: "starter-git-clean-force",
     class: "A",
     provenance: {
-      incident: "Preventive starter-pack rule for forced git clean deleting untracked files.",
+      incident: "Generic cold-start rule for forced git clean deleting untracked files (not from your history).",
       date: "2026-07-18",
       source: "vibebloat-starter-pack",
     },
     match: { chokepoint: "shell", command: "git clean", argsAnyOf: ["-f", "-ff", "-fd", "-df", "-fdx", "-xdf", "-dfx", "-xfd", "--force"] },
     action: {
-      type: "block",
-      message: "Blocked forced git clean - it deletes untracked files forever. Dry-run with git clean -n first.",
+      type: "warn",
+      message: "Generic rule: forced git clean deletes untracked files forever. Dry-run with git clean -n first.",
       override: "vibebloat allow starter-git-clean-force --once",
     },
     confidence: "high",
@@ -134,14 +141,14 @@ const starterGuardValues = [
     id: "starter-env-file-confirm",
     class: "B",
     provenance: {
-      incident: "Preventive starter-pack rule for agent writes to .env secret files.",
+      incident: "Generic cold-start rule for agent writes to .env secret files (not from your history).",
       date: "2026-07-18",
       source: "vibebloat-starter-pack",
     },
     match: { chokepoint: "file", path: ".env" },
     action: {
       type: "require-confirm",
-      message: "Paused a write to .env. Secrets live here - confirm the change is intentional.",
+      message: "Generic rule: paused a write to .env. Secrets live here -- confirm the change is intentional.",
       override: "vibebloat allow starter-env-file-confirm --once",
     },
     confidence: "high",
@@ -173,7 +180,9 @@ function preflightPlans(guardDirectory: string, guards: readonly Guard[]): Atomi
   const runtime = new Runtime();
   for (const guard of guards) {
     const verdict = runtime.evaluate([guard], syntheticEvent(guard));
-    if (!verdict.fired || verdict.blocked !== true) {
+    // The synthetic proof only needs to demonstrate the guard fires on its
+    // locked example; both `block` and `warn` actions count as fired.
+    if (!verdict.fired) {
       throw new Error(`Starter guard failed synthetic proof: ${guard.id}`);
     }
   }
