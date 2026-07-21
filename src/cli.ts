@@ -895,6 +895,15 @@ if (mode === "doctor") {
     const findings = runDoctor({ ...doctorOptions, lastFiredAtByGuard });
     const errors = findings.filter((finding) => finding.status === "error");
     const warnings = findings.filter((finding) => finding.status === "warning");
+    // Run-only scrubber resolution: never claim verification, only report
+    // what is present on this machine. The in-process tier is the only one
+    // available until a real signed VibeBloat release is installed, so the
+    // surfaced wording is intentionally "unsigned/unverified".
+    const scrubTier = resolveScrubbers();
+    const tierLine = scrubTier.tier === "signed"
+      ? "Controlled release: signed (cosign-verified artifact, bundle, and pinned public key).\n"
+      : `Controlled release: unsigned/unverified (${scrubTier.signedUnavailableReason ?? "no signed VibeBloat release detected"}; in-process scrubber is active).\n`;
+    process.stdout.write(tierLine);
     if (errors.length === 0) {
       process.stdout.write("VibeBloat doctor: healthy.\n");
       if (warnings.length > 0) {
@@ -910,6 +919,7 @@ if (mode === "doctor") {
       : errors.some((finding) => finding.check === "source-health")
         ? "vibebloat init"
         : "vibebloat install --yes";
+    process.stderr.write(tierLine);
     process.stderr.write(`WHAT failed: doctor found ${errors.length} problem(s).\nWHY: ${errors.map((finding) => finding.message).join(" ")}\nFIX: ${fix}\n`);
     process.exit(1);
   } catch (error) {
@@ -1409,7 +1419,7 @@ if (mode === "init") {
     });
   } catch (error) {
     if (error instanceof ControlledScrubbersUnavailableError) {
-      process.stderr.write("WHAT failed: onboarding scan blocked before history read.\nWHY: Verified package-controlled scrubber assets are unavailable.\nFIX: install a signed VibeBloat release, then rerun vibebloat init\n");
+      process.stderr.write(`WHAT failed: onboarding scan blocked before history read.\nWHY: ${error.message}\nFIX: install a signed VibeBloat release, then rerun vibebloat init\n`);
       process.exit(1);
     }
     if (error instanceof OnboardingEffectUnavailableError) {
@@ -1549,7 +1559,7 @@ if (mode === "scan") {
     process.exit(0);
   } catch (error) {
     if (error instanceof ControlledScrubbersUnavailableError) {
-      process.stderr.write("WHAT failed: scan blocked before history read.\nWHY: Verified package-controlled scrubber assets are unavailable.\nFIX: install a signed VibeBloat release, then rerun vibebloat scan <history.json>\n");
+      process.stderr.write(`WHAT failed: scan blocked before history read.\nWHY: ${error.message}\nFIX: install a signed VibeBloat release, then rerun vibebloat scan <history.json>\n`);
     } else {
       process.stderr.write(`WHAT failed: scan could not run.\nWHY: ${error instanceof Error ? error.message : "unknown error"}\nFIX: set model command, then rerun vibebloat scan <history.json>\n`);
     }

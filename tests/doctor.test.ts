@@ -315,7 +315,8 @@ test("fresh install stays healthy in an OpenClaw delegated session", () => {
 
   expect(result.exitCode).toBe(0);
   expect(result.stderr.toString()).toBe("");
-  expect(result.stdout.toString()).toBe("VibeBloat doctor: healthy.\n");
+  expect(result.stdout.toString()).toContain("VibeBloat doctor: healthy.\n");
+  expect(result.stdout.toString()).toContain("Controlled release: unsigned/unverified");
 });
 
 test("doctor requires complete digest-bound Hermes hook evidence", () => {
