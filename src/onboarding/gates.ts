@@ -54,8 +54,8 @@ const gates: Record<GateId, GatePrompt> = {
   F4: { question: "Sometimes I won't be 100% sure a situation is risky. Should I stay quiet unless I'm sure (free), or double-check with AI when I'm unsure (costs a tiny bit)?", options: ["Stay quiet unless sure (recommended)", "Double-check with AI"] },
   F5: { question: "For rules about your coding style — should I use the preferences you've already written down, or figure out your style from your code?", options: ["Use what I've written (recommended)", "Figure it out from my code", "Skip style rules"] },
   F6: { question: "Want a free starter pack of rules every dev needs, plus a heads-up when I ship something big? Just your name, email, and what you're building — rare emails, no spam.", options: ["Yes", "Skip"] },
-  SR: { question: "One more thing: I can recognize a mistake by meaning, not just exact wording (e.g. `git stash --include-untracked` matches `git stash -u`). It warns, never blocks. I saw [recallKeyStatus] — which mode?", options: ["Embed (uses your mining key, smarter)", "Lexical (offline, free, default)", "Local (post-hackathon neural embedder)", "Off (no recall at all)"] },
-  "SR-no-key": { question: "I can recognize a mistake by meaning, not just exact wording (e.g. `git stash --include-untracked` matches `git stash -u`). It warns, never blocks. You don't have a mining key wired up, so `embed` would silently fall back. Which mode?", options: ["Lexical (offline, free, recommended)", "Off (no recall at all)"] },
+  SR: { question: "One more thing: I can recognize a mistake by meaning, not just exact wording (e.g. `git stash --include-untracked` matches `git stash -u`). It warns, never blocks. I saw [recallKeyStatus] — which mode?", options: ["Embed (uses your mining key, smarter)", "Local (offline neural embedder)", "Lexical (offline, free, default)", "Off (no recall at all)"] },
+  "SR-no-key": { question: "I can recognize a mistake by meaning, not just exact wording (e.g. `git stash --include-untracked` matches `git stash -u`). It warns, never blocks. You don't have a mining key wired up, so `embed` would silently fall back. The local neural embedder runs on-device with no API key — first run downloads ~23MB, then fully offline. Which mode?", options: ["Local (offline neural embedder, recommended)", "Lexical (offline, free, lighter)", "Off (no recall at all)"] },
   SCAN: { question: "", options: [] },
   "G-empty": { question: "Looks like there's not much history here yet. I can start you with a pack of common safety rules and get smarter as you work. Want that? (To watch the full scan on sample data first, run `vibebloat demo`.)", options: ["Yes", "No"] },
   I1: { question: "I read [sessionsBySource] [sessionNoun] and found [incidentsFound] [mistakeNoun] you've made more than once. Going by how often each one hit you, that's roughly [hoursLost] hours of cleanup. Let's turn them into tripwires.", options: [] },
@@ -238,8 +238,8 @@ export function nextFirstRunGate(gate: GateId, choice: GateChoice, context: Onbo
     case "F4": return "F5";
     case "F5": return "F6";
     case "F6": return context.recallKeyPresent === false ? "SR-no-key" : "SR";
-    case "SR": return selected(choice, 0, "embed") || selected(choice, 1, "lexical") || selected(choice, 2, "local") || selected(choice, 3, "off") ? "SCAN" : "SR";
-    case "SR-no-key": return selected(choice, 0, "lexical") || selected(choice, 1, "off") ? "SCAN" : "SR-no-key";
+    case "SR": return selected(choice, 0, "embed") || selected(choice, 1, "local") || selected(choice, 2, "lexical") || selected(choice, 3, "off") ? "SCAN" : "SR";
+    case "SR-no-key": return selected(choice, 0, "local") || selected(choice, 1, "lexical") || selected(choice, 2, "off") ? "SCAN" : "SR-no-key";
     case "SCAN": return context.scanOutcome === "empty" ? "G-empty" : context.scanOutcome === "zero" ? "I-zero" : "I1";
     case "G-empty": return "N1";
     case "I1": return "J0";
