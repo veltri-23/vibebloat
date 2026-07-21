@@ -53,6 +53,7 @@ export interface DiscoveredHistorySource {
   id: string;
   environmentId: string;
   label: string;
+  fileCount?: number;
   lastActive?: string;
   stale?: boolean;
 }

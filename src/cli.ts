@@ -540,12 +540,16 @@ async function runModelCommand(
   return manifests;
 }
 
+const LARGE_HISTORY_FILE_THRESHOLD = 500;
+
 function onboardingRunnerContext(
   checkpoint: OnboardingCheckpoint | undefined,
   state: Pick<OnboardingState, "gate" | "reviewDecisions">,
 ): OnboardingContext {
   const incidentCount = checkpoint?.incidents.length ?? 0;
   const reviewed = state.reviewDecisions?.length ?? 0;
+  const historyFiles = checkpoint?.discovery?.sources.reduce((total, source) => total + (source.fileCount ?? 0), 0) ?? 0;
+  const historyLarge = historyFiles >= LARGE_HISTORY_FILE_THRESHOLD;
   // Skip E2's "you don't have a code map yet" upsell when a graph tool is
   // already wired in. Detection looks for codebase-memory-mcp's binary
   // (env var or known install path) — cheap and correct on the platforms
@@ -557,6 +561,7 @@ function onboardingRunnerContext(
       && existsSync(`${process.env.LOCALAPPDATA!.replace(/[\\/]+$/, "")}\\Programs\\codebase-memory-mcp\\codebase-memory-mcp.exe`));
   const key = detectRecallKey();
   return {
+    historyLarge,
     knowledgeToolsDetected: codeBaseMemoryMcpOnPath,
     hasHermesOrOpenClaw: checkpoint?.discovery?.environments.some(({ id }) => id === "hermes" || id === "openclaw") ?? false,
     ...(checkpoint?.phase === "review" || checkpoint?.phase === "ready-to-install" || checkpoint?.phase === "ready-to-prove" || checkpoint?.phase === "complete"
@@ -711,6 +716,7 @@ function createProductionOnboardingCoordinator(
           label: `${source.label} history`,
           lastActive: source.lastActivityAt,
           stale: source.stale,
+          fileCount: source.fileCount,
         })),
       };
     },
@@ -1365,7 +1371,7 @@ if (mode === "init") {
           throw new OnboardingEffectUnavailableError("O2", ["agentCronVerified"], proof);
         }
       }
-      if (effectGates.has(before.gate as EffectGateId)) {
+      if (effectGates.has(before.gate as EffectGateId) && before.gate !== "F6") {
         const gate = before.gate as EffectGateId;
         const requirement = validateOnboardingEffectRequirements(gate, effectiveAnswer, effectEvidence);
         if (!requirement.ok) throw new OnboardingEffectUnavailableError(gate, requirement.missing);
@@ -1422,7 +1428,11 @@ if (mode === "init") {
       const scan = await coordinator.scan();
       if (scan.phase === "paused") {
         saveOnboardingState(home, { ...scanState, coordinator: coordinatorCheckpoint, reviewDecisions: state.reviewDecisions });
-        throw new ControlledScrubbersUnavailableError();
+        throw new ControlledScrubbersUnavailableError(
+          resolveScrubbers().tier === "builtin"
+            ? "Built-in scrubber halted ingest after detecting unsafe content; inspect failed-ingest/ for the offending content and remove or redact it before retrying."
+            : "Signed scrubbers were unavailable while onboarding scan paused.",
+        );
       }
       runner = new OnboardingRunner(scanState, onboardingRunnerContext(coordinatorCheckpoint, { ...state, gate: scanState.gate }), {}, onboardingGateValues(coordinatorCheckpoint));
       next = runner.advanceAutomaticGates();
