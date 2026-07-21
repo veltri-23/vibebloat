@@ -931,9 +931,9 @@ if (mode === "doctor") {
     const scrubTier = resolveScrubbers();
     const tierLine = scrubTier.tier === "signed"
       ? "Controlled release: signed (cosign-verified artifact, bundle, and pinned public key).\n"
-      : `Controlled release: unsigned/unverified (${scrubTier.signedUnavailableReason ?? "no signed VibeBloat release detected"}; in-process scrubber is active).\n`;
-    process.stdout.write(tierLine);
+      : `Controlled release: in-process scrubber is active (${scrubTier.signedUnavailableReason ?? "no signed VibeBloat release detected"}).\n`;
     if (errors.length === 0) {
+      process.stdout.write(tierLine);
       process.stdout.write("VibeBloat doctor: healthy.\n");
       if (warnings.length > 0) {
         const fix = warnings.some((finding) => finding.check === "index-freshness")
@@ -948,7 +948,6 @@ if (mode === "doctor") {
       : errors.some((finding) => finding.check === "source-health")
         ? "vibebloat init"
         : "vibebloat install --yes";
-    process.stderr.write(tierLine);
     process.stderr.write(`WHAT failed: doctor found ${errors.length} problem(s).\nWHY: ${errors.map((finding) => finding.message).join(" ")}\nFIX: ${fix}\n`);
     process.exit(1);
   } catch (error) {

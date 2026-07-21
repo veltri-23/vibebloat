@@ -35,18 +35,18 @@ export interface OnboardingContext {
 export type GateChoice = string | number;
 
 const gates: Record<GateId, GatePrompt> = {
-  A0: { question: "Hey — I'm VibeBloat. I'll look through your past coding sessions, find the mistakes your AI keeps making, and set up little tripwires so they can't happen again. One quick look now — about 5 minutes for a normal history, longer if you have a lot of sessions — then I just run quietly in the background. Want to start?", options: [] },
+  A0: { question: "Hey — I'm VibeBloat. I'll look through your past coding sessions, find the mistakes your AI keeps making, and set up little tripwires so they can't happen again. One quick look now — about a minute for a normal history, longer if you have a lot of sessions — then I just run quietly in the background. Want to start?", options: [] },
   A1: { question: "First: should I protect just this project, or watch your work everywhere on this machine?", options: ["Just this project", "Everywhere (recommended for solo devs)"] },
   F0: { question: "VibeBloat needs two small helpers: (1) a `vibebloat` command on your PATH that runs first when any agent or terminal runs a command, and (2) a git pre-commit / pre-push check. Neither touches your agent config, both are easy to remove any time. The install actually runs after you approve your rules, not at this step. Record your choice now?", options: ["Yes", "Shim only — skip the git hook", "Tell me more first"] },
   B1: { question: "Let me see what you're working with. I found these on your machine: [environments]. Did I get them all?", options: ["That's everything", "You missed one", "Ignore some of these"] },
   "B1.missing": { question: "Which, and where is it?", options: [] },
   "B1.ignore": { question: "Which should I leave out?", options: [] },
-  D1: { question: "I can learn from your history in each of these. A couple look pretty old, so I left them unchecked — old mistakes may not matter anymore. Pull from these?", options: ["Use these", "Actually pull from everything", "Let me adjust"] },
+  D1: { question: "I can learn from your history in each of these. Some may be older than others — I've left any that look stale unchecked in case their old mistakes don't apply anymore. Pull from these?", options: ["Use these", "Actually pull from everything", "Let me adjust"] },
   "D1.1": { question: "[staleEnvironment] hasn't been touched in [staleDays] days — its old mistakes might not apply. Include it anyway?", options: ["Yes", "No"] },
-  E1: { question: "Want to make me smarter? I can connect the tools you already use. CodeGraph — I'll know exactly which code a mistake touched. Obsidian — I can point to your own notes. Your memory files — I won't repeat rules you already wrote. Connect which?", options: ["Connect all (recommended)", "Connect selected", "Skip for now"] },
+  E1: { question: "Want to make me smarter? I can connect the tools you already use. codebase-memory-mcp — I'll know exactly which code a mistake touched. Obsidian — I can point to your own notes. Your memory files — I won't repeat rules you already wrote. Connect which?", options: ["Connect all (recommended)", "Connect selected", "Skip for now"] },
   "E1.1": { question: "Connecting [knowledgeTool] lets me point to your own notes and code — sure you want to skip it?", options: ["Connect", "Skip"] },
   E2: { question: "You don't have a code map yet. I work much better with one — want me to install codebase-memory-mcp? (recommended)", options: ["Install it", "Not now"] },
-  F1: { question: "Quick note on privacy: I read your old sessions right here on your computer — nothing gets uploaded. I hide any passwords or keys before I even look. And you approve every rule before it turns on. One optional thing: I can share the mistake patterns — never your code — to help protect other developers. It's on by default, but you can flip it off. Good to go?", options: ["Yes, sharing on", "Yes, but sharing off", "Cancel"] },
+  F1: { question: "Quick note on privacy: I read your old sessions right here on your computer — nothing leaves it (nothing is ever uploaded to our servers). I hide any passwords or keys before I even look. And you approve every rule before it turns on. One optional thing: I can share the mistake patterns — never your code — to help protect other developers. It's on by default, but you can flip it off. Good to go?", options: ["Yes, sharing on", "Yes, but sharing off", "Cancel"] },
   F1b: { question: "I can remember your choices on this machine to skip these questions next time. Stays local. OK?", options: ["Sure", "No thanks"] },
   F2: { question: "How should I do the scan? It's the one heavy step.", options: ["Just use this chat — you're already talking to me through [runnerAgent], I'll run it right here, nothing to set up (recommended when agent-driven)", "Use my own API key", "Run it locally and free (advanced: needs a large local model, small ones cannot do this reliably)"] },
   "F2.1": { question: "Here's the plan: [scanPlan]. When it's done I'll show you how much time these tripwires save you.", options: [] },
@@ -199,7 +199,7 @@ export function canonicalGateChoice(gate: GateId, choice: GateChoice, values: Re
 }
 
 export function autoAdvances(gate: GateId): boolean {
-  return new Set<GateId>(["F2.1", "SCAN", "I1", "K", "M"]).has(gate);
+  return new Set<GateId>(["SCAN", "I1", "K", "M"]).has(gate);
 }
 
 function selected(choice: GateChoice, option: number, ...words: string[]): boolean {
