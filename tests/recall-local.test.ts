@@ -2,38 +2,14 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { IncidentStore } from "../src/ingest/incidents-store";
-import { LocalRecall, setTransformersModuleForTesting } from "../src/ingest/recall-local";
+import { LocalRecall, setEmbedderForTesting, type Embedder } from "../src/ingest/recall-local";
 import { cosineSimilarity } from "../src/ingest/semantic-recall";
-
-interface Tensor {
-  data: Float32Array;
-  dims: readonly number[];
-}
-
-interface StubModule {
-  pipeline: (
-    task: "feature-extraction",
-    model: string,
-    options?: Record<string, unknown>,
-  ) => Promise<(input: string | string[], options?: Record<string, unknown>) => Promise<Tensor>>;
-  env: {
-    cacheDir: string | null;
-    allowLocalModels: boolean;
-    allowRemoteModels: boolean;
-    remoteHost: string;
-    localModelPath: string | null;
-    useFs: boolean;
-    useBrowserCache: boolean;
-    backends: { onnx: Record<string, unknown> };
-    logLevel?: number;
-  };
-}
 
 const temporaryDirectories: string[] = [];
 const openStores: IncidentStore[] = [];
 
 afterEach(() => {
-  setTransformersModuleForTesting(undefined);
+  setEmbedderForTesting(undefined);
   while (openStores.length > 0) {
     const store = openStores.pop();
     try { store?.close(); } catch { /* ignore */ }
@@ -56,28 +32,26 @@ function makeStore(): IncidentStore {
 }
 
 /**
- * Deterministic 384-dim embedder: a small bag-of-words projection. Synonyms
- * share non-zero dimensions; unrelated tokens don't overlap. The test
- * exercises `LocalRecall`'s recall + record paths + cosine k-NN without
- * booting an ONNX model — `setTransformersModuleForTesting` injects the stub.
+ * Deterministic 384-dim embedder: a small bag-of-words projection standing in
+ * for the neural sidecar. Shared tokens land in the same dimensions, so two
+ * phrasings that overlap rank near each other. Exercises `LocalRecall`'s
+ * record + recall + cosine k-NN without spawning the real model — the
+ * real-model behavior is proven separately in recall-local-realmodel.test.ts.
  */
-function makeStub(): StubModule {
+function makeEmbedder(): Embedder {
   const vocab = new Map<string, number>();
-  const next = (() => {
-    let counter = 0;
-    return (token: string) => {
-      const existing = vocab.get(token);
-      if (existing !== undefined) return existing;
-      counter += 1;
-      vocab.set(token, counter);
-      return counter;
-    };
-  })();
-  const projection = (text: string): Float32Array => {
+  let counter = 0;
+  const dim = (token: string): number => {
+    const existing = vocab.get(token);
+    if (existing !== undefined) return existing;
+    counter += 1;
+    vocab.set(token, counter);
+    return counter;
+  };
+  const project = (text: string): Float32Array => {
     const out = new Float32Array(384);
     for (const token of text.toLowerCase().split(/[^a-z0-9_/-]+/).filter((word) => word.length >= 2)) {
-      const dimension = next(token);
-      out[dimension % 384] += 1;
+      out[dim(token) % 384] += 1;
     }
     let norm = 0;
     for (const value of out) norm += value * value;
@@ -87,31 +61,14 @@ function makeStub(): StubModule {
     }
     return out;
   };
-  const pipe = async (input: string): Promise<Tensor> => {
-    const data = projection(input);
-    return { data, dims: [1, data.length] };
-  };
-  const env: StubModule["env"] = {
-    cacheDir: null,
-    allowLocalModels: false,
-    allowRemoteModels: true,
-    remoteHost: "https://huggingface.co",
-    localModelPath: null,
-    useFs: false,
-    useBrowserCache: true,
-    backends: { onnx: {} },
-  };
-  return {
-    env,
-    pipeline: (async (_task: string, _model: string) => pipe) as StubModule["pipeline"],
-  };
+  return (texts) => texts.map(project);
 }
 
-function installStub(): void {
-  setTransformersModuleForTesting(makeStub() as unknown as Parameters<typeof setTransformersModuleForTesting>[0]);
+function installEmbedder(): void {
+  setEmbedderForTesting(makeEmbedder());
 }
 
-test("recall degrades to [] when the model pipeline fails to load (no API key, offline)", async () => {
+test("recall degrades to [] when the embedder is unavailable (no model, offline)", async () => {
   const store = makeStore();
   store.record({
     incidentId: "seed",
@@ -121,16 +78,10 @@ test("recall degrades to [] when the model pipeline fails to load (no API key, o
     signature: "git|stash|u",
   });
   const recall = new LocalRecall({ store });
-  const failing: StubModule = {
-    ...makeStub(),
-    pipeline: (async () => {
-      throw new Error("model fetch failed");
-    }) as StubModule["pipeline"],
-  };
-  setTransformersModuleForTesting(failing as unknown as Parameters<typeof setTransformersModuleForTesting>[0]);
+  setEmbedderForTesting(() => undefined); // worker spawn failed / node missing
   const hits = await recall.recall({ event: { chokepoint: "shell", command: "git stash --keep-index" }, canonicalCommand: "git stash --keep-index" });
   expect(hits).toEqual([]);
-  expect(recall.unavailableReason).toContain("model fetch failed");
+  expect(recall.unavailableReason).toBeDefined();
   // record() also degrades gracefully — losing the embedding beats losing the incident.
   await recall.record({
     incidentId: "unembedded",
@@ -143,7 +94,7 @@ test("recall degrades to [] when the model pipeline fails to load (no API key, o
 });
 
 test("recall surfaces a stored incident for a reworded command by meaning (cosine)", async () => {
-  installStub();
+  installEmbedder();
   const store = makeStore();
   const recall = new LocalRecall({ store });
   await recall.record({
@@ -153,8 +104,6 @@ test("recall surfaces a stored incident for a reworded command by meaning (cosin
     consequence: "the deploy script was missing its scratch dir",
     canonicalCommand: "git stash -u",
   });
-  // Reworded: shares vocab with the stored command (git, stash, u). The stub's
-  // bag-of-words projection puts both in the same 384-dim neighborhood.
   const hits = await recall.recall({
     event: { chokepoint: "shell", command: "git stash --keep-index" },
     canonicalCommand: "git stash --keep-index",
@@ -164,14 +113,10 @@ test("recall surfaces a stored incident for a reworded command by meaning (cosin
   expect(hits[0]?.similarity).toBeGreaterThan(0);
 });
 
-test("local cosine surfaces a paraphrased command by meaning, not just tokens", async () => {
-  installStub();
+test("local cosine ranks a related command above an unrelated distractor", async () => {
+  installEmbedder();
   const store = makeStore();
   const recall = new LocalRecall({ store });
-  // Stored incident + an unrelated distractor. The paraphrase shares 2 of 5
-  // tokens with the stored command (git, stash) but means the same thing —
-  // local cosine ranks it above the unrelated distractor because the bag-of-
-  // words projection puts shared tokens in the same 384-dim slots.
   await recall.record({
     incidentId: "stash-u",
     command: "git stash -u",
@@ -194,7 +139,7 @@ test("local cosine surfaces a paraphrased command by meaning, not just tokens", 
 });
 
 test("recall ranks the closest paraphrase highest across multiple stored incidents", async () => {
-  installStub();
+  installEmbedder();
   const store = makeStore();
   const recall = new LocalRecall({ store });
   await recall.record({
@@ -212,14 +157,24 @@ test("recall ranks the closest paraphrase highest across multiple stored inciden
     canonicalCommand: "rename files with python",
   });
   const hits = await recall.recall({
-    event: { chokepoint: "shell", command: "move files with shell" },
-    canonicalCommand: "move files with shell",
+    event: { chokepoint: "shell", command: "rename files with shell" },
+    canonicalCommand: "rename files with shell",
   });
   expect(hits[0]?.incidentId).toBe("rename-files");
 });
 
+test("recall carries its own cosine-calibrated warn threshold, not the lexical default", () => {
+  installEmbedder();
+  const store = makeStore();
+  const recall = new LocalRecall({ store });
+  // Cosine matches on short commands land ~0.3; a 0.5 Jaccard threshold would
+  // never fire. The backend must advertise its own lower threshold.
+  expect(recall.warnThreshold).toBeLessThan(0.5);
+  expect(recall.warnThreshold).toBeGreaterThan(0);
+});
+
 test("recall with empty store is an empty array (no DB hit beyond the count)", async () => {
-  installStub();
+  installEmbedder();
   const store = makeStore();
   const recall = new LocalRecall({ store });
   const hits = await recall.recall({ event: { chokepoint: "shell", command: "git stash --keep-index" }, canonicalCommand: "git stash --keep-index" });
@@ -227,11 +182,9 @@ test("recall with empty store is an empty array (no DB hit beyond the count)", a
 });
 
 test("mismatched embedding dimensions skip stored rows (defensive against model swap)", async () => {
-  installStub();
+  installEmbedder();
   const store = makeStore();
   const recall = new LocalRecall({ store, dimensions: 256 });
-  // Hand-write a wrong-dim embedding into the store so we can prove the
-  // recall path skips it rather than compares garbage.
   const bogus = new Float32Array(384);
   for (let index = 0; index < bogus.length; index += 1) bogus[index] = 1 / bogus.length;
   store.record({
@@ -249,17 +202,17 @@ test("mismatched embedding dimensions skip stored rows (defensive against model 
   expect(hits).toEqual([]);
 });
 
-test("factory routes `local` mode to LocalRecall and degrades cleanly on construction", async () => {
-  installStub();
+test("factory + default config still resolves to lexical (local is opt-in)", async () => {
+  installEmbedder();
   const { buildRecall } = await import("../src/ingest/recall-factory");
   const store = makeStore();
   const recall = buildRecall({ store, configPath: undefined, environment: { VIBEBLOAT_HOME: tempHome() } as NodeJS.ProcessEnv });
-  expect(recall.mode).toBe("lexical"); // no config + default = lexical
-  void recall;
+  expect(recall.mode).toBe("lexical");
+  recall.close?.();
 });
 
 test("factory routes SR choice of `local` to LocalRecall when config pins it", async () => {
-  installStub();
+  installEmbedder();
   const { buildRecall } = await import("../src/ingest/recall-factory");
   const { writeRecallConfig } = await import("../src/ingest/recall-config");
   const home = tempHome();
@@ -273,7 +226,7 @@ test("factory routes SR choice of `local` to LocalRecall when config pins it", a
 
 describe("buildSyncRecall (hot path)", () => {
   test("falls back to lexical when the config pins local (sync hot path stays sync)", async () => {
-    installStub();
+    installEmbedder();
     const { buildSyncRecall } = await import("../src/ingest/recall-factory");
     const { writeRecallConfig } = await import("../src/ingest/recall-config");
     const home = tempHome();

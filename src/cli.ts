@@ -11,7 +11,7 @@ import { globalGuardHome, guardDirectories, guardHomeForScope, guardHomes, onboa
 import { loadGuards } from "./guard-loader";
 import { forgetEmail } from "./growth/email-capture";
 import { canonicalGuardId, gitCheckoutDiscardGuard, gitCleanForceGuard, gitResetHardGuard, gitStashUntrackedGuard, mcpConfigWrongFileGuard, npxMcpHangGuard } from "./guards";
-import { formatGuardRuntimeFailure, hookResponseForVerdict, runPreToolUse } from "./hooks";
+import { bindingFromPreToolUse, formatGuardRuntimeFailure, hookResponseForVerdict, runPreToolUse } from "./hooks";
 import { match } from "./match";
 import { closeWatcherOnSignals, fsGuardReceiptPath, hasUnenforceableFileGuard, inspectPersistentFsGuard, launchPersistentFsGuard, stopPersistentFsGuard, waitForFsGuardLaunchReceipt, watchFsGuardStopRequests, watchGuardedWrites } from "./install/fs-guard";
 import { discoverCurrentRepoGitHookPaths, gitHookCommandLine, installCurrentRepoGitHooks, planGitHook, type GitHookName } from "./install/git-hooks";
@@ -38,7 +38,8 @@ import { scanHistory } from "./ingest/scan";
 import type { UntrustedSemanticContext } from "./ingest/semantic-context";
 import { rankIncidents, type IncidentManifest } from "./ingest/rank";
 import { IncidentStore, defaultIncidentStorePath } from "./ingest/incidents-store";
-import { buildSyncRecall } from "./ingest/recall-factory";
+import { buildRecall, buildSyncRecall } from "./ingest/recall-factory";
+import type { SemanticRecall } from "./ingest/semantic-recall";
 import type { SyncSemanticRecall } from "./ingest/semantic-recall";
 import { detectRecallKey, onboardingGateValues } from "./onboarding/gate-measurements";
 import type { HistoryChunk } from "./ingest/types";
@@ -165,6 +166,38 @@ function buildRuntimeRecall(repoRoot = process.cwd()): SyncSemanticRecall | unde
     }
     return recall;
   } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Async neural recall for the hook's allow path. The sync hot path only runs
+ * lexical/off; when the repo picked `local` (or `embed`), a command that no
+ * guard blocked still gets checked against past incidents by the async
+ * backend. A warn here never blocks — it prints an advisory and the command
+ * proceeds. Any failure returns undefined so enforcement is never affected.
+ */
+async function neuralRecallAdvisory(payload: unknown): Promise<string | undefined> {
+  const repoRoot = process.cwd();
+  let adapter: SemanticRecall | undefined;
+  try {
+    const store = new IncidentStore({ path: defaultIncidentStorePath(repoRoot, globalGuardHome()) });
+    adapter = buildRecall({ store, configPath: join(repoRoot, ".vibebloat", "config.toml") });
+    // Sync backends already ran on the hot path; nothing to add.
+    if (adapter.mode === "lexical" || adapter.mode === "off") {
+      adapter.close?.();
+      return undefined;
+    }
+    const binding = bindingFromPreToolUse(runtimeGuards(), payload, hookAgent());
+    if (!binding) {
+      adapter.close?.();
+      return undefined;
+    }
+    const advisory = await new Runtime().recallAdvisory(binding.event, adapter);
+    adapter.close?.();
+    return advisory?.warning;
+  } catch {
+    adapter?.close?.();
     return undefined;
   }
 }
@@ -1744,8 +1777,10 @@ if (mode === "eval") {
 
 if (mode === "hook") {
   let response;
+  let hookPayload: unknown;
   try {
-    response = runPreToolUse(runtimeGuards(), JSON.parse(input), new Runtime(
+    hookPayload = JSON.parse(input);
+    response = runPreToolUse(runtimeGuards(), hookPayload, new Runtime(
       disabledGuards(),
       (guardId) => consumeAllowedOnce(guardId, guardHomeForScope(guardScope())),
       undefined,
@@ -1755,6 +1790,11 @@ if (mode === "hook") {
   } catch {
     response = { exitCode: 2 as const, stderr: formatGuardRuntimeFailure("guard hook evaluation stopped") };
   }
+  // On the allow path, an async neural backend (recall = local/embed) gets to
+  // surface a paraphrase-level warning the sync lexical hot path can't see.
+  const neuralWarning = response.exitCode === 0 && hookPayload !== undefined
+    ? await neuralRecallAdvisory(hookPayload)
+    : undefined;
   if (response.exitCode === 2 && process.argv[3] === "--agent=codex") {
     if (response.localWarning) process.stderr.write(`${response.localWarning}\n`);
     process.stdout.write(`${JSON.stringify({
@@ -1768,6 +1808,7 @@ if (mode === "hook") {
   }
   if (response.stderr) process.stderr.write(`${response.stderr}\n`);
   if (response.localWarning) process.stderr.write(`${response.localWarning}\n`);
+  if (neuralWarning) process.stderr.write(`${neuralWarning}\n`);
   process.exit(response.exitCode);
 }
 

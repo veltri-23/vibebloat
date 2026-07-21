@@ -35,6 +35,13 @@ export interface RecallRequest {
 
 export interface SemanticRecall {
   readonly mode: RecallMode;
+  /**
+   * Backend-specific warn threshold on this backend's own similarity scale.
+   * Lexical Jaccard and neural cosine are NOT the same scale — a shared global
+   * threshold over-fires one to satisfy the other. Runtime prefers this when
+   * set, falling back to `recallWarnThreshold`.
+   */
+  readonly warnThreshold?: number;
   /** Return similar past incidents. Empty array = no recall match. */
   recall(request: RecallRequest): Promise<RecallHit[]> | RecallHit[];
   /** Persist a new incident so future commands can recall it. */
@@ -67,6 +74,17 @@ export interface SyncSemanticRecall extends SemanticRecall {
  */
 export const recallPromotionThreshold = 0.8;
 export const recallWarnThreshold = 0.5;
+
+/**
+ * Neural (cosine) thresholds. all-MiniLM-L6-v2 compresses short command
+ * strings hard: measured cosine for a true paraphrase with zero shared tokens
+ * lands ~0.29-0.34, while unrelated commands sit below ~0.16 (often negative).
+ * The Jaccard-calibrated 0.5 warn threshold never fires on this scale, so the
+ * neural backend carries its own knob. Retune here if the model changes.
+ * ponytail: calibration knob, not a magic number — re-measure on model swap.
+ */
+export const localRecallWarnThreshold = 0.25;
+export const localRecallPromotionThreshold = 0.45;
 
 /**
  * Stable token set from a normalized command. Reused across record() and

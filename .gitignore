@@ -7,3 +7,6 @@ dist/
 release/*.key
 
 .vercel
+
+# local neural embedder model cache (recall = local)
+.vibebloat-model-cache/

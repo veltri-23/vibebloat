@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import type { IncidentStore } from "./incidents-store";
 import {
   type RecallHit,
@@ -7,201 +7,162 @@ import {
   type SemanticRecall,
   commandSignature,
   cosineSimilarity,
+  localRecallWarnThreshold,
 } from "./semantic-recall";
-
-// NOTE: `onnxruntime-web` is intentionally NOT imported at module top. The
-// default-export bundle is ~400KB JS plus the embedded WASM, and a top-level
-// `import * as ONNX_WEB from "onnxruntime-web"` would load + init the runtime
-// eagerly — every CLI invocation transitively imports recall-factory.ts (via
-// cli.ts and live-incident.ts), so an eager import here would inflate startup
-// even when the configured mode is `lexical`. The WASM hook is set lazily
-// inside `#getPipeline` instead, the first time the user actually opts into
-// the local backend.
-
-interface TransformersModule {
-  pipeline: (
-    task: "feature-extraction",
-    model: string,
-    options?: Record<string, unknown>,
-  ) => Promise<(input: string | string[], options?: Record<string, unknown>) => Promise<Tensor>>;
-  env: {
-    cacheDir: string | null;
-    allowLocalModels: boolean;
-    allowRemoteModels: boolean;
-    remoteHost: string;
-    localModelPath: string | null;
-    useFs: boolean;
-    useBrowserCache: boolean;
-    backends: { onnx: Record<string, unknown> };
-    logLevel?: number;
-  };
-}
-
-interface Tensor {
-  data: Float32Array;
-  dims: readonly number[];
-}
 
 const embeddingModelId = "Xenova/all-MiniLM-L6-v2";
 const defaultEmbeddingDimensions = 384;
 const maximumCandidates = 64;
+const workerPath = fileURLToPath(new URL("./embed-worker.mjs", import.meta.url));
+
+/** Response shape from `embed-worker.mjs`. */
+interface WorkerResponse {
+  ok: boolean;
+  dims?: number;
+  vectors?: number[][];
+  error?: string;
+}
 
 /**
- * Adapter shape the LocalRecall class needs from `@huggingface/transformers`.
- * Held as a static slot so tests can swap a deterministic stub without booting
- * a 384-dim ONNX model in CI.
+ * How we run the neural model. The vibebloat CLI is a Bun process, and
+ * onnxruntime-node's native binding registers ZERO execution providers under
+ * Bun on Windows (`Unsupported device: "cpu"`). The transformers *web* build
+ * clears that but has no filesystem under Bun. The only combination that
+ * actually embeds is the transformers *node* build under real Node — so we
+ * shell out to `node` for the model and keep Bun on the fast path. `node` is
+ * present wherever `npx` installs. A missing/failed worker degrades to no
+ * recall; it never throws into the enforcement path.
+ *
+ * Tests inject a deterministic embedder via `setEmbedderForTesting` so the
+ * suite exercises the real record/recall/cosine logic without booting a
+ * 384-dim ONNX model — the ONE real-model test drives the worker directly.
  */
-let transformersModule: TransformersModule | undefined;
+export type Embedder = (texts: readonly string[]) => Float32Array[] | undefined;
 
-export function setTransformersModuleForTesting(module: TransformersModule | undefined): void {
-  transformersModule = module;
+let injectedEmbedder: Embedder | undefined;
+
+export function setEmbedderForTesting(embedder: Embedder | undefined): void {
+  injectedEmbedder = embedder;
 }
 
-async function loadTransformersModule(): Promise<TransformersModule> {
-  if (transformersModule) return transformersModule;
-  const imported = await import("@huggingface/transformers");
-  transformersModule = imported as unknown as TransformersModule;
-  return transformersModule;
+function nodeBinary(): string {
+  return process.env.VIBEBLOAT_NODE?.trim() || "node";
 }
 
-function pipelineCacheDir(home: string): string {
-  return join(home, "cache", "transformers");
+/**
+ * Spawn the node sidecar and embed each text. Synchronous by construction: the
+ * caller is already async or a short-lived scan/hook process, and a blocking
+ * child keeps the protocol dead simple (one request, one response). Returns
+ * undefined on any failure so callers degrade cleanly.
+ *
+ * ponytail: one spawn per call. Fine for scan-time batch (pass all texts at
+ * once) and the once-per-command hot path; a persistent worker only pays off
+ * if per-command latency ever matters.
+ */
+function spawnEmbedder(cacheDir: string, model: string): Embedder {
+  return (texts) => {
+    if (texts.length === 0) return [];
+    const result = spawnSync(nodeBinary(), [workerPath], {
+      input: JSON.stringify({ texts, model, cacheDir }),
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+      timeout: 120_000,
+    });
+    if (result.status !== 0 || !result.stdout) return undefined;
+    let parsed: WorkerResponse;
+    try {
+      parsed = JSON.parse(result.stdout.trim().split("\n").at(-1) ?? "");
+    } catch {
+      return undefined;
+    }
+    if (!parsed.ok || !Array.isArray(parsed.vectors)) return undefined;
+    return parsed.vectors.map((vector) => Float32Array.from(vector));
+  };
 }
 
 export interface LocalRecallOptions {
   store: IncidentStore;
-  /**
-   * Directory the model + WASM binaries cache under. Defaults to
-   * `${home}/cache/transformers` so first-run downloads land in the guard
-   * home, not in the cwd. After the first fetch the model is read from here
-   * with zero network.
-   */
+  /** Where the model caches. Defaults under the guard home. */
   cacheDir?: string;
-  /**
-   * Override the model id. Defaults to Xenova/all-MiniLM-L6-v2 — 384-dim,
-   * ~23MB quantized, ships a WASM-compatible ONNX export on the HF Hub.
-   */
+  /** Override the model id. Defaults to Xenova/all-MiniLM-L6-v2 (384-dim). */
   model?: string;
-  /**
-   * Override the embedding dimensions. Defaults to 384. A mismatch on recall
-   * makes the adapter inert (no false matches).
-   */
+  /** Override embedding dimensions. A mismatch makes recall inert (no false hits). */
   dimensions?: number;
 }
 
-type PipelineFn = (input: string, options?: Record<string, unknown>) => Promise<Tensor>;
-
 /**
- * Local neural embedder: ships the model weights to disk on first use and
- * embeds offline thereafter. No API key, no network at inference. Cosine
- * k-NN over Float32 stored alongside the lexical Jaccard index — both backends
- * share the same `incidentStore.embedding` column.
+ * Local neural embedder for `recall = local`: offline semantic recall with no
+ * API key. Embeds via a Node sidecar (see Embedder note above), stores Float32
+ * vectors in the shared `incidents.embedding` column, and scores recall by
+ * cosine k-NN. Carries its own `warnThreshold` because cosine and the lexical
+ * Jaccard scale are not comparable.
  *
- * Async by design — inference takes tens of milliseconds and would explode the
- * sync enforcement hot path. The factory's `buildSyncRecall` already routes the
- * hot path to lexical when the configured mode is `local`; this class composes
- * into the async `recallAdvisory` side door like `EmbedRecall` does.
- *
- * Ponytail: degrading gracefully (return [] on recall, store without embedding
- * on record) is the contract for "first run needs network to pull the model".
- * A failed model load never breaks the hot path — it just opts out of recall.
+ * Async by design — spawning the model would explode the sync enforcement hot
+ * path, so `buildSyncRecall` routes the hot path to lexical and this backend
+ * surfaces through the async `recallAdvisory` side door. A failed embed always
+ * degrades: recall returns [], record stores the incident without a vector so
+ * a later working model can still match it lexically.
  */
 export class LocalRecall implements SemanticRecall {
   readonly mode = "local" as const;
+  readonly warnThreshold = localRecallWarnThreshold;
   readonly #store: IncidentStore;
-  readonly #cacheDir: string;
-  readonly #model: string;
   readonly #dimensions: number;
-  #pipeline: PipelineFn | undefined;
-  #pipelinePromise: Promise<PipelineFn | undefined> | undefined;
-  #unavailable: { reason: string } | undefined;
+  readonly #embed: Embedder;
+  #probed = false;
+  #unavailableReason: string | undefined;
 
   constructor(options: LocalRecallOptions) {
     this.#store = options.store;
-    this.#cacheDir = options.cacheDir ?? pipelineCacheDir(process.env.VIBEBLOAT_HOME ?? process.env.HOME ?? process.cwd());
-    this.#model = options.model ?? embeddingModelId;
     this.#dimensions = options.dimensions ?? defaultEmbeddingDimensions;
+    const cacheDir = options.cacheDir
+      ?? `${process.env.VIBEBLOAT_HOME ?? process.env.HOME ?? process.cwd()}/cache/transformers`;
+    const model = options.model ?? embeddingModelId;
+    this.#embed = (texts) => (injectedEmbedder ?? spawnEmbedder(cacheDir, model))(texts);
   }
 
-  /** Test/operator visibility into degraded state. */
   get unavailableReason(): string | undefined {
-    return this.#unavailable?.reason;
+    return this.#unavailableReason;
   }
 
-  /** Test/operator visibility into which dimensions this adapter expects. */
   get dimensions(): number {
     return this.#dimensions;
   }
 
-  async #getPipeline(): Promise<PipelineFn | undefined> {
-    if (this.#pipeline) return this.#pipeline;
-    if (this.#pipelinePromise) return this.#pipelinePromise;
-    this.#pipelinePromise = (async () => {
-      try {
-        // Ponytail: install the WASM ONNX runtime before transformers.js's
-        // first import. `@huggingface/transformers` auto-picks onnxruntime-node
-        // in Node-shaped runtimes (incl. Bun), which would pull in a native
-        // binding we explicitly want to avoid. The supported hook lives at
-        // `src/backends/onnx.js`; setting `globalThis[Symbol.for('onnxruntime')]`
-        // before the dynamic `import("@huggingface/transformers")` redirects
-        // the backend to the WASM build without paying its ~400KB cost at
-        // module-parse time. Dynamic import is intentional — see the top-of-
-        // file note on why this is not a static import.
-        const ONNX_WEB = await import("onnxruntime-web");
-        (globalThis as Record<symbol, unknown>)[Symbol.for("onnxruntime")] = ONNX_WEB;
-        const module = await loadTransformersModule();
-        module.env.cacheDir = this.#cacheDir;
-        module.env.allowLocalModels = true;
-        module.env.allowRemoteModels = true;
-        module.env.useFs = true;
-        module.env.useBrowserCache = false;
-        // Allow the WASM backend to find onnxruntime-web's compiled artifacts
-        // shipped in node_modules — no native binding required.
-        const wasmPaths = join(process.cwd(), "node_modules", "onnxruntime-web", "dist");
-        const wasmPathsFallback = join(process.cwd(), "node_modules", "@huggingface", "transformers", "dist");
-        module.env.backends.onnx = {
-          ...(module.env.backends.onnx ?? {}),
-          wasm: {
-            wasmPaths: fileExists(wasmPaths) ? wasmPaths : fileExists(wasmPathsFallback) ? wasmPathsFallback : wasmPaths,
-            proxy: false,
-            numThreads: 1,
-          },
-        };
-        mkdirSync(this.#cacheDir, { recursive: true });
-        const pipe = await module.pipeline("feature-extraction", this.#model, { quantized: true });
-        this.#pipeline = pipe as unknown as PipelineFn;
-        return this.#pipeline;
-      } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
-        this.#unavailable = { reason };
-        this.#pipelinePromise = undefined;
-        return undefined;
-      }
-    })();
-    return this.#pipelinePromise;
+  #embedOne(text: string): Float32Array | undefined {
+    let vectors: Float32Array[] | undefined;
+    try {
+      vectors = this.#embed([text]);
+    } catch (error) {
+      vectors = undefined;
+      this.#unavailableReason = error instanceof Error ? error.message : String(error);
+    }
+    if (!this.#probed) {
+      this.#probed = true;
+      if (!vectors) this.#unavailableReason ??= "embedding worker unavailable";
+    }
+    const vector = vectors?.[0];
+    if (!vector || vector.length !== this.#dimensions) return undefined;
+    return vector;
   }
 
   async recall(request: RecallRequest): Promise<RecallHit[]> {
-    if (this.#unavailable) return [];
     if (this.#store.isEmpty()) return [];
-    if (!request.canonicalCommand.trim()) return [];
-    const pipe = await this.#getPipeline();
-    if (!pipe) return [];
-    let query: Float32Array;
-    try {
-      const output = await pipe(request.canonicalCommand, { pooling: "mean", normalize: true });
-      query = output.data;
-    } catch {
-      return [];
-    }
-    if (query.length !== this.#dimensions) return [];
+    const query = request.canonicalCommand.trim();
+    if (!query) return [];
+    const queryVector = this.#embedOne(query);
+    if (!queryVector) return [];
     const limit = request.limit ?? 5;
-    const scored: { incidentId: string; command: string; condition: string; consequence: string; similarity: number }[] = [];
+    const scored: RecallHit[] = [];
     for (const incident of this.#store.all()) {
       if (!incident.embedding) continue;
-      const stored = new Float32Array(incident.embedding.buffer, incident.embedding.byteOffset, incident.embedding.byteLength / 4);
+      const stored = new Float32Array(
+        incident.embedding.buffer,
+        incident.embedding.byteOffset,
+        incident.embedding.byteLength / 4,
+      );
       if (stored.length !== this.#dimensions) continue;
-      const similarity = cosineSimilarity(query, stored);
+      const similarity = cosineSimilarity(queryVector, stored);
       if (similarity <= 0) continue;
       scored.push({
         incidentId: incident.incidentId,
@@ -225,31 +186,7 @@ export class LocalRecall implements SemanticRecall {
     canonicalCommand: string;
     recordedAt?: string;
   }): Promise<void> {
-    if (this.#unavailable) {
-      // Ponytail: degrade the same way recall does — losing the embedding beats
-      // crashing the mining path or refusing to record the incident at all.
-      this.#store.record({
-        incidentId: args.incidentId,
-        command: args.command,
-        argsContains: args.argsContains,
-        argsAnyOf: args.argsAnyOf,
-        condition: args.condition,
-        consequence: args.consequence,
-        signature: commandSignature(args.canonicalCommand),
-        recordedAt: args.recordedAt,
-      });
-      return;
-    }
-    const pipe = await this.#getPipeline();
-    let embedding: Float32Array | undefined;
-    if (pipe) {
-      try {
-        const output = await pipe(args.canonicalCommand, { pooling: "mean", normalize: true });
-        embedding = output.data.length === this.#dimensions ? output.data : undefined;
-      } catch {
-        embedding = undefined;
-      }
-    }
+    const embedding = this.#embedOne(args.canonicalCommand);
     this.#store.record({
       incidentId: args.incidentId,
       command: args.command,
@@ -265,14 +202,6 @@ export class LocalRecall implements SemanticRecall {
 
   close(): void {
     this.#store.close();
-  }
-}
-
-function fileExists(path: string): boolean {
-  try {
-    return existsSync(path);
-  } catch {
-    return false;
   }
 }
 

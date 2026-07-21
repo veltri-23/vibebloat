@@ -84,7 +84,7 @@ export class Runtime {
     const canonical = event.command;
     const hits = this.recall.recall({ event, canonicalCommand: canonical, limit: 1 });
     const top = hits[0];
-    if (!top || top.similarity < recallWarnThreshold) return undefined;
+    if (!top || top.similarity < (this.recall.warnThreshold ?? recallWarnThreshold)) return undefined;
     return { fired: false, warning: narrateRecallHit(top, event.cwd) };
   }
 
@@ -100,7 +100,7 @@ export class Runtime {
     const canonical = normalizedEvent.command ?? event.command;
     const hits = await adapter.recall({ event: normalizedEvent, canonicalCommand: canonical, limit: 1 });
     const top = hits[0];
-    if (!top || top.similarity < recallWarnThreshold) return null;
+    if (!top || top.similarity < (adapter.warnThreshold ?? recallWarnThreshold)) return null;
     return { warning: narrateRecallHit(top, normalizedEvent.cwd), similarity: top.similarity, incidentId: top.incidentId };
   }
 }
