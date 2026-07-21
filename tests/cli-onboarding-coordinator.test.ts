@@ -63,12 +63,15 @@ test("production onboarding coordinates discovery and fails closed before histor
   }
 
   const beforeScan = JSON.parse(readFileSync(join(home, "onboarding.json"), "utf8"));
-  expect(beforeScan).toMatchObject({ gate: "SR", coordinator: { phase: "ready-to-scan", consented: true } });
+  // No OPENAI_API_KEY in this env, so the F6 fork routes to SR-no-key (the
+  // un-keyed path) before SCAN. The previous broken behaviour routed every
+  // run to SR by leaving recallKeyPresent undefined.
+  expect(beforeScan).toMatchObject({ gate: "SR-no-key", coordinator: { phase: "ready-to-scan", consented: true } });
   expect(beforeScan.coordinator.discovery.sources).toEqual([
     expect.objectContaining({ id: "hermes", environmentId: "hermes", label: "Hermes history" }),
   ]);
 
-  const scan = invoke(repository, environment, "Lexical (offline, free, default)");
+  const scan = invoke(repository, environment, "Lexical (offline, free, recommended)");
   expect(scan.exitCode).toBe(1);
   expect(scan.stderr.toString()).toBe(
     "WHAT failed: onboarding setup stopped.\n" +
@@ -77,7 +80,7 @@ test("production onboarding coordinates discovery and fails closed before histor
   );
   expect(existsSync(join(home, "failed-ingest"))).toBeFalse();
   expect(JSON.parse(readFileSync(join(home, "onboarding.json"), "utf8"))).toMatchObject({
-    gate: "SR",
+    gate: "SR-no-key",
     coordinator: { phase: "ready-to-scan", consented: true },
   });
 });

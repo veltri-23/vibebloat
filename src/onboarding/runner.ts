@@ -1,6 +1,8 @@
 import { answerAssist, type AssistContext, type AssistResponse } from "./assist";
 import type { RunnerKind } from "./detect-runner";
 import { autoAdvances, canonicalGateChoice, gateValues, getGate, isGateChoice, nextFirstRunGate, renderGate, type GateChoice, type GateId, type OnboardingContext } from "./gates";
+import { recallModeForChoice } from "./preferences";
+import { persistRecallChoice } from "./recall-choice";
 import type { GuardScope } from "../guard-home";
 
 export function nextGateBatch<Gate>(orderedGates: Gate[], offset: number, maximum = 3): Gate[] {
@@ -84,6 +86,18 @@ export class OnboardingRunner {
     const next = nextFirstRunGate(gate, optionIndex >= 0 ? optionIndex : choice, this.context);
     this.state.answers[gate] = canonical;
     if (gate === "A1") this.state.scope = this.state.answers[gate] === "Just this project" ? "repo" : "machine";
+    if ((gate === "SR" || gate === "SR-no-key") && this.context.recallConfigPath) {
+      const mode = recallModeForChoice(canonical);
+      if (mode) {
+        persistRecallChoice({
+          configPath: this.context.recallConfigPath,
+          mode,
+          ...(mode === "embed" && this.context.recallEmbedKey
+            ? { embedApiKey: this.context.recallEmbedKey }
+            : {}),
+        });
+      }
+    }
     if (next === "CANCELLED") return this.cancel();
     else if (next) this.state.gate = next;
     return this.snapshot();

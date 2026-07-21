@@ -26,6 +26,10 @@ export interface OnboardingContext {
    * routes the user to SR-no-key, which only offers lexical / off.
    */
   recallKeyPresent?: boolean;
+  /** Where to write the resolved recall mode when SR / SR-no-key closes. */
+  recallConfigPath?: string;
+  /** Embed key to ship alongside `mode = "embed"` so the written config is self-contained. */
+  recallEmbedKey?: string;
 }
 
 export type GateChoice = string | number;

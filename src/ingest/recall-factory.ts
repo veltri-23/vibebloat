@@ -7,15 +7,13 @@ import { LocalRecall, createLocalRecall } from "./recall-local";
 import type { RecallHit, RecallMode, SemanticRecall, SyncSemanticRecall } from "./semantic-recall";
 
 /**
- * Resolution order when a config doesn't pin a mode:
- *  1. `OPENAI_API_KEY` present -> `embed` (already trusted at mine-time)
- *  2. default -> `lexical`
- * The `local` and `off` modes are always explicit choices.
+ * Default when no config pins a mode: `lexical` — offline, free, and works
+ * without trusting the user's environment with a network call. The SR gate
+ * writes the user's actual choice; that choice takes precedence over this
+ * default. `embed` is opt-in even when OPENAI_API_KEY is present, so a key
+ * on disk never silently flips the hot path to a paid backend.
  */
-export function inferDefaultRecallMode(environment: NodeJS.ProcessEnv = process.env): RecallMode {
-  if (typeof environment.OPENAI_API_KEY === "string" && environment.OPENAI_API_KEY.trim().length > 0) {
-    return "embed";
-  }
+export function inferDefaultRecallMode(_environment: NodeJS.ProcessEnv = process.env): RecallMode {
   return "lexical";
 }
 

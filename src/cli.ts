@@ -40,7 +40,7 @@ import { rankIncidents, type IncidentManifest } from "./ingest/rank";
 import { IncidentStore, defaultIncidentStorePath } from "./ingest/incidents-store";
 import { buildSyncRecall } from "./ingest/recall-factory";
 import type { SyncSemanticRecall } from "./ingest/semantic-recall";
-import { onboardingGateValues } from "./onboarding/gate-measurements";
+import { detectRecallKey, onboardingGateValues } from "./onboarding/gate-measurements";
 import type { HistoryChunk } from "./ingest/types";
 import { buildChatCompletionsBody, parseModelIncidentOutput, serializeModelCommandInput, usesChatCompletionsWire } from "./mine/model-command-input";
 import { detectRunnerDetails, parentProcessCommand, parseRunnerOverride, type RunnerDetectionSource } from "./onboarding/detect-runner";
@@ -555,6 +555,7 @@ function onboardingRunnerContext(
     || (process.platform === "win32"
       && Boolean(process.env.LOCALAPPDATA?.trim())
       && existsSync(`${process.env.LOCALAPPDATA!.replace(/[\\/]+$/, "")}\\Programs\\codebase-memory-mcp\\codebase-memory-mcp.exe`));
+  const key = detectRecallKey();
   return {
     knowledgeToolsDetected: codeBaseMemoryMcpOnPath,
     hasHermesOrOpenClaw: checkpoint?.discovery?.environments.some(({ id }) => id === "hermes" || id === "openclaw") ?? false,
@@ -562,6 +563,11 @@ function onboardingRunnerContext(
       ? { scanOutcome: incidentCount > 0 ? "found" as const : "zero" as const }
       : {}),
     reviewsRemaining: Math.max(1, incidentCount - reviewed + (state.gate === "J3" ? 1 : 0)),
+    recallKeyPresent: key.present,
+    recallConfigPath: join(process.cwd(), ".vibebloat", "config.toml"),
+    ...(key.present && process.env.OPENAI_API_KEY
+      ? { recallEmbedKey: process.env.OPENAI_API_KEY.trim() }
+      : {}),
   };
 }
 
