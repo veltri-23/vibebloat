@@ -39,6 +39,7 @@ import type { UntrustedSemanticContext } from "./ingest/semantic-context";
 import { rankIncidents, type IncidentManifest } from "./ingest/rank";
 import { IncidentStore, defaultIncidentStorePath } from "./ingest/incidents-store";
 import { buildRecall, buildSyncRecall } from "./ingest/recall-factory";
+import { readRecallConfig } from "./ingest/recall-config";
 import type { SemanticRecall } from "./ingest/semantic-recall";
 import type { SyncSemanticRecall } from "./ingest/semantic-recall";
 import { detectRecallKey, onboardingGateValues } from "./onboarding/gate-measurements";
@@ -179,26 +180,31 @@ function buildRuntimeRecall(repoRoot = process.cwd()): SyncSemanticRecall | unde
  */
 async function neuralRecallAdvisory(payload: unknown): Promise<string | undefined> {
   const repoRoot = process.cwd();
+  const configPath = join(repoRoot, ".vibebloat", "config.toml");
+  // Cheap gate BEFORE any storage I/O: only local/embed do async recall. The
+  // default (lexical/off, or no config at all) returns after one existsSync,
+  // so the common allow-path hook never opens the incident store.
+  if (!existsSync(configPath)) return undefined;
+  const mode = readRecallConfig(configPath)?.mode;
+  if (mode !== "local" && mode !== "embed") return undefined;
   let adapter: SemanticRecall | undefined;
   try {
     const store = new IncidentStore({ path: defaultIncidentStorePath(repoRoot, globalGuardHome()) });
-    adapter = buildRecall({ store, configPath: join(repoRoot, ".vibebloat", "config.toml") });
-    // Sync backends already ran on the hot path; nothing to add.
-    if (adapter.mode === "lexical" || adapter.mode === "off") {
-      adapter.close?.();
-      return undefined;
-    }
+    adapter = buildRecall({ store, configPath });
+    // embed-without-key degrades to lexical inside buildRecall — that already
+    // ran on the sync hot path, so there is nothing to add here.
+    if (adapter.mode === "lexical" || adapter.mode === "off") return undefined;
     const binding = bindingFromPreToolUse(runtimeGuards(), payload, hookAgent());
-    if (!binding) {
-      adapter.close?.();
-      return undefined;
-    }
+    if (!binding) return undefined;
     const advisory = await new Runtime().recallAdvisory(binding.event, adapter);
-    adapter.close?.();
     return advisory?.warning;
   } catch {
-    adapter?.close?.();
     return undefined;
+  } finally {
+    // Close exactly once, and never let a close error (e.g. a locked SQLite
+    // handle) escape into the enforcement path. A crashed advisory must not
+    // take down the hook.
+    try { adapter?.close?.(); } catch { /* advisory close is best-effort */ }
   }
 }
 
