@@ -26,8 +26,14 @@ const cases = [
 
 const texts = [...new Set(cases.flatMap(({ recorded, query }) => [recorded, query]))];
 const workerPath = fileURLToPath(new URL("../src/ingest/embed-worker.mjs", import.meta.url));
-const result = spawnSync(process.env.VIBEBLOAT_NODE?.trim() || "node", [workerPath], {
-  input: JSON.stringify({ texts, cacheDir: join(process.cwd(), ".vibebloat-model-cache") }),
+const model = "Xenova/all-MiniLM-L6-v2";
+const cacheDir = join(process.cwd(), ".vibebloat-model-cache");
+const result = spawnSync(process.env.VIBEBLOAT_NODE?.trim() || "node", [
+  workerPath,
+  "--model", model,
+  "--cache-dir", cacheDir,
+], {
+  input: JSON.stringify({ texts }),
   encoding: "utf8",
   maxBuffer: 64 * 1024 * 1024,
   timeout: 120_000,
@@ -36,7 +42,7 @@ const result = spawnSync(process.env.VIBEBLOAT_NODE?.trim() || "node", [workerPa
 interface WorkerResponse {
   ok: boolean;
   vectors?: number[][];
-  error?: string;
+  error?: { code: string; message: string };
 }
 
 let response: WorkerResponse | undefined;
@@ -48,7 +54,7 @@ try {
 
 const unavailableReason = result.error?.message
   ?? (result.status !== 0 ? (result.stderr ?? "").trim() || `worker exited ${result.status}` : undefined)
-  ?? (!response?.ok ? response?.error ?? "invalid worker response" : undefined);
+  ?? (!response?.ok ? response?.error?.message ?? "invalid worker response" : undefined);
 const requireRealModel = process.env.VIBEBLOAT_REQUIRE_REALMODEL === "1";
 
 if (unavailableReason && !requireRealModel) {
@@ -72,5 +78,14 @@ if (unavailableReason && !requireRealModel) {
     const negativeCeiling = Math.max(...scores.filter(({ warns }) => !warns).map(({ score }) => score));
     expect(negativeCeiling).toBeLessThan(localRecallWarnThreshold);
     expect(positiveFloor).toBeGreaterThanOrEqual(localRecallWarnThreshold);
+  });
+
+  test("real MiniLM returns distinct 384-dimensional vectors", () => {
+    expect(unavailableReason).toBeUndefined();
+    const vectors = response?.vectors ?? [];
+    expect(vectors).toHaveLength(texts.length);
+    expect(vectors.every((vector) => vector.length === 384)).toBe(true);
+    const fingerprints = new Set(vectors.map((vector) => vector.slice(0, 16).map((value) => value.toFixed(6)).join(",")));
+    expect(fingerprints.size).toBeGreaterThan(1);
   });
 }
