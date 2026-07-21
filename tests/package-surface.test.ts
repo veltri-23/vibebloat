@@ -12,6 +12,7 @@ const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.me
   };
   peerDependencies?: Record<string, string>;
   peerDependenciesMeta?: Record<string, { optional?: boolean }>;
+  optionalDependencies?: Record<string, string>;
   scripts?: Record<string, string>;
   bin?: Record<string, string>;
   private?: boolean;
@@ -33,6 +34,10 @@ test("npm package ships an installable OpenClaw plugin", () => {
   expect(packageJson.exports?.["./openclaw-plugin"]).toBe("./dist/openclaw-plugin.js");
   expect(packageJson.peerDependencies?.openclaw).toBe(">=2026.4.0");
   expect(packageJson.peerDependenciesMeta?.openclaw).toEqual({ optional: true });
+  expect(packageJson.optionalDependencies).toEqual({
+    "@huggingface/transformers": "^4.2.0",
+    "onnxruntime-node": "^1.24.3",
+  });
   expect(packageJson.openclaw).toEqual({
     extensions: ["./src/hooks/openclaw-plugin.ts"],
     runtimeExtensions: ["./dist/openclaw-plugin.js"],

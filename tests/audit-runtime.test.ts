@@ -118,7 +118,7 @@ test("CLI audit write failure never weakens enforcement or leaks its path", () =
   const invalidUserHome = join(root, "not-a-directory");
   writeFileSync(invalidUserHome, "file blocks global audit home");
   const result = Bun.spawnSync(["bun", cliPath, "hook"], {
-    cwd: repositoryRoot,
+    cwd: dirtyCtx.cwd,
     env: { ...process.env, USERPROFILE: invalidUserHome, HOME: invalidUserHome, VIBEBLOAT_HOME: join(root, "guards") },
     stdin: new Blob([JSON.stringify({ tool_input: { command: "git stash -u" } })]),
     stdout: "pipe",

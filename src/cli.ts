@@ -11,7 +11,7 @@ import { globalGuardHome, guardDirectories, guardHomeForScope, guardHomes, onboa
 import { loadGuards } from "./guard-loader";
 import { forgetEmail } from "./growth/email-capture";
 import { canonicalGuardId, gitCheckoutDiscardGuard, gitCleanForceGuard, gitResetHardGuard, gitStashUntrackedGuard, mcpConfigWrongFileGuard, npxMcpHangGuard } from "./guards";
-import { formatGuardRuntimeFailure, hookResponseForVerdict, runPreToolUse } from "./hooks";
+import { bindingFromPreToolUse, formatGuardRuntimeFailure, hookResponseForVerdict, runPreToolUse } from "./hooks";
 import { match } from "./match";
 import { closeWatcherOnSignals, fsGuardReceiptPath, hasUnenforceableFileGuard, inspectPersistentFsGuard, launchPersistentFsGuard, stopPersistentFsGuard, waitForFsGuardLaunchReceipt, watchFsGuardStopRequests, watchGuardedWrites } from "./install/fs-guard";
 import { discoverCurrentRepoGitHookPaths, gitHookCommandLine, installCurrentRepoGitHooks, planGitHook, type GitHookName } from "./install/git-hooks";
@@ -38,8 +38,9 @@ import { scanHistory } from "./ingest/scan";
 import type { UntrustedSemanticContext } from "./ingest/semantic-context";
 import { rankIncidents, type IncidentManifest } from "./ingest/rank";
 import { IncidentStore, defaultIncidentStorePath } from "./ingest/incidents-store";
-import { buildSyncRecall } from "./ingest/recall-factory";
-import type { SyncSemanticRecall } from "./ingest/semantic-recall";
+import { buildRecall, buildSyncRecall } from "./ingest/recall-factory";
+import { readRecallConfig } from "./ingest/recall-config";
+import type { SemanticRecall, SyncSemanticRecall } from "./ingest/semantic-recall";
 import { detectRecallKey, onboardingGateValues } from "./onboarding/gate-measurements";
 import type { HistoryChunk } from "./ingest/types";
 import { buildChatCompletionsBody, parseModelIncidentOutput, serializeModelCommandInput, usesChatCompletionsWire } from "./mine/model-command-input";
@@ -152,21 +153,43 @@ function runtimeGuards(): Guard[] {
   return [...guards, ...installed];
 }
 
-/**
- * The live recall adapter for the enforcement hot path. Reads the repo's
- * `[semantic] recall` choice (default lexical). Returns undefined for `off`
- * or on any error so recall never opens a DB it won't use and never breaks
- * enforcement — a failed recall must not stop a guard from firing.
- */
+/** Lexical-only adapter for the synchronous enforcement allow path. */
 function buildRuntimeRecall(repoRoot = process.cwd()): SyncSemanticRecall | undefined {
   try {
+    const configPath = join(repoRoot, ".vibebloat", "config.toml");
+    if (!existsSync(configPath) || readRecallConfig(configPath)?.mode !== "lexical") return undefined;
     const store = new IncidentStore({ path: defaultIncidentStorePath(repoRoot, globalGuardHome()) });
-    const recall = buildSyncRecall({ store, configPath: join(repoRoot, ".vibebloat", "config.toml") });
-    if (recall.mode === "off") {
-      recall.close?.();
-      return undefined;
-    }
-    return recall;
+    return buildSyncRecall({ store, configPath });
+  } catch {
+    return undefined;
+  }
+}
+
+/** Async advisory exclusively for local/embed recall after enforcement allows. */
+async function neuralRecallAdvisory(event: Event, repoRoot = process.cwd()): Promise<string | undefined> {
+  const configPath = join(repoRoot, ".vibebloat", "config.toml");
+  let closeResource: (() => void) | undefined;
+  try {
+    if (!existsSync(configPath)) return undefined;
+    const mode = readRecallConfig(configPath)?.mode;
+    if (mode !== "local" && mode !== "embed") return undefined;
+    const store = new IncidentStore({ path: defaultIncidentStorePath(repoRoot, globalGuardHome()) });
+    closeResource = () => store.close();
+    const adapter: SemanticRecall = buildRecall({ store, configPath });
+    closeResource = adapter.close?.bind(adapter) ?? closeResource;
+    const advisory = await new Runtime().recallAdvisory(event, adapter);
+    return advisory?.warning ?? adapter.unavailableAdvisory;
+  } catch {
+    return undefined;
+  } finally {
+    try { closeResource?.(); } catch { /* advisory close is best-effort */ }
+  }
+}
+
+async function hookNeuralRecallAdvisory(payload: unknown): Promise<string | undefined> {
+  try {
+    const binding = bindingFromPreToolUse(runtimeGuards(), payload, hookAgent());
+    return binding ? await neuralRecallAdvisory(binding.event) : undefined;
   } catch {
     return undefined;
   }
@@ -1699,10 +1722,11 @@ if (mode === "shell-shim") {
 
 if (mode === "git-hook") {
   let response;
+  let event!: Event;
   try {
     const hook = gitHookName(process.argv[3]);
     if (process.argv.length !== 4) throw new Error("unexpected Git hook arguments");
-    const event: Event = { chokepoint: "shell", command: hook === "pre-commit" ? "git commit" : "git push" };
+    event = { chokepoint: "shell", command: hook === "pre-commit" ? "git commit" : "git push" };
     const verdict = new Runtime(
       disabledGuards(),
       (guardId) => consumeAllowedOnce(guardId, guardHomeForScope(guardScope())),
@@ -1715,8 +1739,10 @@ if (mode === "git-hook") {
     process.stderr.write("WHAT failed: Git hook evaluation stopped.\nWHY: installed guards or Git hook arguments could not be evaluated.\nFIX: vibebloat doctor\n");
     process.exit(1);
   }
+  const recallWarning = response.exitCode === 0 ? await neuralRecallAdvisory(event) : undefined;
   if (response.stderr) process.stderr.write(`${response.stderr}\n`);
   if (response.localWarning) process.stderr.write(`${response.localWarning}\n`);
+  if (recallWarning) process.stderr.write(`${recallWarning}\n`);
   process.exit(response.exitCode);
 }
 
@@ -1758,8 +1784,10 @@ if (mode === "eval") {
 
 if (mode === "hook") {
   let response;
+  let hookPayload: unknown;
   try {
-    response = runPreToolUse(runtimeGuards(), JSON.parse(input), new Runtime(
+    hookPayload = JSON.parse(input);
+    response = runPreToolUse(runtimeGuards(), hookPayload, new Runtime(
       disabledGuards(),
       (guardId) => consumeAllowedOnce(guardId, guardHomeForScope(guardScope())),
       undefined,
@@ -1769,6 +1797,10 @@ if (mode === "hook") {
   } catch {
     response = { exitCode: 2 as const, stderr: formatGuardRuntimeFailure("guard hook evaluation stopped") };
   }
+  // Advisory runs only after enforcement succeeds and cannot change verdict.
+  const recallWarning = response.exitCode === 0 && hookPayload !== undefined
+    ? await hookNeuralRecallAdvisory(hookPayload)
+    : undefined;
   if (response.exitCode === 2 && process.argv[3] === "--agent=codex") {
     if (response.localWarning) process.stderr.write(`${response.localWarning}\n`);
     process.stdout.write(`${JSON.stringify({
@@ -1782,6 +1814,7 @@ if (mode === "hook") {
   }
   if (response.stderr) process.stderr.write(`${response.stderr}\n`);
   if (response.localWarning) process.stderr.write(`${response.localWarning}\n`);
+  if (recallWarning) process.stderr.write(`${recallWarning}\n`);
   process.exit(response.exitCode);
 }
 

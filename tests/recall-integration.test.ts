@@ -43,6 +43,7 @@ function seededEnvironment(): { env: NodeJS.ProcessEnv; cwd: string } {
 }
 
 function seedIncident(env: NodeJS.ProcessEnv, cwd: string, command: string): void {
+  persistRecallChoice({ configPath: join(cwd, ".vibebloat", "config.toml"), mode: "lexical" });
   const store = new IncidentStore({ path: defaultIncidentStorePath(cwd, globalGuardHome(env)) });
   const recall = buildSyncRecall({ store, configPath: join(cwd, ".vibebloat", "config.toml"), environment: env });
   recall.record({
@@ -132,7 +133,7 @@ function driveSRToCompletion(env: NodeJS.ProcessEnv, cwd: string, targetGate: Ga
 
 test("init -> SR-no-key -> hook: written lexical config is honored by the hot path", () => {
   const { env, cwd } = seededEnvironment();
-  driveSRToCompletion(env, cwd, "SR-no-key", 0);
+  driveSRToCompletion(env, cwd, "SR-no-key", 1); // index 1 = Lexical (recommended is now Local at index 0)
   const configPath = join(cwd, ".vibebloat", "config.toml");
   expect(existsSync(configPath)).toBe(true);
   expect(readRecallConfig(configPath)?.mode).toBe("lexical");
@@ -160,7 +161,7 @@ test("init -> SR (key present, opt-in to lexical) -> hook: written lexical confi
   const cwd = makeTemp("vibebloat-recall-repo-");
   // Key present, user still picks Lexical via the SR gate (opt-in, not auto-select).
   const env = { ...process.env, USERPROFILE: home, HOME: home, OPENAI_API_KEY: "sk-test-abcdef1234" };
-  driveSRToCompletion(env, cwd, "SR", 1); // index 1 = Lexical
+  driveSRToCompletion(env, cwd, "SR", 2); // index 2 = Lexical (Local moved to index 1)
   const configPath = join(cwd, ".vibebloat", "config.toml");
   expect(readRecallConfig(configPath)?.mode).toBe("lexical");
   // Even with the key on disk, the factory should NOT auto-select embed; the

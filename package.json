@@ -61,6 +61,10 @@
     "tree-sitter": "^0.21.1",
     "tree-sitter-bash": "^0.21.0"
   },
+  "optionalDependencies": {
+    "@huggingface/transformers": "^4.2.0",
+    "onnxruntime-node": "^1.24.3"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/veltri-23/vibebloat.git"

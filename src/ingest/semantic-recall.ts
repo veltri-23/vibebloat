@@ -35,6 +35,15 @@ export interface RecallRequest {
 
 export interface SemanticRecall {
   readonly mode: RecallMode;
+  /** User-facing recovery hint, populated only after an optional backend fails. */
+  readonly unavailableAdvisory?: string;
+  /**
+   * Backend-specific warn threshold on this backend's own similarity scale.
+   * Lexical Jaccard and neural cosine are NOT the same scale — a shared global
+   * threshold over-fires one to satisfy the other. Runtime prefers this when
+   * set, falling back to `recallWarnThreshold`.
+   */
+  readonly warnThreshold?: number;
   /** Return similar past incidents. Empty array = no recall match. */
   recall(request: RecallRequest): Promise<RecallHit[]> | RecallHit[];
   /** Persist a new incident so future commands can recall it. */
@@ -61,12 +70,17 @@ export interface SyncSemanticRecall extends SemanticRecall {
   recall(request: RecallRequest): RecallHit[];
 }
 
-/**
- * Recurring k-NN threshold. Above this we suggest promoting to a real guard
- * via the existing human-approval path. Below it we surface as a warn only.
- */
-export const recallPromotionThreshold = 0.8;
+/** Default warning threshold for lexical Jaccard backends. */
 export const recallWarnThreshold = 0.5;
+
+/**
+ * all-MiniLM-L6-v2 cosine threshold, calibrated against destructive command
+ * paraphrases after the conservative intent prefilter removes ordinary reads.
+ * The natural-language stash paraphrase scores about 0.343; 0.25 leaves room
+ * for short destructive requests without reopening benign command warnings.
+ * ponytail: calibration knob, not a magic number — re-measure on model swap.
+ */
+export const localRecallWarnThreshold = 0.25;
 
 /**
  * Stable token set from a normalized command. Reused across record() and

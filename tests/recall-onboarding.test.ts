@@ -47,13 +47,14 @@ describe("onboarding recall gate wiring", () => {
     expect(nextFirstRunGate("SR", 4)).toBe("SR");
   });
 
-  test("SR-no-key offers only lexical and off; both advance to SCAN", () => {
+  test("SR-no-key offers local, lexical, and off; all three advance to SCAN", () => {
     // The runner passes the option index (a number) to nextFirstRunGate; we
     // exercise that path here so the transition doesn't depend on full-text
     // option matching.
     expect(nextFirstRunGate("SR-no-key", 0)).toBe("SCAN");
     expect(nextFirstRunGate("SR-no-key", 1)).toBe("SCAN");
-    expect(nextFirstRunGate("SR-no-key", 2)).toBe("SR-no-key");
+    expect(nextFirstRunGate("SR-no-key", 2)).toBe("SCAN");
+    expect(nextFirstRunGate("SR-no-key", 3)).toBe("SR-no-key");
   });
 
   test("SR rendered copy recommends lexical when no key is present", () => {
@@ -73,12 +74,13 @@ describe("preference application", () => {
     expect(applyOnboardingPreference({}, "SR", "Lexical (offline, free, default)").recallMode).toBe("lexical");
     expect(applyOnboardingPreference({}, "SR", "Embed (uses your mining key, smarter)").recallMode).toBe("embed");
     expect(applyOnboardingPreference({}, "SR", "Off (no recall at all)").recallMode).toBe("off");
-    expect(applyOnboardingPreference({}, "SR", "Local (post-hackathon neural embedder)").recallMode).toBe("local");
+    expect(applyOnboardingPreference({}, "SR", "Local (downloads a model once, then runs offline)").recallMode).toBe("local");
   });
 
   test("SR-no-key choice maps to recallMode", () => {
-    expect(applyOnboardingPreference({}, "SR-no-key", "Lexical (offline, free, recommended)").recallMode).toBe("lexical");
+    expect(applyOnboardingPreference({}, "SR-no-key", "Lexical (offline, free, lighter)").recallMode).toBe("lexical");
     expect(applyOnboardingPreference({}, "SR-no-key", "Off (no recall at all)").recallMode).toBe("off");
+    expect(applyOnboardingPreference({}, "SR-no-key", "Local (recommended)").recallMode).toBe("local");
   });
 
   test("recallModeForChoice is the only public mapping", () => {
