@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { IncidentStore } from "../src/ingest/incidents-store";
 import { LocalRecall, setEmbedderForTesting, type Embedder } from "../src/ingest/recall-local";
@@ -96,6 +96,68 @@ test("recall degrades to [] when the embedder is unavailable (no model, offline)
     canonicalCommand: "git stash -u",
   });
   expect(store.findBySignature("git|stash|u")?.embedding).toBeNull();
+});
+
+test("missing node degrades promptly without throwing", async () => {
+  const store = makeStore();
+  store.record({
+    incidentId: "seed",
+    command: "git stash -u",
+    condition: "files disappeared",
+    consequence: "restore required",
+    signature: "git|stash|u",
+  });
+  const recall = new LocalRecall({
+    store,
+    nodeBinary: join(tempHome(), "definitely-missing-node"),
+    workerTimeoutMs: 50,
+  });
+  const startedAt = performance.now();
+  const hits = await recall.recall({
+    event: { chokepoint: "shell", command: "git stash --keep-index" },
+    canonicalCommand: "git stash --keep-index",
+  });
+  expect(hits).toEqual([]);
+  expect(recall.unavailableReason).toBeDefined();
+  expect(performance.now() - startedAt).toBeLessThan(1_000);
+});
+
+test("hung worker is killed at the deadline and recall returns promptly", async () => {
+  const directory = tempHome();
+  const worker = join(directory, "hung-worker.mjs");
+  const pidFile = join(directory, "worker.pid");
+  writeFileSync(worker, [
+    'import { writeFileSync } from "node:fs";',
+    `writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));`,
+    "process.stdin.resume();",
+    "setInterval(() => {}, 1_000);",
+  ].join("\n"));
+  const store = makeStore();
+  store.record({
+    incidentId: "seed",
+    command: "git stash -u",
+    condition: "files disappeared",
+    consequence: "restore required",
+    signature: "git|stash|u",
+  });
+  const recall = new LocalRecall({
+    store,
+    nodeBinary: process.execPath,
+    workerPath: worker,
+    workerTimeoutMs: 100,
+  });
+  let eventLoopProgressed = false;
+  setTimeout(() => { eventLoopProgressed = true; }, 0);
+  const startedAt = performance.now();
+  const hits = await recall.recall({
+    event: { chokepoint: "shell", command: "git stash --keep-index" },
+    canonicalCommand: "git stash --keep-index",
+  });
+  expect(hits).toEqual([]);
+  expect(eventLoopProgressed).toBeTrue();
+  expect(performance.now() - startedAt).toBeLessThan(1_000);
+  const pid = Number(readFileSync(pidFile, "utf8"));
+  expect(() => process.kill(pid, 0)).toThrow();
 });
 
 test("recall surfaces a stored incident for a reworded command by meaning (cosine)", async () => {

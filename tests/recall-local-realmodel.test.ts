@@ -31,7 +31,7 @@ afterAll(() => {
 setEmbedderForTesting(undefined); // force the real sidecar
 
 const probeStore = new IncidentStore({ path: join(storeDir, "incidents.sqlite") });
-const recall = createLocalRecall({ store: probeStore, cacheDir: modelCache });
+const recall = createLocalRecall({ store: probeStore, cacheDir: modelCache, workerTimeoutMs: 120_000 });
 
 // A destructive-git incident, described as a real mistake.
 await recall.record({

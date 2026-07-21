@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import type { IncidentStore } from "./incidents-store";
 import {
@@ -12,8 +11,10 @@ import {
 
 const embeddingModelId = "Xenova/all-MiniLM-L6-v2";
 const defaultEmbeddingDimensions = 384;
+const defaultWorkerTimeoutMs = 5_000;
+const maximumWorkerOutputBytes = 1_048_576;
 const maximumCandidates = 64;
-const workerPath = fileURLToPath(new URL("./embed-worker.mjs", import.meta.url));
+const defaultWorkerPath = fileURLToPath(new URL("./embed-worker.mjs", import.meta.url));
 const unavailableAdvisory =
   "WHAT skipped: local semantic recall is unavailable.\n" +
   "WHY: optional @huggingface/transformers and onnxruntime-node runtime could not load.\n" +
@@ -33,15 +34,17 @@ interface WorkerResponse {
  * Bun on Windows (`Unsupported device: "cpu"`). The transformers *web* build
  * clears that but has no filesystem under Bun. The only combination that
  * actually embeds is the transformers *node* build under real Node — so we
- * shell out to `node` for the model and keep Bun on the fast path. `node` is
- * present wherever `npx` installs. A missing/failed worker degrades to no
+ * spawn `node` directly for the model and keep Bun on the fast path. `node`
+ * is present wherever `npx` installs. A missing/failed worker degrades to no
  * recall; it never throws into the enforcement path.
  *
  * Tests inject a deterministic embedder via `setEmbedderForTesting` so the
  * suite exercises the real record/recall/cosine logic without booting a
  * 384-dim ONNX model — the ONE real-model test drives the worker directly.
  */
-export type Embedder = (texts: readonly string[]) => Float32Array[] | undefined;
+export type Embedder = (
+  texts: readonly string[],
+) => Float32Array[] | undefined | Promise<Float32Array[] | undefined>;
 
 let injectedEmbedder: Embedder | undefined;
 
@@ -53,34 +56,85 @@ function nodeBinary(): string {
   return process.env.VIBEBLOAT_NODE?.trim() || "node";
 }
 
+async function readBoundedOutput(
+  stream: ReadableStream<Uint8Array>,
+  onLimit: () => void,
+): Promise<string> {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  try {
+    while (true) {
+      const next = await reader.read();
+      if (next.done) break;
+      bytes += next.value.byteLength;
+      if (bytes > maximumWorkerOutputBytes) {
+        onLimit();
+        throw new Error("embedding-worker-output-too-large");
+      }
+      chunks.push(next.value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const output = new Uint8Array(bytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    output.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(output);
+}
+
 /**
- * Spawn the node sidecar and embed each text. Synchronous by construction: the
- * caller is already async or a short-lived scan/hook process, and a blocking
- * child keeps the protocol dead simple (one request, one response). Returns
- * undefined on any failure so callers degrade cleanly.
+ * Spawn Node directly (never through a shell) and embed each text. Bun keeps
+ * the hook event loop live while the worker runs, then kills it at a short
+ * deadline. Missing/incompatible Node, bad output, and timeouts all degrade to
+ * undefined so recall can never break enforcement.
  *
- * ponytail: one spawn per call. Fine for scan-time batch (pass all texts at
- * once) and the once-per-command hot path; a persistent worker only pays off
- * if per-command latency ever matters.
+ * ponytail: one spawn per call. Fine for the once-per-command advisory path; a
+ * persistent worker only pays off if measured latency later demands it.
  */
-function spawnEmbedder(cacheDir: string, model: string): Embedder {
-  return (texts) => {
+function spawnEmbedder(
+  cacheDir: string,
+  model: string,
+  binary: string,
+  sidecarPath: string,
+  timeoutMs: number,
+): Embedder {
+  return async (texts) => {
     if (texts.length === 0) return [];
-    const result = spawnSync(nodeBinary(), [workerPath], {
-      input: JSON.stringify({ texts, model, cacheDir }),
-      encoding: "utf8",
-      maxBuffer: 64 * 1024 * 1024,
-      timeout: 120_000,
-    });
-    if (result.status !== 0 || !result.stdout) return undefined;
-    let parsed: WorkerResponse;
     try {
-      parsed = JSON.parse(result.stdout.trim().split("\n").at(-1) ?? "");
+      const child = Bun.spawn({
+        cmd: [binary, sidecarPath],
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "ignore",
+      });
+      const kill = () => {
+        try { child.kill(); } catch { /* already exited */ }
+      };
+      child.stdin.write(JSON.stringify({ texts, model, cacheDir }));
+      child.stdin.end();
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        kill();
+      }, timeoutMs);
+      try {
+        const stdoutPromise = readBoundedOutput(child.stdout, kill);
+        const exitCode = await child.exited;
+        const stdout = await stdoutPromise;
+        if (timedOut || exitCode !== 0 || !stdout) return undefined;
+        const parsed = JSON.parse(stdout.trim().split("\n").at(-1) ?? "") as WorkerResponse;
+        if (!parsed.ok || !Array.isArray(parsed.vectors)) return undefined;
+        return parsed.vectors.map((vector) => Float32Array.from(vector));
+      } finally {
+        clearTimeout(timer);
+      }
     } catch {
       return undefined;
     }
-    if (!parsed.ok || !Array.isArray(parsed.vectors)) return undefined;
-    return parsed.vectors.map((vector) => Float32Array.from(vector));
   };
 }
 
@@ -92,6 +146,12 @@ export interface LocalRecallOptions {
   model?: string;
   /** Override embedding dimensions. A mismatch makes recall inert (no false hits). */
   dimensions?: number;
+  /** Node executable override. Primarily useful for tests and nonstandard installs. */
+  nodeBinary?: string;
+  /** Sidecar path override for tests. */
+  workerPath?: string;
+  /** Worker deadline. Hook-safe default is 5 seconds. */
+  workerTimeoutMs?: number;
 }
 
 /**
@@ -122,7 +182,14 @@ export class LocalRecall implements SemanticRecall {
     const cacheDir = options.cacheDir
       ?? `${process.env.VIBEBLOAT_HOME ?? process.env.HOME ?? process.cwd()}/cache/transformers`;
     const model = options.model ?? embeddingModelId;
-    this.#embed = (texts) => (injectedEmbedder ?? spawnEmbedder(cacheDir, model))(texts);
+    const binary = options.nodeBinary?.trim() || nodeBinary();
+    const sidecarPath = options.workerPath ?? defaultWorkerPath;
+    const configuredTimeoutMs = options.workerTimeoutMs;
+    const timeoutMs = typeof configuredTimeoutMs === "number" && Number.isFinite(configuredTimeoutMs) && configuredTimeoutMs > 0
+      ? configuredTimeoutMs
+      : defaultWorkerTimeoutMs;
+    const workerEmbedder = spawnEmbedder(cacheDir, model, binary, sidecarPath, timeoutMs);
+    this.#embed = (texts) => (injectedEmbedder ?? workerEmbedder)(texts);
   }
 
   get unavailableReason(): string | undefined {
@@ -137,10 +204,10 @@ export class LocalRecall implements SemanticRecall {
     return this.#dimensions;
   }
 
-  #embedOne(text: string): Float32Array | undefined {
+  async #embedOne(text: string): Promise<Float32Array | undefined> {
     let vectors: Float32Array[] | undefined;
     try {
-      vectors = this.#embed([text]);
+      vectors = await this.#embed([text]);
     } catch (error) {
       vectors = undefined;
       this.#unavailableReason = error instanceof Error ? error.message : String(error);
@@ -158,7 +225,7 @@ export class LocalRecall implements SemanticRecall {
     if (this.#store.isEmpty()) return [];
     const query = request.canonicalCommand.trim();
     if (!query) return [];
-    const queryVector = this.#embedOne(query);
+    const queryVector = await this.#embedOne(query);
     if (!queryVector) return [];
     const limit = request.limit ?? 5;
     const scored: RecallHit[] = [];
@@ -194,7 +261,7 @@ export class LocalRecall implements SemanticRecall {
     canonicalCommand: string;
     recordedAt?: string;
   }): Promise<void> {
-    const embedding = this.#embedOne(args.canonicalCommand);
+    const embedding = await this.#embedOne(args.canonicalCommand);
     this.#store.record({
       incidentId: args.incidentId,
       command: args.command,
