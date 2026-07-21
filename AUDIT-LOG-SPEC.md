@@ -1,25 +1,11 @@
 # Guard Firing Audit Log
 
-Status: T31 contract. Runtime implementation remains separate.
+## Storage and schema
 
-## Purpose
-
-Keep 30 days of local evidence showing which guards fired. Log supports
-`vibebloat stats`, returning-user review, and staleness checks without retaining
-the command, file path, incident text, or secrets that caused the match.
-
-## Storage
-
-- Machine-local path: `<global VibeBloat home>/audit/firings/`.
-- Never write audit data under a repository `.vibebloat/` directory. This keeps
-  firing history out of git-backed guard sync.
-- One event per JSON file. Write to a sibling temporary file, then atomically
-  rename into place. Readers ignore temporary files.
-- Files are user-readable only where the platform supports file permissions.
-- No network, model, telemetry, publish, or community-library path may read this
-  directory unless the user starts a separate explicit export flow.
-
-## Event schema
+Fired guards append one JSON file under `<global VibeBloat home>/audit/firings/`.
+Non-fired verdicts write nothing. Event files are written through a sibling temporary
+file and atomic rename; audit data never belongs in a repository `.vibebloat/`
+directory.
 
 ```json
 {
@@ -35,39 +21,27 @@ the command, file path, incident text, or secrets that caused the match.
 }
 ```
 
-Required fields: `schemaVersion`, `eventId`, `firedAt`, `guardId`, `class`,
-`chokepoint`, `actionType`, and `blocked`. `agent` is optional and may contain
-only a supported agent identifier, never a process command line.
+The schema is closed. `agent` is optional; every other field is required. A successful
+append also updates `<global VibeBloat home>/audit/last-fired/` with the latest timestamp
+for that guard. On non-Windows systems audit directories use mode `0700` and files use
+`0600`.
 
-## Forbidden data
+## Privacy boundary
 
-Audit events must not contain:
+Events contain verdict metadata only. They must not contain commands, arguments,
+payloads, paths, working directories, file contents, guard messages, incident text,
+evidence references, environment values, user identifiers, credentials, secrets, or
+derivatives of those values. Invalid or unknown fields reject the event before write.
 
-- raw or normalized commands, arguments, environment variables, aliases, input
-  payloads, file paths, file contents, or working directories;
-- guard messages, override commands, provenance incidents, evidence references,
-  session IDs, usernames, email addresses, tokens, credentials, or secret values;
-- hashes, excerpts, encodings, or other reversible or correlatable derivatives of
-  forbidden input.
+Audit readers are local runtime paths used by `stats`, returning-user review, and doctor
+staleness checks. They do not publish audit contents.
 
-Only fields in the event schema are allowed. Unknown fields fail validation and
-the event is not written.
+## Retention and failure
 
-## Retention
+Reads and successful appends prune events at least 30 days old, measured as 30 × 24
+hours. Malformed, unreadable, future-dated, or incorrectly named event files move to the
+local audit quarantine and do not contribute to stats.
 
-- On startup and after each successful append, delete completed event files with
-  `firedAt` older than 30 calendar days relative to UTC now.
-- A malformed, future-dated, or unreadable event is quarantined locally and
-  excluded from stats. It is never uploaded.
-- Pruning failure does not weaken guard enforcement. Emit the standard three-line
-  local error and continue the original block/warn decision.
-- Uninstall removes this log unless `--keep-data` is supplied.
-
-## Acceptance checks
-
-- A fired verdict creates one valid event after atomic rename.
-- A non-fired verdict creates no event.
-- Secret-bearing command, path, payload, message, and incident fixtures never
-  appear in audit files.
-- An event exactly 30 days old is pruned; a newer event remains.
-- Network calls and model calls remain zero during append, read, and prune.
+Audit cleanup, permission hardening, or summary failures return a local three-line
+warning with `FIX: vibebloat doctor`; they do not change the original guard verdict.
+`vibebloat uninstall --yes` removes audit data. `--keep-data` preserves it.
