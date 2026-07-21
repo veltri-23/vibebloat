@@ -1,4 +1,4 @@
-import { ingestFailClosed, type IngestResult } from "../scrub/fail-closed";
+import { ingestChunksFailClosed, type IngestResult } from "../scrub/fail-closed";
 import { createGitleaksCommandScrubber } from "../scrub/gitleaks";
 import type { LocalOnlySink } from "../scrub/local-sink";
 import { createPresidioCommandScrubber, type Scrubber } from "../scrub/presidio";
@@ -209,7 +209,7 @@ export async function scanHistory<Incident>(
   }
 
   const chunks = typeof chunksOrLoader === "function" ? await chunksOrLoader() : chunksOrLoader;
-  return ingestFailClosed(JSON.stringify(chunks), {
+  return ingestChunksFailClosed(chunks, {
     presidio: options.presidio ?? createPresidioCommandScrubber(options.presidioCommand),
     gitleaks: options.gitleaks ?? createGitleaksCommandScrubber(options.gitleaksCommand),
     localSink: options.localSink,

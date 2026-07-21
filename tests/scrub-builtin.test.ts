@@ -196,3 +196,44 @@ test("a real secret in a document still halts", async () => {
   const leaky = builtinGitleaksScrubber({ redact: (text) => ({ payload: text, findings: [] }) });
   await expect(leaky(document)).rejects.toThrow(/secret/i);
 });
+
+// Issue #55: real onboarding history contains assistant PROSE about keys, e.g.
+// "...you'll rotate later. Don't paste keys like sk-xxxxxxxxxxxxxxxx...". The
+// second-pass net matched the bare "sk-" prefix on a low-entropy placeholder
+// and halted the ENTIRE 20k-chunk scan. Prose about secrets must pass clean.
+test("prose that mentions keys does not halt ingest (#55)", async () => {
+  const scrubber = builtinGitleaksScrubber();
+  for (const prose of [
+    "Set up your Zen key, you'll rotate later. Don't paste keys like sk-xxxxxxxxxxxxxxxx into chat.",
+    "your api key placeholder sk-your-api-key-here goes in the env file",
+    "keep the secret safe and rotate the token monthly, never paste keys anywhere",
+  ]) {
+    await expect(scrubber(prose)).resolves.toBeString();
+  }
+});
+
+// The fix gates the prefix net on entropy, so genuine keys — which are
+// high-entropy random runs — must STILL halt even when redaction is bypassed.
+test("a real high-entropy provider key still halts when redaction is bypassed (#55)", async () => {
+  const leaky = builtinGitleaksScrubber({ redact: (text) => ({ payload: text, findings: [] }) });
+  for (const secret of [
+    "sk-ant-api03-abcDEFghiJKLmnoPQRstuVWXyz0123456789-_abcDEFghiJKLmnoPQRst",
+    "ghp_16C7e42F292c6912E7710c838347Ae178B4a",
+    "AKIAIOSFODNN7EXAMPLE0",
+  ]) {
+    await expect(leaky(secret)).rejects.toThrow(/secret/i);
+  }
+});
+
+// keyword: value credentials are structural, not entropy-gated, so a real
+// one still halts regardless of how random the value is.
+test("a real keyword:value credential still halts when redaction is bypassed (#55)", async () => {
+  const leaky = builtinGitleaksScrubber({ redact: (text) => ({ payload: text, findings: [] }) });
+  for (const secret of [
+    "password: hunter2CorrectHorseBattery",
+    "client_secret = a3f9c1b8e7d64k2m",
+    "api_key: 550e8400-e29b-41d4-a716-446655440000",
+  ]) {
+    await expect(leaky(secret)).rejects.toThrow(/secret/i);
+  }
+});
