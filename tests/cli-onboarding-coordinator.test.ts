@@ -51,19 +51,24 @@ test("production onboarding coordinates discovery and fails closed before histor
     "Run it locally and free (advanced: needs a large local model, small ones cannot do this reliably)",
     "Stay quiet unless sure (recommended)",
     "Skip style rules",
+    "Skip",
   ];
-  for (const answer of answers) {
+  for (const [index, answer] of answers.entries()) {
     const result = invoke(repository, environment, answer);
+    if (result.exitCode !== 0) {
+      console.error(`Answer ${index}: "${answer}"`);
+      console.error(result.stderr.toString());
+    }
     expect(result.exitCode).toBe(0);
   }
 
   const beforeScan = JSON.parse(readFileSync(join(home, "onboarding.json"), "utf8"));
-  expect(beforeScan).toMatchObject({ gate: "F6", coordinator: { phase: "ready-to-scan", consented: true } });
+  expect(beforeScan).toMatchObject({ gate: "SR", coordinator: { phase: "ready-to-scan", consented: true } });
   expect(beforeScan.coordinator.discovery.sources).toEqual([
     expect.objectContaining({ id: "hermes", environmentId: "hermes", label: "Hermes history" }),
   ]);
 
-  const scan = invoke(repository, environment, "Skip");
+  const scan = invoke(repository, environment, "Lexical (offline, free, default)");
   expect(scan.exitCode).toBe(1);
   expect(scan.stderr.toString()).toBe(
     "WHAT failed: onboarding setup stopped.\n" +
@@ -72,7 +77,7 @@ test("production onboarding coordinates discovery and fails closed before histor
   );
   expect(existsSync(join(home, "failed-ingest"))).toBeFalse();
   expect(JSON.parse(readFileSync(join(home, "onboarding.json"), "utf8"))).toMatchObject({
-    gate: "F6",
+    gate: "SR",
     coordinator: { phase: "ready-to-scan", consented: true },
   });
 });

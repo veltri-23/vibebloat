@@ -1,4 +1,5 @@
 import { canonicalGateChoice, isGateChoice, type GateChoice, type GateId } from "./gates";
+import type { RecallMode } from "../ingest/semantic-recall";
 
 export type ModelRoute = "agent-session" | "api-key" | "local";
 
@@ -16,9 +17,21 @@ export interface OnboardingPreferences {
   agentCron?: boolean;
   communityStar?: "requested" | "later";
   teamUpdates?: boolean;
+  recallMode?: RecallMode;
 }
 
-const preferenceGates = new Set<GateId>(["F1", "F1b", "F2", "F3", "F4", "F5", "F6", "G-empty", "I-zero", "N1", "N2", "O1", "O2", "O3"]);
+const preferenceGates = new Set<GateId>(["F1", "F1b", "F2", "F3", "F4", "F5", "F6", "G-empty", "I-zero", "N1", "N2", "O1", "O2", "O3", "SR", "SR-no-key"]);
+
+/**
+ * The SR / SR-no-key gate's option labels map to the recall mode the user
+ * picked. Centralized here so the wording only lives in one place.
+ */
+export function recallModeForChoice(choice: string): RecallMode {
+  if (choice.startsWith("Embed")) return "embed";
+  if (choice.startsWith("Lexical")) return "lexical";
+  if (choice.startsWith("Local")) return "local";
+  return "off";
+}
 
 export function applyOnboardingPreference(
   preferences: OnboardingPreferences | undefined,
@@ -42,6 +55,8 @@ export function applyOnboardingPreference(
     case "O1": next.dailyStrengthening = selected === "Yes"; break;
     case "O2": next.agentCron = selected === "Yes"; break;
     case "O3": next.updateMode = selected.startsWith("Auto-update") ? "automatic" : "notify"; break;
+    case "SR":
+    case "SR-no-key": next.recallMode = recallModeForChoice(selected); break;
   }
   return next;
 }

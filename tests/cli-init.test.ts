@@ -187,7 +187,11 @@ test("init never starts the scan from a silent transition", () => {
   const home = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-init-"));
   temporaryDirectories.push(home);
   writeFileSync(join(home, "onboarding.json"), JSON.stringify({ gate: "F6", answers: {} }));
-  expect(JSON.parse(init(home, "--answer", "Skip").stdout.toString())).toMatchObject({ gate: "SCAN" });
+  // F6 advances to the recall-mode gate (SR) before SCAN. The scan must wait
+  // for an explicit recall choice, never fire from a single Skip.
+  const result = init(home, "--answer", "Skip");
+  expect(result.exitCode).toBe(0);
+  expect(JSON.parse(result.stdout.toString())).toMatchObject({ gate: "SR" });
 }, 15_000);
 
 test("init saves a Cancel from every gate without advancing", () => {
