@@ -39,7 +39,22 @@ export class OnboardingRunner {
     this.values = { ...this.values, ...values };
   }
 
-  snapshot(): RunnerState { return { ...this.state, answers: { ...this.state.answers } }; }
+  snapshot(): RunnerState {
+    // The constructor accepts an OnboardingState (which carries coordinator,
+    // preferences, pendingSourceIds, ...), but snapshot() is part of the
+    // public runner contract and is also spread into the emitted JSON
+    // payload. Returning the loaded coordinator/preferences/etc. would
+    // leak a pre-transition coordinatorCheckpoint alongside the freshly
+    // computed `discovery` and the freshly saved state — the driving agent
+    // would see two conflicting state lists in one response (#61).
+    // Only RunnerState fields belong here; coordinator/preferences are
+    // owned by the surrounding coordinator and persisted explicitly.
+    const snapshot: RunnerState = { gate: this.state.gate, answers: { ...this.state.answers } };
+    if (this.state.runner !== undefined) snapshot.runner = this.state.runner;
+    if (this.state.scope !== undefined) snapshot.scope = this.state.scope;
+    if (this.state.cancelled) snapshot.cancelled = true;
+    return snapshot;
+  }
 
   cancel(): RunnerState {
     this.state.cancelled = true;
