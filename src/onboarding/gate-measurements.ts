@@ -4,19 +4,38 @@ import { gateValues } from "./gates";
 import type { OnboardingCheckpoint } from "./coordinator";
 
 /**
+ * One place that knows whether the user has a mining/embed key wired up. The
+ * SR gate routes off `present`; the [recallKeyStatus] placeholder in the SR
+ * copy renders `status`. The copy masks the key (first 6 + last 4) so a
+ * shoulder-surf reading the terminal can't lift it.
+ */
+export function detectRecallKey(environment: NodeJS.ProcessEnv = process.env): { present: boolean; status: string } {
+  const raw = environment.OPENAI_API_KEY;
+  if (typeof raw === "string" && raw.trim().length > 0) {
+    const trimmed = raw.trim();
+    const masked = trimmed.length > 12 ? `${trimmed.slice(0, 6)}…${trimmed.slice(-4)}` : "your mining key";
+    return { present: true, status: `your OpenAI key (${masked})` };
+  }
+  return { present: false, status: "no mining key detected" };
+}
+
+/**
  * Binds onboarding copy to what was actually measured on this machine. Fields
  * with no measurement are left undefined so gateValues renders a vague phrase
  * rather than a borrowed figure.
  */
 export function onboardingGateValues(
   checkpoint: OnboardingCheckpoint | undefined,
+  environment: NodeJS.ProcessEnv = process.env,
 ): Record<string, string | number> {
   const incidents = checkpoint?.incidents ?? [];
   const top = rankIncidents(incidents)[0];
   const environments = checkpoint?.discovery?.environments.map(({ label, id }) => label || id).filter(Boolean) ?? [];
   const hermes = checkpoint?.discovery?.environments.find(({ id }) => id === "hermes" || id === "openclaw");
   const hours = estimatedHoursLost(incidents);
+  const key = detectRecallKey(environment);
   return gateValues({
+    recallKeyStatus: key.status,
     ...(incidents.length > 0 ? {
       incidentsFound: incidents.length,
       confidentCount: incidents.filter(({ severity }) => severity >= 4).length,
@@ -66,4 +85,3 @@ function labelForSource(source: string): string {
     default: return source;
   }
 }
-
