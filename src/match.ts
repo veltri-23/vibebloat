@@ -1,6 +1,29 @@
 import Parser from "tree-sitter";
 import Bash from "tree-sitter-bash";
-import type { Event, Guard, Verdict } from "./types";
+import type { Event, Guard, MatchContext, Verdict } from "./types";
+
+function normalizePath(value: string): string {
+  return value.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+}
+
+/**
+ * A situational guard fires only when every stated condition holds. A missing
+ * runtime fact counts as "not confirmed" -> the guard does not fire, so the
+ * same command runs untouched outside the failure situation.
+ */
+function contextSatisfied(context: MatchContext, event: Event): boolean {
+  if (context.cwdUnder !== undefined) {
+    const cwd = event.cwd ? normalizePath(event.cwd) : undefined;
+    const scope = normalizePath(context.cwdUnder);
+    if (!cwd || (cwd !== scope && !cwd.startsWith(`${scope}/`))) return false;
+  }
+  if (context.whenProcessRunning !== undefined) {
+    const needle = context.whenProcessRunning.toLowerCase();
+    if (!event.runningProcesses?.some((name) => name.toLowerCase().includes(needle))) return false;
+  }
+  if (context.whenUnstagedChanges === true && event.hasUnstagedChanges !== true) return false;
+  return true;
+}
 
 const parser = new Parser();
 parser.setLanguage(Bash);
@@ -155,6 +178,7 @@ function parseErrorVerdict(guard: Guard): Verdict {
 
 export function match(guard: Guard, event: Event): Verdict {
   if (!guard.enabled || guard.match.chokepoint !== event.chokepoint) return { fired: false };
+  if (guard.match.context && !contextSatisfied(guard.match.context, event)) return { fired: false };
 
   if (event.chokepoint === "file") {
     const path = event.path?.replace(/\\/g, "/").replace(/^.*\//, "");

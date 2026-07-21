@@ -1,4 +1,5 @@
 import { Runtime } from "./runtime";
+import { enrichEventWithContext } from "./situational/context";
 import type { Event, Guard, GuardAgent, LocalWarning, Verdict } from "./types";
 
 export interface HookResponse {
@@ -27,14 +28,18 @@ export function bindingFromPreToolUse(guards: Guard[], payload: unknown, agent?:
   const fileGuard = typeof command === "string" && toolName === "apply_patch"
     ? applicableGuards.find((guard) => guard.match.chokepoint === "file" && guard.match.path && command.includes(guard.match.path))
     : undefined;
-  const event = typeof command === "string"
+  const baseEvent = typeof command === "string"
     ? fileGuard
       ? { chokepoint: "file" as const, path: fileGuard.match.path }
       : { chokepoint: "shell" as const, command }
     : typeof path === "string"
       ? { chokepoint: "file" as const, path }
       : undefined;
-  return event ? { event, guards: fileGuard ? [fileGuard] : applicableGuards } : undefined;
+  if (!baseEvent) return undefined;
+  const guardSet = fileGuard ? [fileGuard] : applicableGuards;
+  // Attach live context only when a relevant situational guard needs it; a
+  // no-op (and zero I/O) when none is installed.
+  return { event: enrichEventWithContext(baseEvent, guardSet), guards: guardSet };
 }
 
 export function evaluatePreToolUse(guards: Guard[], payload: unknown, runtime = new Runtime(), agent?: GuardAgent): Verdict {

@@ -80,9 +80,10 @@ These compile from your history on first install. Add your own with
 `npx vibebloat` works once published. Until then, source-checkout steps live in
 [`INSTALL.md`](INSTALL.md).
 
-The shipped `vibebloat` standalone binary is Sigstore-signed against the
-public key pinned in `src/scrub/controlled-release.ts`. Verified on every
-`vibebloat init` before any model pass runs.
+Release verification is built (`src/doctor/sigstore.ts`): when a signed binary
+is published, it is checked with Sigstore against the public key pinned in
+`src/scrub/controlled-release.ts` before any model pass runs. No signed public
+binary ships yet — run from source per [`INSTALL.md`](INSTALL.md).
 
 ## Demo
 
