@@ -118,7 +118,9 @@ export class IncidentStore {
 
   record(incident: IncidentWrite): void {
     const recordedAt = incident.recordedAt ?? todayIso();
-    const embedding = incident.embedding ? Buffer.from(incident.embedding.buffer) : null;
+    const embedding = incident.embedding
+      ? Buffer.from(incident.embedding.buffer, incident.embedding.byteOffset, incident.embedding.byteLength)
+      : null;
     const argsContains = JSON.stringify([...incident.argsContains ?? []]);
     const argsAnyOf = JSON.stringify([...incident.argsAnyOf ?? []]);
     this.#database

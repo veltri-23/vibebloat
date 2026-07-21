@@ -37,6 +37,9 @@ import { createLocalSemanticAdapter, localSemanticIndexPath } from "./ingest/loc
 import { scanHistory } from "./ingest/scan";
 import type { UntrustedSemanticContext } from "./ingest/semantic-context";
 import { rankIncidents, type IncidentManifest } from "./ingest/rank";
+import { IncidentStore, defaultIncidentStorePath } from "./ingest/incidents-store";
+import { buildSyncRecall } from "./ingest/recall-factory";
+import type { SyncSemanticRecall } from "./ingest/semantic-recall";
 import { onboardingGateValues } from "./onboarding/gate-measurements";
 import type { HistoryChunk } from "./ingest/types";
 import { buildChatCompletionsBody, parseModelIncidentOutput, serializeModelCommandInput, usesChatCompletionsWire } from "./mine/model-command-input";
@@ -144,6 +147,26 @@ function runtimeGuards(): Guard[] {
   const duplicate = installed.find((guard) => seenIds.has(guard.id) || !seenIds.add(guard.id));
   if (duplicate) throw new Error(`Installed guard duplicates built-in id: ${duplicate.id}`);
   return [...guards, ...installed];
+}
+
+/**
+ * The live recall adapter for the enforcement hot path. Reads the repo's
+ * `[semantic] recall` choice (default lexical). Returns undefined for `off`
+ * or on any error so recall never opens a DB it won't use and never breaks
+ * enforcement — a failed recall must not stop a guard from firing.
+ */
+function buildRuntimeRecall(repoRoot = process.cwd()): SyncSemanticRecall | undefined {
+  try {
+    const store = new IncidentStore({ path: defaultIncidentStorePath(repoRoot, globalGuardHome()) });
+    const recall = buildSyncRecall({ store, configPath: join(repoRoot, ".vibebloat", "config.toml") });
+    if (recall.mode === "off") {
+      recall.close?.();
+      return undefined;
+    }
+    return recall;
+  } catch {
+    return undefined;
+  }
 }
 
 function configText(path: string): string {
@@ -1665,6 +1688,7 @@ if (mode === "git-hook") {
       (guardId) => consumeAllowedOnce(guardId, guardHomeForScope(guardScope())),
       undefined,
       createFiringRecorder(globalGuardHome()),
+      buildRuntimeRecall(),
     ).evaluate(runtimeGuards(), event);
     response = hookResponseForVerdict(verdict);
   } catch {
@@ -1720,6 +1744,7 @@ if (mode === "hook") {
       (guardId) => consumeAllowedOnce(guardId, guardHomeForScope(guardScope())),
       undefined,
       createFiringRecorder(globalGuardHome()),
+      buildRuntimeRecall(),
     ), hookAgent());
   } catch {
     response = { exitCode: 2 as const, stderr: formatGuardRuntimeFailure("guard hook evaluation stopped") };

@@ -13,9 +13,11 @@ import { join } from "node:path";
 import { compileGuard } from "./codex-fill";
 import { claimCompileBudget } from "./budget";
 import { replaceGuardAtomically } from "./live-compile";
-import { guardHomeForScope, type GuardScope } from "../guard-home";
+import { globalGuardHome, guardHomeForScope, type GuardScope } from "../guard-home";
 import { applyAtomicFilePlans } from "../install/atomic-files";
 import type { IncidentManifest } from "../ingest/rank";
+import { IncidentStore, defaultIncidentStorePath } from "../ingest/incidents-store";
+import { buildSyncRecall } from "../ingest/recall-factory";
 import { detectRunnerDetails, type RunnerSignals } from "../onboarding/detect-runner";
 import { Runtime } from "../runtime";
 import { parseGuard } from "../schema";
@@ -23,6 +25,31 @@ import type { Guard } from "../types";
 
 export interface GitTreeSnapshot {
   untrackedPaths: readonly string[];
+}
+
+/**
+ * Feed a proposed incident into the semantic-recall store so a reworded repeat
+ * of the same mistake gets recognized later. Uses the sync (lexical/off)
+ * adapter — recording is best-effort and must never fail the proposal.
+ */
+function recordIncidentForRecall(incident: IncidentManifest): void {
+  if (!incident.command) return;
+  try {
+    const repoRoot = incident.context_cwd_under ?? process.cwd();
+    const store = new IncidentStore({ path: defaultIncidentStorePath(repoRoot, globalGuardHome()) });
+    const recall = buildSyncRecall({ store, configPath: join(repoRoot, ".vibebloat", "config.toml") });
+    recall.record({
+      incidentId: incident.incident_id,
+      command: incident.command,
+      argsContains: incident.args_contains,
+      condition: incident.condition,
+      consequence: incident.remediation ?? incident.condition,
+      canonicalCommand: incident.command,
+    });
+    recall.close?.();
+  } catch {
+    // Recall is advisory; a record failure must never fail the proposal.
+  }
 }
 
 export interface LiveGitObservation {
@@ -393,6 +420,7 @@ export function processQueuedLiveProposal(
       { path: join(directory, "proof.json"), content: proofBytes(guardSource) },
     ]);
     rmSync(request, { force: true });
+    recordIncidentForRecall(incident);
     return { status: "proposed", incidentId, proposalPath: guardPath };
   } catch (error) {
     return { status: "failed", incidentId, warning: error instanceof Error ? error.message : "Live proposal failed." };
