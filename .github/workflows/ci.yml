@@ -42,12 +42,8 @@ jobs:
       - name: Verify standalone artifact
         run: |
           test -s "dist/${{ matrix.artifact }}"
-          set +e
           output=$("./dist/${{ matrix.artifact }}" __distribution_probe__ 2>&1)
-          status=$?
-          set -e
-          test "$status" -eq 1
-          printf '%s\n' "$output" | grep -F "WHAT failed: expected"
+          printf '%s\n' "$output" | grep -Fx "vibebloat:dist:ok"
         shell: bash
 
   validate:
@@ -71,6 +67,9 @@ jobs:
         run: python -m pip install --disable-pip-version-check pytest==8.4.1
       - name: Run Bun tests
         run: bun test
+        env:
+          TEMP: ${{ runner.temp }}
+          TMPDIR: ${{ runner.temp }}
       - name: Run Hermes tests
         run: python -m pytest -q hermes/tests
       # Host-platform build only on PRs; full cross-target build runs on
