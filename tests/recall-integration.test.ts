@@ -43,6 +43,7 @@ function seededEnvironment(): { env: NodeJS.ProcessEnv; cwd: string } {
 }
 
 function seedIncident(env: NodeJS.ProcessEnv, cwd: string, command: string): void {
+  persistRecallChoice({ configPath: join(cwd, ".vibebloat", "config.toml"), mode: "lexical" });
   const store = new IncidentStore({ path: defaultIncidentStorePath(cwd, globalGuardHome(env)) });
   const recall = buildSyncRecall({ store, configPath: join(cwd, ".vibebloat", "config.toml"), environment: env });
   recall.record({
