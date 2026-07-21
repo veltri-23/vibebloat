@@ -74,13 +74,13 @@ describe("preference application", () => {
     expect(applyOnboardingPreference({}, "SR", "Lexical (offline, free, default)").recallMode).toBe("lexical");
     expect(applyOnboardingPreference({}, "SR", "Embed (uses your mining key, smarter)").recallMode).toBe("embed");
     expect(applyOnboardingPreference({}, "SR", "Off (no recall at all)").recallMode).toBe("off");
-    expect(applyOnboardingPreference({}, "SR", "Local (offline neural embedder)").recallMode).toBe("local");
+    expect(applyOnboardingPreference({}, "SR", "Local (downloads a model once, then runs offline)").recallMode).toBe("local");
   });
 
   test("SR-no-key choice maps to recallMode", () => {
     expect(applyOnboardingPreference({}, "SR-no-key", "Lexical (offline, free, lighter)").recallMode).toBe("lexical");
     expect(applyOnboardingPreference({}, "SR-no-key", "Off (no recall at all)").recallMode).toBe("off");
-    expect(applyOnboardingPreference({}, "SR-no-key", "Local (offline neural embedder, recommended)").recallMode).toBe("local");
+    expect(applyOnboardingPreference({}, "SR-no-key", "Local (recommended)").recallMode).toBe("local");
   });
 
   test("recallModeForChoice is the only public mapping", () => {

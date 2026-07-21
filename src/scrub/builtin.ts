@@ -165,15 +165,40 @@ function redactText(text: string): RedactionResult {
  * a subset of it — a check that only restates the redactor's own patterns can
  * catch redactor bugs but never redactor gaps, and gaps pass silently to the
  * model. Anything matching here after redaction halts ingest.
+ *
+ * These are STRUCTURAL shapes: a keyword joined to a value by `:`/`=`, an auth
+ * header, a connection string, a PEM block, a UUID. The value is pinned by
+ * punctuation, so a match is a real credential, not prose.
  */
 const survivingSecret = new RegExp([
   `\\b(?:Bearer|Basic|Token)\\s+(?!<redacted)[A-Za-z0-9._~+/=-]{8,}`,
   `\\b[a-z][a-z0-9+.-]*:\\/\\/[^\\s:@/]+:(?!<redacted)[^\\s@/]+@`,
-  `\\b(?:gh[pousr]_|github_pat_|sk-|xox[baprs]-|AKIA|glpat-|AIza)[A-Za-z0-9_-]{16,}`,
   `-----BEGIN [A-Z ]*PRIVATE KEY-----`,
   `\\b${secretKeyword}\\s*[:=]\\s*(?!<redacted)\\S+`,
   `\\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\b`,
 ].join("|"), "i");
+
+/**
+ * Provider-key PREFIXES are the broad half of the net. Unlike the structural
+ * shapes above they carry no punctuation to anchor a value, so the bare prefix
+ * also matches PROSE placeholders a message about keys is full of —
+ * "sk-xxxxxxxxxxxxxxxx", "sk-your-api-key-here". Firing on those halted a real
+ * 20k-chunk onboarding scan (issue #55). A genuine key is a high-entropy random
+ * run; a placeholder or a keyword-mention is not. So a prefix match only counts
+ * as a surviving secret when the token clears the same entropy bar the redactor
+ * uses — which keeps genuine keys caught while letting prose about keys pass.
+ * Global flag: every candidate is scored, not just the first.
+ */
+const providerKeyCandidate = /\b(?:gh[pousr]_|github_pat_|sk-|xox[baprs]-|AKIA|glpat-|AIza)[A-Za-z0-9_-]{16,}/gi;
+
+/** True when a single string VALUE still carries a real credential. */
+function valueRetainsSecret(value: string): boolean {
+  if (survivingSecret.test(value)) return true;
+  for (const [candidate] of value.matchAll(providerKeyCandidate)) {
+    if (shannonEntropy(candidate) >= entropyThresholdBitsPerChar) return true;
+  }
+  return false;
+}
 
 export interface BuiltinScrubberOptions {
   redact?: (text: string) => RedactionResult;
@@ -207,11 +232,11 @@ export function builtinGitleaksScrubber(options: BuiltinScrubberOptions = {}): S
  */
 function retainsSecret(payload: string): boolean {
   const document = parseDocument(payload);
-  if (document === undefined) return survivingSecret.test(payload);
+  if (document === undefined) return valueRetainsSecret(payload);
   let found = false;
   const walk = (value: unknown): void => {
     if (found) return;
-    if (typeof value === "string") { found = survivingSecret.test(value); return; }
+    if (typeof value === "string") { found = valueRetainsSecret(value); return; }
     if (Array.isArray(value)) { value.forEach(walk); return; }
     if (value && typeof value === "object") Object.values(value).forEach(walk);
   };

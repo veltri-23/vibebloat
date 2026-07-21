@@ -54,9 +54,9 @@ const gates: Record<GateId, GatePrompt> = {
   F4: { question: "Sometimes I won't be 100% sure a situation is risky. Should I stay quiet unless I'm sure (free), or double-check with AI when I'm unsure (costs a tiny bit)?", options: ["Stay quiet unless sure (recommended)", "Double-check with AI"] },
   F5: { question: "For rules about your coding style — should I use the preferences you've already written down, or figure out your style from your code?", options: ["Use what I've written (recommended)", "Figure it out from my code", "Skip style rules"] },
   F6: { question: "Want a free starter pack of rules every dev needs, plus a heads-up when I ship something big? Just your name, email, and what you're building — rare emails, no spam.", options: ["Yes", "Skip"] },
-  SR: { question: "One more thing: I can recognize a mistake by meaning, not just exact wording (e.g. `git stash --include-untracked` matches `git stash -u`). It warns, never blocks. I saw [recallKeyStatus] — which mode?", options: ["Embed (uses your mining key, smarter)", "Local (offline neural embedder)", "Lexical (offline, free, default)", "Off (no recall at all)"] },
-  "SR-no-key": { question: "I can recognize a mistake by meaning, not just exact wording (e.g. `git stash --include-untracked` matches `git stash -u`). It warns, never blocks. You don't have a mining key wired up, so `embed` would silently fall back. The local neural embedder runs on-device with no API key — first run downloads ~23MB, then fully offline. Which mode?", options: ["Local (offline neural embedder, recommended)", "Lexical (offline, free, lighter)", "Off (no recall at all)"] },
-  SCAN: { question: "", options: [] },
+  SR: { question: "One more thing: I can recognize a mistake by meaning, not just exact wording (e.g. `git stash --include-untracked` matches `git stash -u`). It warns, never blocks. I saw [recallKeyStatus] — which mode?", options: ["Embed (uses your mining key, smarter)", "Local (downloads a model once, then runs offline)", "Lexical (offline, free, default)", "Off (no recall at all)"] },
+  "SR-no-key": { question: "I can recognize a mistake by meaning, not just exact wording (e.g. `git stash --include-untracked` matches `git stash -u`). It warns, never blocks. You don't have a mining key wired up, so `embed` would silently fall back. Local downloads a model once, then runs offline. Which mode?", options: ["Local (recommended)", "Lexical (offline, free, lighter)", "Off (no recall at all)"] },
+  SCAN: { question: "Scanning your past coding sessions now. This may take a few minutes for a normal history, longer if you have a lot to look through.", options: [] },
   "G-empty": { question: "Looks like there's not much history here yet. I can start you with a pack of common safety rules and get smarter as you work. Want that? (To watch the full scan on sample data first, run `vibebloat demo`.)", options: ["Yes", "No"] },
   I1: { question: "I read [sessionsBySource] [sessionNoun] and found [incidentsFound] [mistakeNoun] you've made more than once. Going by how often each one hit you, that's roughly [hoursLost] hours of cleanup. Let's turn them into tripwires.", options: [] },
   "I-zero": { question: "Good news — I couldn't find mistakes you repeat. That's rare. Want a few common preventive rules anyway? (`vibebloat demo` shows what a scan finds on sample data.)", options: ["Yes", "No"] },
@@ -64,9 +64,9 @@ const gates: Record<GateId, GatePrompt> = {
   J1: { question: "Here's one. Back on [topIncidentDate], `[topIncidentCommand]` [incidentEffect]. Want me to stop that from happening again? I'll step in only when it's actually risky, and you can always override it.", options: ["Yes, set it up", "Change it", "Skip", "That wasn't really a mistake"] },
   "J1-unsure": { question: "Not sure about this one — was it a real mistake? [quote]", options: ["Yes", "No"] },
   "J-cluster": { question: "A few of these overlap or could clash. Want me to combine them into one cleaner rule? (recommended)", options: ["Combine", "Keep separate"] },
-  J2: { question: "Block or just warn? · What should it say when it steps in? · Which tools should it apply to? · On or off?", options: [] },
+  J2: { question: "Describe the tripwire in plain English. When should it step in, and should it block the action or just warn you?", options: [] },
   J3: { question: "Want to share this rule with the community so it helps other devs? I only send the rule itself — never your code, file paths, or secrets.", options: ["Yes", "No", "Stop asking this time"] },
-  K: { question: "", options: [] },
+  K: { question: "Wiring the tripwires into your terminal and git so they actually run. This step doesn't touch your agent config and is easy to undo later.", options: [] },
   "K-conflict": { question: "You've already got a [conflictingHook]. I'll add mine right alongside it — I won't touch yours.", options: ["Keep both (recommended)", "Let me handle it"] },
   "K-shim-only": { question: "Want me to also wire a native hook into Claude Code / Codex / Hermes / OpenClaw so the colored receipt shows up right in your agent's terminal? It's purely cosmetic — the shim already blocks. Skip if you'd rather not touch agent config.", options: ["Skip (recommended if you don't want to touch agent config)", "Wire them up"] },
   L1: { question: "Want to watch one in action? I'll have an agent try `[topIncidentCommand]` right now.", options: ["Yes", "Skip"] },
@@ -176,26 +176,32 @@ export function canonicalGateChoice(gate: GateId, choice: GateChoice, values: Re
   if (typeof choice === "number") return options[choice] ?? String(choice);
   const rendered = comparableOptions(gate, options.length > 0 ? values : {});
   const displayed = rendered.findIndex((option) => option.toLowerCase() === choice.trim().toLowerCase());
-  if (displayed >= 0) return options[displayed]!;
+  if (displayed >= 0) return rendered[displayed]!;
   // Apply intent-alias canonicalization: "yes" → recommended, "no" → a
   // non-recommended option (last when multiple). When the gate has no
   // options (free-form gates like A0), preserve the original choice so
-  // the answer is recorded as-given.
+  // the answer is recorded as-given. Intent aliases resolve against the
+  // raw template; the caller renders that template against the same
+  // values when it needs the displayed form (see F2 stored answer).
   const value = choice.trim().toLowerCase();
   if (options.length === 0) return choice;
   if (AFFIRMATIVE_WORDS.has(value)) {
     const recommended = options.findIndex((option) => /recommended/i.test(option));
-    return recommended >= 0 ? options[recommended]! : options[0]!;
+    const index = recommended >= 0 ? recommended : 0;
+    return rendered[index] ?? options[index]!;
   }
   if (DECLINE_WORDS.has(value)) {
     const recommended = options.findIndex((option) => /recommended/i.test(option));
-    if (recommended < 0) return options[options.length - 1]!;
+    if (recommended < 0) return rendered[rendered.length - 1] ?? options[options.length - 1]!;
     // The non-recommended option nearest the end is the canonical decline.
-    const nonRecommended = options.filter((_, index) => index !== recommended);
-    return nonRecommended[nonRecommended.length - 1]!;
+    const nonRecommendedRendered = options
+      .map((option, index) => ({ option, index }))
+      .filter(({ index }) => index !== recommended);
+    const last = nonRecommendedRendered[nonRecommendedRendered.length - 1];
+    return last ? (rendered[last.index] ?? last.option) : choice;
   }
   const index = /^[a-z]$/i.test(choice) ? choice.toLowerCase().charCodeAt(0) - 97 : Number(choice) - 1;
-  return Number.isInteger(index) && options[index] ? options[index] : choice;
+  return Number.isInteger(index) && options[index] ? (rendered[index] ?? options[index]!) : choice;
 }
 
 export function autoAdvances(gate: GateId): boolean {

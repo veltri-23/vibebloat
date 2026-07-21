@@ -49,3 +49,30 @@ test("ASSIST uses FAQ first and applies only the recommended locked choice", () 
   expect(response.answer).toBe("FAQ answer. Applied: Everywhere (recommended for solo devs). Want more detail?");
   expect(runner.snapshot().gate).toBe("F0");
 });
+
+test("snapshot() returns only RunnerState fields, not stored OnboardingState extras (#61)", () => {
+  // The runner is constructed from a loaded OnboardingState (which carries
+  // coordinator, preferences, pendingSourceIds, etc.). snapshot() must NOT
+  // leak those into the emitted JSON payload, otherwise the driving agent
+  // sees a pre-transition coordinator while the top-level `discovery` and
+  // persisted state already reflect the new transition. The runner owns
+  // only gate/answers/runner/scope/cancelled.
+  const staleCoordinator = { phase: "privacy", consented: false, scope: "repo" as const, environmentConfirmed: true, selectedSourceIds: [], incidentCount: 0, approvedIncidentIds: [], installedGuardIds: [], cancelled: false };
+  const stalePreferences = { modelRoute: "local" };
+  const runner = new OnboardingRunner({
+    gate: "A1",
+    answers: {},
+    runner: "agent",
+    coordinator: staleCoordinator,
+    preferences: stalePreferences,
+    pendingSourceIds: ["claude-code"],
+  } as never);
+  const snapshot = runner.snapshot() as Record<string, unknown>;
+  expect(snapshot.coordinator).toBeUndefined();
+  expect(snapshot.preferences).toBeUndefined();
+  expect(snapshot.pendingSourceIds).toBeUndefined();
+  // RunnerState fields still flow through.
+  expect(snapshot.gate).toBe("A1");
+  expect(snapshot.runner).toBe("agent");
+  expect(snapshot.answers).toEqual({});
+});
