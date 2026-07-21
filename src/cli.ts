@@ -117,7 +117,10 @@ function formatOnboardingPretty(payload: {
     // as if they were the reader's, which is worse than showing nothing.
     lines.push(payload.prompt.question);
   } else {
-    lines.push(`Gate ${payload.gate}.`);
+    // Defensive: every catalog gate must ship with consumer copy. A future
+    // empty question would otherwise fall through to the literal "Gate X."
+    // line, which leaks the internal id. Surface to the debug stream only.
+    if (process.env.VIBEBLOAT_DEBUG) process.stderr.write(`[vibebloat] gate ${payload.gate} has no consumer copy; skipping line\n`);
   }
   const discovery = payload.discovery;
   if (discovery && (discovery.environments?.length ?? 0) > 0) {
