@@ -57,6 +57,7 @@
     "hook": "bun src/cli.ts hook"
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.2.0",
     "bun": "1.3.14",
     "tree-sitter": "^0.21.1",
     "tree-sitter-bash": "^0.21.0"

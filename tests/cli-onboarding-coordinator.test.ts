@@ -71,7 +71,7 @@ test("production onboarding coordinates discovery and fails closed before histor
     expect.objectContaining({ id: "hermes", environmentId: "hermes", label: "Hermes history" }),
   ]);
 
-  const scan = invoke(repository, environment, "Lexical (offline, free, recommended)");
+  const scan = invoke(repository, environment, "Lexical (offline, free, lighter)");
   expect(scan.exitCode).toBe(1);
   expect(scan.stderr.toString()).toBe(
     "WHAT failed: onboarding setup stopped.\n" +
