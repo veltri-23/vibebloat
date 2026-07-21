@@ -319,7 +319,6 @@ test("B1 missing rejects unbounded custom directory input before it can be resca
 
 test("unverified onboarding effects fail closed without advancing", () => {
   const cases = [
-    ["F6", "Yes", "Skip"],
     ["N2", "Yes, notify me (uses your email)", "Skip"],
     ["O1", "Yes", "Manual only"],
     ["O2", "Yes", "No"],
@@ -337,6 +336,17 @@ test("unverified onboarding effects fail closed without advancing", () => {
       : `FIX: vibebloat init --answer ${JSON.stringify(fallback)}`);
     expect(JSON.parse(readFileSync(join(home, "onboarding.json"), "utf8"))).toMatchObject({ gate });
   }
+});
+
+test("F6 records starter-pack intent and defers email capture", () => {
+  const home = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-cli-init-"));
+  temporaryDirectories.push(home);
+  writeFileSync(join(home, "onboarding.json"), JSON.stringify({ gate: "F6", scope: "repo", answers: {} }));
+  const result = init(home, "--answer", "Yes");
+  expect(result.exitCode).toBe(0);
+  expect(JSON.parse(result.stdout.toString())).toMatchObject({ gate: "SR-no-key" });
+  expect(JSON.parse(readFileSync(join(home, "onboarding.json"), "utf8"))).toMatchObject({ preferences: { starterPack: true } });
+  expect(result.stderr.toString()).not.toContain("subscriberCaptureValidated");
 });
 
 test("manual steady-state choices can finish without fake effect receipts", () => {
