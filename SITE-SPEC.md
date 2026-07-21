@@ -1,78 +1,46 @@
-# Site Contract
+# Static Site Contract
 
-Baseline Vercel surface only. Hunter and Claude own final visual design and final
-hero wording. Implementation must preserve these locked product and accessibility
-constraints.
+Shipped files live in `site/`. `src/distribution/site.ts` verifies that Vercel points to
+that static output, referenced assets stay inside it, and required sections appear in
+order.
 
-## Information architecture
+## Page structure
 
 ```text
-header: wordmark | library link
+header: wordmark | guard-library link
 main
-  hero: wordmark -> token-tax headline -> support -> install CTA -> real terminal receipt
-  library: search -> class/confidence/agent filters -> guard table
-  install: one command -> per-OS details
-footer: GitHub | npm | install
+  hero: token-tax headline | support | install CTA
+  four-line block receipt
+  library: search | filters | guard table
+  install: development source-checkout command
+footer | privacy link
 ```
 
-No feature-card grid. Sections follow content shape and stay left-aligned.
+Sections stay left-aligned. There is no feature-card grid.
 
-## Hero
+## Guard library
 
-- Headline communicates memory/token tax, not generic agent productivity.
-- Supporting sentence states outcome: repeat mistakes become local deterministic guards.
-- One primary install CTA. No competing button row.
-- Block proof uses a real captured terminal state before launch, never a decorative mock.
-- Final copy remains Hunter-owned; baseline copy may change without altering IA.
+The library is a table exposing guard ID, description, safe pattern, class, confidence,
+and bound agents. Client-side search covers all six fields. Class A-D, confidence
+high/low, and Claude Code/Codex/Hermes/OpenClaw filters combine with search using AND
+semantics; multiple checked values within one filter use OR semantics.
 
-## Curated library
+Empty controls show all rows. A no-results state names active criteria and points to the
+single Clear filters action. Search and filtering do not send guard data off-page.
 
-Library is a table, not cards. Each row exposes ID, class, confidence, bound agents,
-description, and command pattern when safe to publish.
+## Install and release claims
 
-Search is case-insensitive full text across:
+The current page labels its command `Development source checkout:`. It must not claim a
+public npm install or signed release while those artifacts are unavailable.
 
-- guard ID and description;
-- safe command patterns;
-- class A/B/C/D;
-- confidence high/medium/low;
-- bound agent: Claude Code, Codex, Hermes, OpenClaw, or all.
+## Visual and accessibility rules
 
-Class, confidence, and agent filters combine with search using AND semantics. Multiple
-values inside one filter use OR semantics. Empty controls show all curated guards. A
-no-results state says which search and filters produced zero matches and offers one
-clear-control action. Search and filtering stay client-side for the baseline; no query
-or guard content leaves the page.
-
-## Install
-
-Primary install command links to the per-OS contract in `INSTALL-MATRIX-SPEC.md`.
-Until npm and signed release assets exist, the site labels source-checkout commands as
-development instructions and must not claim a public install succeeded.
-
-## Visual rules
-
-- Light warm paper background (`#fafaf7`), ink text, one burnt-orange accent.
-- IBM Plex Serif display, IBM Plex Sans body, JetBrains Mono terminal surfaces.
-- 16px minimum body copy; 4px maximum control radius.
-- No emoji, purple gradients, colored-circle icons, decorative blobs, or centered-everything layout.
-- Library stays horizontally scrollable on narrow screens; it never collapses into a card grid.
-
-## Accessibility gate
-
-- Body text and interactive labels meet WCAG AA 4.5:1 contrast.
-- Header, main, sections, and footer use semantic landmarks and named headings.
-- First focusable item is a visible-on-focus skip link to `main`.
-- Every control is keyboard reachable, has a persistent label, and has a 44px minimum target.
-- Focus uses a visible 2px accent outline with 2px offset.
-- Library status changes announce through `aria-live="polite"`; table keeps accessible headers.
-- Images require useful alt text; decorative images use empty alt text.
-- Automated accessibility checks supplement keyboard and screen-reader smoke tests.
-
-## Acceptance
-
-- IA order matches this contract at desktop and mobile widths.
-- Search covers descriptions and safe command patterns; all three filter groups compose.
-- Anti-slop checklist has no violations.
-- Contrast, keyboard path, landmarks, labels, focus, and no-results announcement pass.
-- Footer exposes GitHub, npm, and install destinations only when those destinations exist.
+- Warm paper background (`#fafaf7`), ink text, and one burnt-orange accent.
+- IBM Plex Serif display, IBM Plex Sans body, and JetBrains Mono terminal surfaces,
+  each with local fallbacks.
+- 16px body text, 4px maximum control radius, and horizontally scrollable tables on
+  narrow screens.
+- Visible skip link, semantic header/main/sections/footer, persistent control labels,
+  44px search/filter targets, visible 2px focus outline, `aria-live="polite"` result status,
+  and accessible table headers.
+- No emoji, gradients, decorative icon fields, or card conversion on mobile.
