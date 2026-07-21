@@ -1,80 +1,76 @@
-import { afterAll, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { IncidentStore } from "../src/ingest/incidents-store";
-import { createLocalRecall, setEmbedderForTesting } from "../src/ingest/recall-local";
-import { commandTokens, jaccardSimilarity } from "../src/ingest/semantic-recall";
+import { cosineSimilarity, localRecallWarnThreshold } from "../src/ingest/semantic-recall";
 
 /**
- * The one test that exercises the REAL neural model end to end — no injected
- * embedder, a live `node` sidecar loading Xenova/all-MiniLM-L6-v2. It proves
- * the thing stubbed tests can't: that a genuinely reworded command (different
- * words, zero shared tokens) recalls a past incident by *meaning*, where the
- * lexical backend would score exactly 0.
- *
- * It SKIPS (not passes) when the model can't load here — no `node` on PATH, the
- * optional transformers dep absent, or offline on first run. A skip is honest;
- * a green stub is the bug this whole feature exists to avoid. Set
- * VIBEBLOAT_REQUIRE_REALMODEL=1 to turn "unavailable" into a hard failure (CI
- * that guarantees the model is present).
+ * Real-model calibration. One batched sidecar call keeps this useful but cheap.
+ * It skips when Node, the optional dependency, or the model is unavailable;
+ * VIBEBLOAT_REQUIRE_REALMODEL=1 converts that skip into a hard failure.
  */
+const cases = [
+  { recorded: "git stash -u", query: "git stash --include-untracked", warns: true },
+  { recorded: "rm -rf node_modules", query: "rm --recursive --force node_modules", warns: true },
+  { recorded: "git reset --hard HEAD", query: "git reset --hard", warns: true },
+  { recorded: "git clean -fd", query: "git clean --force --directories", warns: true },
+  { recorded: "kubectl get pods", query: "kubectl get po", warns: true },
+  // Same-tool negatives matter: a threshold that only rejects random commands
+  // still floods users whenever command names dominate the embedding.
+  { recorded: "git stash -u", query: "git status", warns: false },
+  { recorded: "rm -rf node_modules", query: "npm install", warns: false },
+  { recorded: "git reset --hard HEAD", query: "git log --oneline", warns: false },
+  { recorded: "git clean -fd", query: "git status --short", warns: false },
+  { recorded: "kubectl get pods", query: "kubectl delete pod app", warns: false },
+] as const;
 
-// Persistent cache so the model downloads once, then runs offline on reruns.
-const modelCache = join(process.cwd(), ".vibebloat-model-cache");
-const storeDir = mkdtempSync(join(tmpdir(), "vibebloat-realmodel-"));
-
-afterAll(() => {
-  try { rmSync(storeDir, { recursive: true, force: true }); } catch { /* ignore */ }
+const texts = [...new Set(cases.flatMap(({ recorded, query }) => [recorded, query]))];
+const workerPath = fileURLToPath(new URL("../src/ingest/embed-worker.mjs", import.meta.url));
+const result = spawnSync(process.env.VIBEBLOAT_NODE?.trim() || "node", [workerPath], {
+  input: JSON.stringify({ texts, cacheDir: join(process.cwd(), ".vibebloat-model-cache") }),
+  encoding: "utf8",
+  maxBuffer: 64 * 1024 * 1024,
+  timeout: 120_000,
 });
 
-setEmbedderForTesting(undefined); // force the real sidecar
+interface WorkerResponse {
+  ok: boolean;
+  vectors?: number[][];
+  error?: string;
+}
 
-const probeStore = new IncidentStore({ path: join(storeDir, "incidents.sqlite") });
-const recall = createLocalRecall({ store: probeStore, cacheDir: modelCache, workerTimeoutMs: 120_000 });
+let response: WorkerResponse | undefined;
+try {
+  response = JSON.parse((result.stdout ?? "").trim().split("\n").at(-1) ?? "") as WorkerResponse;
+} catch {
+  response = undefined;
+}
 
-// A destructive-git incident, described as a real mistake.
-await recall.record({
-  incidentId: "git-stash-u",
-  command: "git stash -u",
-  argsAnyOf: ["-u", "--include-untracked"],
-  condition: "it stashed untracked files that were never recovered",
-  consequence: "121 operational files vanished from the working tree",
-  canonicalCommand: "git stash -u",
-});
+const unavailableReason = result.error?.message
+  ?? (result.status !== 0 ? (result.stderr ?? "").trim() || `worker exited ${result.status}` : undefined)
+  ?? (!response?.ok ? response?.error ?? "invalid worker response" : undefined);
+const requireRealModel = process.env.VIBEBLOAT_REQUIRE_REALMODEL === "1";
 
-// Genuine paraphrase — no shared command token with "git stash -u".
-const paraphrase = "save my uncommitted work aside including new files";
-const realHits = await recall.recall({
-  event: { chokepoint: "shell", command: paraphrase },
-  canonicalCommand: paraphrase,
-  limit: 1,
-});
-
-const available = recall.unavailableReason === undefined && realHits.length > 0;
-const require = process.env.VIBEBLOAT_REQUIRE_REALMODEL === "1";
-
-if (!available && !require) {
-  test.skip(`real model unavailable — ${recall.unavailableReason ?? "no hit"} (set VIBEBLOAT_REQUIRE_REALMODEL=1 to hard-fail)`, () => {});
+if (unavailableReason && !requireRealModel) {
+  test.skip(`real model unavailable — ${unavailableReason} (set VIBEBLOAT_REQUIRE_REALMODEL=1 to hard-fail)`, () => {});
 } else {
-  test("real MiniLM recalls a paraphrase with ZERO shared tokens (lexical would miss it)", () => {
-    expect(recall.unavailableReason).toBeUndefined();
-    // Lexical proof: the paraphrase and the stored command share no tokens.
-    const lexical = jaccardSimilarity(commandTokens(paraphrase), commandTokens("git stash -u"));
-    expect(lexical).toBe(0);
-    // Neural proof: it recalls the incident anyway, above the backend threshold.
-    expect(realHits[0]?.incidentId).toBe("git-stash-u");
-    expect(realHits[0]?.similarity ?? 0).toBeGreaterThanOrEqual(recall.warnThreshold);
-  });
+  test("real MiniLM threshold separates command paraphrases from same-tool negatives", () => {
+    expect(unavailableReason).toBeUndefined();
+    const vectors = response?.vectors;
+    expect(vectors).toHaveLength(texts.length);
+    const byText = new Map(texts.map((text, index) => [text, Float32Array.from(vectors![index] ?? [])]));
+    const scores = cases.map((entry) => ({
+      ...entry,
+      score: cosineSimilarity(byText.get(entry.recorded)!, byText.get(entry.query)!),
+    }));
 
-  test("real MiniLM does NOT fire on an unrelated command", async () => {
-    const unrelated = "list all running docker containers";
-    const hits = await recall.recall({
-      event: { chokepoint: "shell", command: unrelated },
-      canonicalCommand: unrelated,
-      limit: 1,
-    });
-    const top = hits[0];
-    if (top) expect(top.similarity).toBeLessThan(recall.warnThreshold);
+    for (const { recorded, query, warns, score } of scores) {
+      expect(score >= localRecallWarnThreshold, `${recorded} <> ${query}: ${score.toFixed(4)}`).toBe(warns);
+    }
+
+    const positiveFloor = Math.min(...scores.filter(({ warns }) => warns).map(({ score }) => score));
+    const negativeCeiling = Math.max(...scores.filter(({ warns }) => !warns).map(({ score }) => score));
+    expect(negativeCeiling).toBeLessThan(localRecallWarnThreshold);
+    expect(positiveFloor).toBeGreaterThanOrEqual(localRecallWarnThreshold);
   });
 }

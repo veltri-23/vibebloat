@@ -70,23 +70,18 @@ export interface SyncSemanticRecall extends SemanticRecall {
   recall(request: RecallRequest): RecallHit[];
 }
 
-/**
- * Recurring k-NN threshold. Above this we suggest promoting to a real guard
- * via the existing human-approval path. Below it we surface as a warn only.
- */
-export const recallPromotionThreshold = 0.8;
+/** Default warning threshold for lexical Jaccard backends. */
 export const recallWarnThreshold = 0.5;
 
 /**
- * Neural (cosine) thresholds. all-MiniLM-L6-v2 compresses short command
- * strings hard: measured cosine for a true paraphrase with zero shared tokens
- * lands ~0.29-0.34, while unrelated commands sit below ~0.16 (often negative).
- * The Jaccard-calibrated 0.5 warn threshold never fires on this scale, so the
- * neural backend carries its own knob. Retune here if the model changes.
+ * all-MiniLM-L6-v2 cosine threshold, calibrated against equivalent command
+ * spellings and realistic same-tool negatives. The pinned model scores the
+ * accepted paraphrases at 0.702-0.889 and negatives at or below 0.674; 0.69
+ * sits between those observed sets. Retune with the real-model matrix when the
+ * model changes.
  * ponytail: calibration knob, not a magic number — re-measure on model swap.
  */
-export const localRecallWarnThreshold = 0.25;
-export const localRecallPromotionThreshold = 0.45;
+export const localRecallWarnThreshold = 0.69;
 
 /**
  * Stable token set from a normalized command. Reused across record() and

@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { IncidentStore } from "../src/ingest/incidents-store";
 import { LocalRecall, setEmbedderForTesting, type Embedder } from "../src/ingest/recall-local";
-import { cosineSimilarity } from "../src/ingest/semantic-recall";
+import { cosineSimilarity, localRecallWarnThreshold } from "../src/ingest/semantic-recall";
 
 const temporaryDirectories: string[] = [];
 const openStores: IncidentStore[] = [];
@@ -230,14 +230,11 @@ test("recall ranks the closest paraphrase highest across multiple stored inciden
   expect(hits[0]?.incidentId).toBe("rename-files");
 });
 
-test("recall carries its own cosine-calibrated warn threshold, not the lexical default", () => {
+test("recall advertises the calibrated local cosine threshold", () => {
   installEmbedder();
   const store = makeStore();
   const recall = new LocalRecall({ store });
-  // Cosine matches on short commands land ~0.3; a 0.5 Jaccard threshold would
-  // never fire. The backend must advertise its own lower threshold.
-  expect(recall.warnThreshold).toBeLessThan(0.5);
-  expect(recall.warnThreshold).toBeGreaterThan(0);
+  expect(recall.warnThreshold).toBe(localRecallWarnThreshold);
 });
 
 test("recall with empty store is an empty array (no DB hit beyond the count)", async () => {
