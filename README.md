@@ -11,23 +11,28 @@ Unlike `destructive_command_guard` (5k-star static blocker), VibeBloat learns
 *personalized* guards from your own repeated incidents — not a universal
 command blocklist.
 
-## See it work in 10 seconds
+## What a block looks like
 
-No history, no API key, no install beyond the repo:
-
-```sh
-bun src/cli.ts demo
+```
+BLOCKED  guard: git-stash-u  class: A
+incident: git stash -u deleted operational untracked files  date: 2026-07-15
+why: 07-15 this deleted untracked files. Use git stash -u -- <path> or commit first.
+fix: vibebloat allow git-stash-u --once
 ```
 
-It runs the real pipeline — scrub, prefilter, mine, compile, block — over a
-labelled sample history and prints the guards it produced. With a model
-configured it mines those findings live; without one it uses the sample's
-precomputed findings and says so.
+`BLOCKED` renders red and `WARNING` amber when stdout is a TTY (see
+`src/block-receipt.ts`). Every receipt line passes through the same scrubber
+that protects `vibebloat doctor`, so secrets, tokens, and absolute paths
+become `<redacted-token>` / `<absolute-path>` before they reach the screen.
 
-## Try it
+## Try it in 10 seconds
 
-The fastest way: open Vibebloat in a pre-configured GitHub Codespace and run
-init in the browser. No local install required.
+```sh
+npx vibebloat
+```
+
+`npx vibebloat` works once published. Until then, open Vibebloat in a
+pre-configured GitHub Codespace — no local install required.
 
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://github.com/codespaces/new?hide_repo_select=true&ref=task%2Fvibebloat-mvp&repo=veltri-23%2Fvibebloat)
 
@@ -39,22 +44,11 @@ bun src/cli.ts demo
 
 A fresh Codespace has no agent history, so the sample stands in for yours. On a
 machine that does have sessions to read, `bun src/cli.ts init --pretty` walks
-the onboarding against your own history instead.
-
-Or install locally (after `npm publish` lands):
-
-```sh
-npx vibebloat
-```
-
-## What a block looks like
-
-```
-BLOCKED  guard: git-stash-u  class: A
-incident: git stash -u deleted operational untracked files  date: 2026-07-15
-why: 07-15 this deleted untracked files. Use git stash -u -- <path> or commit first.
-fix: vibebloat allow git-stash-u --once
-```
+the onboarding against your own history instead. `bun src/cli.ts demo` runs
+the real pipeline — scrub, prefilter, mine, compile, block — over a labelled
+sample history and prints the guards it produced. With a model configured it
+mines those findings live; without one it uses the sample's precomputed
+findings and says so.
 
 ## What ships in the library
 
@@ -156,3 +150,4 @@ COSIGN_PASSWORD=... cosign sign-blob --key release/vibebloat.key \
 ## License
 
 Apache-2.0. See `LICENSE`.
+
