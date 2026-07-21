@@ -171,7 +171,7 @@ async function recallAdvisory(event: Event, repoRoot = process.cwd()): Promise<s
     const adapter: SemanticRecall = buildRecall({ store, configPath });
     closeResource = adapter.close?.bind(adapter) ?? closeResource;
     const advisory = await new Runtime().recallAdvisory(event, adapter);
-    return advisory?.warning;
+    return advisory?.warning ?? adapter.unavailableAdvisory;
   } catch {
     return undefined;
   } finally {

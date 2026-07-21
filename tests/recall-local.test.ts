@@ -82,6 +82,11 @@ test("recall degrades to [] when the embedder is unavailable (no model, offline)
   const hits = await recall.recall({ event: { chokepoint: "shell", command: "git stash --keep-index" }, canonicalCommand: "git stash --keep-index" });
   expect(hits).toEqual([]);
   expect(recall.unavailableReason).toBeDefined();
+  expect(recall.unavailableAdvisory).toBe(
+    "WHAT skipped: local semantic recall is unavailable.\n" +
+    "WHY: optional @huggingface/transformers and onnxruntime-node runtime could not load.\n" +
+    "FIX: npm install @huggingface/transformers onnxruntime-node",
+  );
   // record() also degrades gracefully — losing the embedding beats losing the incident.
   await recall.record({
     incidentId: "unembedded",
@@ -179,6 +184,7 @@ test("recall with empty store is an empty array (no DB hit beyond the count)", a
   const recall = new LocalRecall({ store });
   const hits = await recall.recall({ event: { chokepoint: "shell", command: "git stash --keep-index" }, canonicalCommand: "git stash --keep-index" });
   expect(hits).toEqual([]);
+  expect(recall.unavailableAdvisory).toBeUndefined();
 });
 
 test("mismatched embedding dimensions skip stored rows (defensive against model swap)", async () => {

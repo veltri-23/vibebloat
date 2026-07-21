@@ -35,6 +35,8 @@ export interface RecallRequest {
 
 export interface SemanticRecall {
   readonly mode: RecallMode;
+  /** User-facing recovery hint, populated only after an optional backend fails. */
+  readonly unavailableAdvisory?: string;
   /**
    * Backend-specific warn threshold on this backend's own similarity scale.
    * Lexical Jaccard and neural cosine are NOT the same scale — a shared global

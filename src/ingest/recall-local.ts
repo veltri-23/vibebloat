@@ -14,6 +14,10 @@ const embeddingModelId = "Xenova/all-MiniLM-L6-v2";
 const defaultEmbeddingDimensions = 384;
 const maximumCandidates = 64;
 const workerPath = fileURLToPath(new URL("./embed-worker.mjs", import.meta.url));
+const unavailableAdvisory =
+  "WHAT skipped: local semantic recall is unavailable.\n" +
+  "WHY: optional @huggingface/transformers and onnxruntime-node runtime could not load.\n" +
+  "FIX: npm install @huggingface/transformers onnxruntime-node";
 
 /** Response shape from `embed-worker.mjs`. */
 interface WorkerResponse {
@@ -123,6 +127,10 @@ export class LocalRecall implements SemanticRecall {
 
   get unavailableReason(): string | undefined {
     return this.#unavailableReason;
+  }
+
+  get unavailableAdvisory(): string | undefined {
+    return this.#unavailableReason ? unavailableAdvisory : undefined;
   }
 
   get dimensions(): number {
