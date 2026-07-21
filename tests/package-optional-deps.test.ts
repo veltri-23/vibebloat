@@ -66,7 +66,7 @@ test("packed npx CLI works without optional neural dependencies", () => {
   const configDirectory = join(consumer, ".vibebloat");
   mkdirSync(configDirectory);
   const configPath = join(configDirectory, "config.toml");
-  const hookPayload = JSON.stringify({ tool_input: { command: "save unpublished changes aside" } });
+  const hookPayload = JSON.stringify({ tool_input: { command: "shelve my uncommitted changes" } });
   for (const mode of ["lexical", "off"]) {
     writeFileSync(configPath, `[semantic]\nrecall = ${mode}\n`);
     const hook = Bun.spawnSync([npx, "--no-install", "vibebloat", "hook"], {
