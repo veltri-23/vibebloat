@@ -9,13 +9,14 @@ import {
   cosineSimilarity,
 } from "./semantic-recall";
 
-// Force the WASM ONNX runtime before transformers.js's first import — the package
-// auto-picks onnxruntime-node in Node-shaped runtimes (incl. Bun), which would
-// pull in a native binding we explicitly want to avoid. Ponytail: setting
-// `globalThis[Symbol.for('onnxruntime')]` is the supported hook the package
-// checks in `src/backends/onnx.js`; the import side-effect resolves the binding.
-import * as ONNX_WEB from "onnxruntime-web";
-(globalThis as Record<symbol, unknown>)[Symbol.for("onnxruntime")] = ONNX_WEB;
+// NOTE: `onnxruntime-web` is intentionally NOT imported at module top. The
+// default-export bundle is ~400KB JS plus the embedded WASM, and a top-level
+// `import * as ONNX_WEB from "onnxruntime-web"` would load + init the runtime
+// eagerly — every CLI invocation transitively imports recall-factory.ts (via
+// cli.ts and live-incident.ts), so an eager import here would inflate startup
+// even when the configured mode is `lexical`. The WASM hook is set lazily
+// inside `#getPipeline` instead, the first time the user actually opts into
+// the local backend.
 
 interface TransformersModule {
   pipeline: (
@@ -137,6 +138,17 @@ export class LocalRecall implements SemanticRecall {
     if (this.#pipelinePromise) return this.#pipelinePromise;
     this.#pipelinePromise = (async () => {
       try {
+        // Ponytail: install the WASM ONNX runtime before transformers.js's
+        // first import. `@huggingface/transformers` auto-picks onnxruntime-node
+        // in Node-shaped runtimes (incl. Bun), which would pull in a native
+        // binding we explicitly want to avoid. The supported hook lives at
+        // `src/backends/onnx.js`; setting `globalThis[Symbol.for('onnxruntime')]`
+        // before the dynamic `import("@huggingface/transformers")` redirects
+        // the backend to the WASM build without paying its ~400KB cost at
+        // module-parse time. Dynamic import is intentional — see the top-of-
+        // file note on why this is not a static import.
+        const ONNX_WEB = await import("onnxruntime-web");
+        (globalThis as Record<symbol, unknown>)[Symbol.for("onnxruntime")] = ONNX_WEB;
         const module = await loadTransformersModule();
         module.env.cacheDir = this.#cacheDir;
         module.env.allowLocalModels = true;
