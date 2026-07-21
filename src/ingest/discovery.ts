@@ -48,12 +48,17 @@ interface DiscoveredFile {
   path: string;
   device: number;
   inode: number;
+  size: number;
+  modifiedAt: number;
+  changedAt: number;
 }
 
 function regularFile(path: string): DiscoveredFile | undefined {
   try {
     const stat = lstatSync(path);
-    return stat.isFile() && !stat.isSymbolicLink() ? { path, device: stat.dev, inode: stat.ino } : undefined;
+    return stat.isFile() && !stat.isSymbolicLink()
+      ? { path, device: stat.dev, inode: stat.ino, size: stat.size, modifiedAt: stat.mtimeMs, changedAt: stat.ctimeMs }
+      : undefined;
   } catch {
     return undefined;
   }
@@ -61,6 +66,12 @@ function regularFile(path: string): DiscoveredFile | undefined {
 
 function collectFiles(root: string, extension: ".json" | ".jsonl"): DiscoveredFile[] {
   if (!existsSync(root)) return [];
+  try {
+    const rootStat = lstatSync(root);
+    if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) return [];
+  } catch {
+    return [];
+  }
   const pending = [root];
   const files: DiscoveredFile[] = [];
   while (pending.length > 0) {
@@ -132,7 +143,14 @@ function readDiscoveredFile(file: DiscoveredFile): string {
   const descriptor = openSync(file.path, "r");
   try {
     const stat = fstatSync(descriptor);
-    if (!stat.isFile() || stat.dev !== file.device || stat.ino !== file.inode) throw new Error("History file changed after discovery.");
+    if (!stat.isFile()
+      || stat.dev !== file.device
+      || stat.ino !== file.inode
+      || stat.size !== file.size
+      || stat.mtimeMs !== file.modifiedAt
+      || stat.ctimeMs !== file.changedAt) {
+      throw new Error("History file changed after discovery.");
+    }
     return readFileSync(descriptor, "utf8");
   } finally {
     closeSync(descriptor);

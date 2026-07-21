@@ -91,7 +91,7 @@ test("launch uses literal arguments without a command shell", () => {
   expect(windowsSwapHelperScript).toContain("[IO.File]::Replace");
 });
 
-test("failed detached launch removes staged executable bytes", () => {
+test.skipIf(process.platform !== "win32")("failed detached launch removes staged executable bytes", () => {
   const value = fixture();
   let captured: WindowsSwapLaunch | undefined;
 

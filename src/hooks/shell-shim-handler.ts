@@ -53,7 +53,7 @@ export function runShellShimCommand(
       undefined,
       undefined,
       createFiringRecorder(globalGuardHome()),
-    ));
+    ), gitExecutable);
     if (response.exitCode !== 0) {
       process.stderr.write(`${response.stderr}\n`);
       if (response.localWarning) process.stderr.write(`${response.localWarning}\n`);

@@ -12,13 +12,8 @@ VibeBloat reads your agent history, finds the commands that actually burned you,
 
 ## Quickstart
 
-Fastest, once the package is published:
-
-```sh
-npx vibebloat        # zero install, runs on plain Node, bundles its own Bun
-```
-
-Works right now, from a source checkout (needs [Bun](https://bun.sh) >= 1.3):
+VibeBloat is not published to npm yet, so run it from a source checkout (needs
+[Bun](https://bun.sh) >= 1.3):
 
 ```sh
 git clone https://github.com/veltri-23/vibebloat
@@ -73,7 +68,7 @@ These are the seed set. Your own guards compile from your history on first `init
 
 1. **Discover** local agent histories without printing their paths.
 2. **Consent.** Require explicit source confirmation and privacy opt-in before reading anything.
-3. **Scrub** locally with Presidio and Gitleaks. Any scrub failure halts the ingest. Nothing reaches a model unscrubbed.
+3. **Scrub** locally before anything reaches a model, fail closed. A source or npm install runs the built-in in-process scrubber — known key formats, credentials in URLs, and high-entropy strings — and halts the ingest if a known secret survives. A signed release can instead drive controlled external Presidio and Gitleaks commands. Either way, only the mined rule is ever shared, never raw history.
 4. **Mine, review, compile, prove.** Turn repeated incidents into declarative guards and prove each one blocks the command that caused it.
 5. **Install** only the guards a human approved, through native agent hooks with shell, git, and filesystem fallbacks.
 
@@ -89,20 +84,15 @@ The core of VibeBloat was designed and built with Codex on GPT-5.6 during OpenAI
 
 Where it earned its keep was the boring, load-bearing parts that are easy to get wrong: making the scrubber fail closed instead of fail open, proving each compiled guard against the incident that produced it, and keeping guards as inert data so a community contribution can never become a code-execution vector. Those were the decisions worth getting right, and they are the ones Codex moved fastest on.
 
-> **Codex session ID:** `TBD` — the core-build session, required for submission eligibility. Fill in from the `/feedback` session before submitting.
+## The demo is a reproducible test, not a recording
 
-## Watch the 3-minute demo
-
-<!-- Replace the URL and thumbnail once the video is public -->
-[![VibeBloat demo](assets/block.png)](https://youtu.be/YOUR_VIDEO_ID)
-
-The same block acceptance path is reproducible locally, no video needed:
+Run the two end-to-end shots yourself:
 
 ```sh
 bun test tests/e2e/demo-shot-5.test.ts tests/e2e/demo-shot-6.test.ts
 ```
 
-Shot 5 is the kill shot: a fresh Claude Code session hitting the `git stash -u` block in a live tree. Shot 6 is a different agent, Codex, in a fresh session that never saw the incident, hitting the same guard at a different chokepoint.
+Shot 5 runs the full learn-then-enforce cycle through the git shell-shim: it lets `git clean -fd` delete a real untracked operational file, detects the live incident, compiles a guard proposal *off* the enforcement path, requires a human approval, then re-runs the command and blocks it with `exit 2` — the file survives the second time. Shot 6 takes one `git-stash-u` guard and asserts it blocks across independent agent transports — the Claude Code `PreToolUse` hook and the OpenClaw plugin chokepoint — so one learned guard enforces identically no matter which agent runs the command.
 
 ## Platforms and release verification
 
