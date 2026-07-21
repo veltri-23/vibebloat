@@ -1,11 +1,19 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import openClawPlugin, { beforeToolCall, guardedBeforeToolCall } from "../src/hooks/openclaw-plugin";
 import { gitStashUntrackedGuard } from "../src/guards";
 import type { Guard } from "../src/types";
+import { type DirtyGitContext, restoreCwd, useDirtyGitCwd } from "./helpers/dirty-git-cwd";
 
 const tempDirectories: string[] = [];
+let dirtyCtx: DirtyGitContext;
+let originalCwd: string;
+beforeAll(() => {
+  originalCwd = process.cwd();
+  dirtyCtx = useDirtyGitCwd();
+});
+afterAll(() => { restoreCwd(originalCwd, dirtyCtx); });
 afterEach(() => { for (const directory of tempDirectories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
 
 function compiledGuard(id: string, command: string) {

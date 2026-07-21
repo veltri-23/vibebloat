@@ -1,11 +1,22 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { gitStashUntrackedGuard, mcpConfigWrongFileGuard } from "../src/guards";
 import { runFileGuard, runPreToolUse } from "../src/hooks";
+import { type DirtyGitContext, restoreCwd, useDirtyGitCwd } from "./helpers/dirty-git-cwd";
 
 const temporaryDirectories: string[] = [];
 afterEach(() => { for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
+
+let dirtyCtx: DirtyGitContext;
+let originalCwd: string;
+beforeAll(() => {
+  originalCwd = process.cwd();
+  dirtyCtx = useDirtyGitCwd();
+});
+afterAll(() => { restoreCwd(originalCwd, dirtyCtx); });
+
+const cliPath = join(import.meta.dir, "..", "src", "cli.ts");
 
 function hookEnvironment(): NodeJS.ProcessEnv {
   const home = mkdtempSync(join(process.env.TEMP ?? ".", "vibebloat-hook-"));
@@ -35,8 +46,8 @@ test("Codex Class B file cell blocks", () => {
 });
 
 test("Codex hook transport emits a deny decision", () => {
-  const result = Bun.spawnSync(["bun", "src/cli.ts", "hook", "--agent=codex"], {
-    cwd: import.meta.dir + "/..",
+  const result = Bun.spawnSync(["bun", cliPath, "hook", "--agent=codex"], {
+    cwd: dirtyCtx.cwd,
     env: hookEnvironment(),
     stdin: new Blob([JSON.stringify({ tool_input: { command: "git stash -u" } })]),
   });
@@ -47,8 +58,8 @@ test("Codex hook transport emits a deny decision", () => {
 });
 
 test("unknown hook agent fails closed", () => {
-  const result = Bun.spawnSync(["bun", "src/cli.ts", "hook", "--agent=unknown"], {
-    cwd: import.meta.dir + "/..",
+  const result = Bun.spawnSync(["bun", cliPath, "hook", "--agent=unknown"], {
+    cwd: dirtyCtx.cwd,
     env: hookEnvironment(),
     stdin: new Blob([JSON.stringify({ tool_input: { command: "git stash -u" } })]),
   });

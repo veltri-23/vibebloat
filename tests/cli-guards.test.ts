@@ -1,13 +1,24 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { type DirtyGitContext, restoreCwd, useDirtyGitCwd } from "./helpers/dirty-git-cwd";
 
 const tempDirectories: string[] = [];
+const cliPath = join(import.meta.dir, "..", "src", "cli.ts");
+let dirtyCtx: DirtyGitContext;
+let originalCwd: string;
+beforeAll(() => {
+  originalCwd = process.cwd();
+  dirtyCtx = useDirtyGitCwd();
+});
+afterAll(() => { restoreCwd(originalCwd, dirtyCtx); });
 afterEach(() => { for (const directory of tempDirectories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
 
 function runHook(home: string, payload: unknown, environment: Record<string, string | undefined> = {}) {
-  return Bun.spawnSync(["bun", "src/cli.ts", "hook"], {
-    cwd: import.meta.dir + "/..",
+  return Bun.spawnSync(["bun", cliPath, "hook"], {
+    // The child runs with this cwd; the situational `git-stash-u` guard
+    // only fires when the working tree has uncommitted changes.
+    cwd: dirtyCtx.cwd,
     env: { ...process.env, USERPROFILE: join(home, "user"), HOME: join(home, "user"), VIBEBLOAT_HOME: home, ...environment },
     stdin: new Blob([JSON.stringify(payload)]),
     stdout: "pipe",

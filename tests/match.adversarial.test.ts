@@ -7,8 +7,11 @@ import type { Guard } from "../src/types";
 
 const guard = gitStashUntrackedGuard;
 
+// The built-in is situational on `whenUnstagedChanges: true`. Tests that
+// expect it to fire must pass the runtime fact; true-negative tests (scoped
+// commands) are unaffected because they expect `fired: false` either way.
 function shellVerdict(command: string) {
-  return match(guard, { chokepoint: "shell", command });
+  return match(guard, { chokepoint: "shell", command, hasUnstagedChanges: true });
 }
 
 describe("comment handling", () => {

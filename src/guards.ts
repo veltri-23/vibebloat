@@ -21,7 +21,10 @@ export const gitStashUntrackedGuard: Guard = {
     date: "2026-07-15",
     source: "claude-code",
   },
-  match: { chokepoint: "shell", command: "git stash", argsAnyOf: ["-u", "--include-untracked", "-a", "--all"] },
+  // Situational: only dangerous in a working tree with active, uncommitted
+  // state (untracked files to lose). A clean committed tree has nothing for
+  // `git stash -u` to remove, so the command is a no-op there.
+  match: { chokepoint: "shell", command: "git stash", argsAnyOf: ["-u", "--include-untracked", "-a", "--all"], context: { whenUnstagedChanges: true } },
   action: {
     type: "block",
     message: "07-15 this deleted untracked files. Use git stash -u -- <path> or commit first.",
@@ -38,6 +41,8 @@ export const mcpConfigWrongFileGuard: Guard = {
     date: "2026-07-15",
     source: "codex",
   },
+  // Genuinely universal: writing .mcp.json is wrong everywhere; the right
+  // file is always .claude.json. No situation makes it safe, so no context.
   match: { chokepoint: "file", path: ".mcp.json" },
   action: {
     type: "block",
@@ -55,7 +60,9 @@ export const gitResetHardGuard: Guard = {
     date: "2026-07-15",
     source: "claude-code",
   },
-  match: { chokepoint: "shell", command: "git reset", argsContains: ["--hard"] },
+  // Situational: only burns when there is uncommitted work to destroy.
+  // `--hard` on a clean committed tree is harmless.
+  match: { chokepoint: "shell", command: "git reset", argsContains: ["--hard"], context: { whenUnstagedChanges: true } },
   action: {
     type: "block",
     message: "07-15 this destroyed uncommitted work. Use git stash first, or reset --soft to keep changes staged.",
@@ -72,7 +79,9 @@ export const gitCheckoutDiscardGuard: Guard = {
     date: "2026-07-15",
     source: "codex",
   },
-  match: { chokepoint: "shell", command: "git checkout", argsAnyOf: ["--", "."] },
+  // Situational: literal match for the incident ("unstaged edits"). A clean
+  // tree has no unstaged edits to discard.
+  match: { chokepoint: "shell", command: "git checkout", argsAnyOf: ["--", "."], context: { whenUnstagedChanges: true } },
   action: {
     type: "block",
     message: "07-15 this discarded edits that existed only in process memory. Use git stash first or git restore --staged selectively.",
@@ -89,7 +98,10 @@ export const gitCleanForceGuard: Guard = {
     date: "2026-07-15",
     source: "claude-code",
   },
-  match: { chokepoint: "shell", command: "git clean", argsAnyOf: ["-fd", "-df", "-f"] },
+  // Situational: only dangerous when the tree has untracked files at risk.
+  // Proxy `whenUnstagedChanges` (no `hasUntrackedFiles` in the context model);
+  // a truly clean tree typically has nothing to lose.
+  match: { chokepoint: "shell", command: "git clean", argsAnyOf: ["-fd", "-df", "-f"], context: { whenUnstagedChanges: true } },
   action: {
     type: "block",
     message: "07-15 this removed an untracked script silently. Use git clean -nd first to preview what would be deleted.",
@@ -106,7 +118,10 @@ export const npxMcpHangGuard: Guard = {
     date: "2026-07-15",
     source: "codex",
   },
-  match: { chokepoint: "shell", command: "npx", argsAnyOf: ["-y", "--yes"] },
+  // Situational: `npx -y` for MCP server commands is a dev/setup activity
+  // that happens in a working tree, not a release context. Guarded as `warn`
+  // so a clean-tree npx -y is low-cost even if the proxy is imperfect.
+  match: { chokepoint: "shell", command: "npx", argsAnyOf: ["-y", "--yes"], context: { whenUnstagedChanges: true } },
   action: {
     type: "warn",
     message: "07-15 this hung the agent for minutes. Prefer pinned local installs over npx -y for MCP server commands.",
