@@ -84,6 +84,8 @@ The core of VibeBloat was designed and built with Codex on GPT-5.6 during OpenAI
 
 Where it earned its keep was the boring, load-bearing parts that are easy to get wrong: making the scrubber fail closed instead of fail open, proving each compiled guard against the incident that produced it, and keeping guards as inert data so a community contribution can never become a code-execution vector. Those were the decisions worth getting right, and they are the ones Codex moved fastest on.
 
+> **Codex session ID:** `019f7184-325b-7ec0-879a-856b59de5e17`
+
 ## The demo is a reproducible test, not a recording
 
 Run the two end-to-end shots yourself:
