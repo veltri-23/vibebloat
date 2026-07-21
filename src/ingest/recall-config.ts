@@ -3,14 +3,21 @@ import { dirname } from "node:path";
 import type { RecallMode } from "./semantic-recall";
 
 /**
- * Tiny TOML reader for the `[semantic]` block only. We only ever write three
- * keys; pulling a TOML dep for that is over-engineering. Anything else in
- * the file is preserved verbatim so other tools don't lose their writes.
+ * Tiny TOML reader for the `[semantic]` block only. We only ever write a
+ * handful of keys; pulling a TOML dep for that is over-engineering. Anything
+ * else in the file is preserved verbatim so other tools don't lose their
+ * writes.
  */
 export interface RecallConfig {
   mode: RecallMode;
   /** When `embed` is selected and the key isn't already in the environment. */
   embedApiKey?: string;
+  /**
+   * Optional bridge for GBrain users: when true, a recorded incident is also
+   * pushed to a reachable GBrain instance. Defaults to false; the exporter
+   * never blocks or fails the proposal path.
+   */
+  gbrainExport?: boolean;
 }
 
 const validModes: ReadonlySet<RecallMode> = new Set<RecallMode>(["lexical", "embed", "local", "off"]);
@@ -33,7 +40,7 @@ function stripQuotes(value: string): string {
  * Parse a single top-level key/value from the `[semantic]` block. Returns
  * undefined for keys we don't own; preserves the raw line for round-trip.
  */
-function parseSemanticLine(line: string): { mode?: RecallMode; embedApiKey?: string; preserve: string } {
+function parseSemanticLine(line: string): { mode?: RecallMode; embedApiKey?: string; gbrainExport?: boolean; preserve: string } {
   const match = /^\s*([A-Za-z_][A-Za-z0-9_-]*)\s*=\s*(.+?)\s*(?:#.*)?$/.exec(line);
   if (!match) return { preserve: line };
   const key = match[1]!;
@@ -44,6 +51,11 @@ function parseSemanticLine(line: string): { mode?: RecallMode; embedApiKey?: str
   }
   if (key === "embed_api_key") {
     return { embedApiKey: stripQuotes(rawValue), preserve: line };
+  }
+  if (key === "gbrain_export") {
+    const normalized = rawValue.trim().toLowerCase();
+    if (normalized === "true") return { gbrainExport: true, preserve: line };
+    if (normalized === "false") return { gbrainExport: false, preserve: line };
   }
   return { preserve: line };
 }
@@ -60,6 +72,7 @@ export function readRecallConfig(path: string): RecallConfig | undefined {
   let inSemanticBlock = false;
   let mode: RecallMode | undefined;
   let embedApiKey: string | undefined;
+  let gbrainExport: boolean | undefined;
   for (const line of lines) {
     const trimmed = line.trim();
     if (trimmed.startsWith("#")) continue;
@@ -71,10 +84,12 @@ export function readRecallConfig(path: string): RecallConfig | undefined {
     const parsed = parseSemanticLine(line);
     if (parsed.mode) mode = parsed.mode;
     if (parsed.embedApiKey !== undefined) embedApiKey = parsed.embedApiKey;
+    if (parsed.gbrainExport !== undefined) gbrainExport = parsed.gbrainExport;
   }
   if (!mode) return undefined;
   const config: RecallConfig = { mode };
   if (embedApiKey !== undefined) config.embedApiKey = embedApiKey;
+  if (gbrainExport !== undefined) config.gbrainExport = gbrainExport;
   return config;
 }
 
@@ -112,6 +127,7 @@ export function writeRecallConfig(path: string, config: RecallConfig): void {
   }
   const newBlock = [`[semantic]`, `recall = ${formatValue(config.mode)}`];
   if (config.embedApiKey !== undefined) newBlock.push(`embed_api_key = ${formatValue(config.embedApiKey)}`);
+  if (config.gbrainExport !== undefined) newBlock.push(`gbrain_export = ${config.gbrainExport ? "true" : "false"}`);
   while (rebuilt.length > 0 && rebuilt[rebuilt.length - 1] === "") rebuilt.pop();
   rebuilt.push(...newBlock, "");
   writeFileSync(path, rebuilt.join("\n"), "utf8");
