@@ -1,3 +1,4 @@
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { IncidentStore } from "./incidents-store";
 import {
@@ -25,7 +26,7 @@ interface WorkerResponse {
   ok: boolean;
   dims?: number;
   vectors?: number[][];
-  error?: string;
+  error?: { code: string; message: string };
 }
 
 /**
@@ -106,7 +107,7 @@ function spawnEmbedder(
     if (texts.length === 0) return [];
     try {
       const child = Bun.spawn({
-        cmd: [binary, sidecarPath],
+        cmd: [binary, sidecarPath, "--model", model, "--cache-dir", cacheDir],
         stdin: "pipe",
         stdout: "pipe",
         stderr: "ignore",
@@ -114,7 +115,7 @@ function spawnEmbedder(
       const kill = () => {
         try { child.kill(); } catch { /* already exited */ }
       };
-      child.stdin.write(JSON.stringify({ texts, model, cacheDir }));
+      child.stdin.write(JSON.stringify({ texts }));
       child.stdin.end();
       let timedOut = false;
       const timer = setTimeout(() => {
@@ -140,10 +141,8 @@ function spawnEmbedder(
 
 export interface LocalRecallOptions {
   store: IncidentStore;
-  /** Where the model caches. Defaults under the guard home. */
+  /** Dedicated model cache. Restricted by worker policy; defaults under guard home. */
   cacheDir?: string;
-  /** Override the model id. Defaults to Xenova/all-MiniLM-L6-v2 (384-dim). */
-  model?: string;
   /** Override embedding dimensions. A mismatch makes recall inert (no false hits). */
   dimensions?: number;
   /** Node executable override. Primarily useful for tests and nonstandard installs. */
@@ -179,9 +178,9 @@ export class LocalRecall implements SemanticRecall {
   constructor(options: LocalRecallOptions) {
     this.#store = options.store;
     this.#dimensions = options.dimensions ?? defaultEmbeddingDimensions;
-    const cacheDir = options.cacheDir
-      ?? `${process.env.VIBEBLOAT_HOME ?? process.env.HOME ?? process.cwd()}/cache/transformers`;
-    const model = options.model ?? embeddingModelId;
+    const cacheDir = resolve(options.cacheDir
+      ?? join(process.env.VIBEBLOAT_HOME ?? process.env.HOME ?? process.env.USERPROFILE ?? process.cwd(), "cache", "transformers"));
+    const model = embeddingModelId;
     const binary = options.nodeBinary?.trim() || nodeBinary();
     const sidecarPath = options.workerPath ?? defaultWorkerPath;
     const configuredTimeoutMs = options.workerTimeoutMs;
