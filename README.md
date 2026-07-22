@@ -2,8 +2,23 @@
 
 **Your coding agent keeps making the same mistake. VibeBloat learns it once and never lets it through again.**
 
-> [!IMPORTANT]
-> **OpenAI Build Week judges:** start with the [two-minute judge guide](JUDGES.md). It includes exact setup commands, expected proof, supported platforms, CI evidence, and an architecture map.
+## OpenAI Build Week judges: start here
+
+This deterministic two-minute path uses invented sample history. It reads none of
+your data, needs no API key, and makes no model call.
+
+```sh
+git clone https://github.com/veltri-23/vibebloat.git
+cd vibebloat
+bun install --frozen-lockfile --omit peer
+bun src/cli.ts demo --no-model
+```
+
+Expected proof: three dangerous commands blocked with exit code `2`, two safe
+variants allowed with exit code `0`, then the same guard returned as a structured
+Codex denial.
+
+**[Full judge guide](JUDGES.md)** · **[Green public CI](https://github.com/veltri-23/vibebloat/actions/runs/29879437084)** · **Codex session:** `019f7184-325b-7ec0-879a-856b59de5e17`
 
 Give an agent enough rope and it will eventually run `git stash -u` over untracked files, `docker compose down -v` on the dev database, or `git reset --hard` over an hour of uncommitted work. You fix it, you move on, and three days later a different agent does the same thing. The lesson lives in your head, not in the tools.
 
@@ -13,17 +28,7 @@ VibeBloat reads your agent history, finds the commands that actually burned you,
   <img src="assets/block.png" alt="A recovered Claude Code session tries git stash -u and gets blocked with exit code 2, citing the exact incident that produced the guard" width="760">
 </p>
 
-## Quickstart
-
-VibeBloat is not published to npm yet, so run it from a source checkout (needs
-[Bun](https://bun.sh) >= 1.3):
-
-```sh
-git clone https://github.com/veltri-23/vibebloat
-cd vibebloat
-bun install
-bun src/cli.ts demo   # runs the full pipeline over a labelled sample
-```
+## What the demo proves
 
 `demo` needs no history of your own. It scrubs a sample agent history, prefilters for incident signal, mines the repeated mistakes, compiles guards, then shows those guards blocking the exact commands that caused the incidents and letting the safe variants through. With a model key set it mines the findings live. Without one it uses the sample's precomputed findings and says so plainly.
 
