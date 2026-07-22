@@ -1,11 +1,27 @@
 # VibeBloat
 
-**Your coding agent keeps making the same mistake. VibeBloat learns it once and never lets it through again.**
+**Your coding environment learns from your agent mistakes and gets harder to break over time.**
+
+VibeBloat is not a static command blocklist. It privately onboards to your agent
+setup and history, uses semantic recall to recognize old failure patterns even
+when they are reworded, and turns the lessons you approve into deterministic
+guards shared across your tools. Incremental scans keep proposing new and
+stronger protections as you work; a human still approves every hard block.
 
 ## OpenAI Build Week judges: start here
 
-This deterministic two-minute path uses invented sample history. It reads none of
-your data, needs no API key, and makes no model call.
+The fast demo shows the enforcement end of VibeBloat's larger learning loop:
+
+1. **Personal onboarding:** detect your agents and history sources, then let you
+   choose privacy, recall, review, and enforcement preferences.
+2. **Semantic memory:** retrieve relevant past incidents by meaning, not only by
+   exact command tokens.
+3. **Learning over time:** incremental scans and daily strengthening propose new
+   lessons as your history grows.
+4. **Safe enforcement:** only human-approved guards become deterministic blocks.
+
+This deterministic two-minute path uses invented sample history. It reads none
+of your data, needs no API key, and makes no model call:
 
 ```sh
 git clone https://github.com/veltri-23/vibebloat.git
@@ -22,7 +38,11 @@ Codex denial.
 
 Give an agent enough rope and it will eventually run `git stash -u` over untracked files, `docker compose down -v` on the dev database, or `git reset --hard` over an hour of uncommitted work. You fix it, you move on, and three days later a different agent does the same thing. The lesson lives in your head, not in the tools.
 
-VibeBloat reads your agent history, finds the commands that actually burned you, and compiles each one into a deterministic guard that blocks it before it runs again. One heavy scan up front. After that the guards enforce for free, on every agent, forever. No tokens, no prompt budget, nothing the model can talk itself out of.
+VibeBloat reads your agent history, finds the failures that actually burned you,
+and compiles each approved lesson into a deterministic guard. The first scan
+builds your personal baseline; bounded returning scans process new evidence and
+propose updates. Between scans, guards enforce for free across agents: no tokens,
+no prompt budget, and nothing a model can talk itself out of.
 
 <p align="center">
   <img src="assets/block.png" alt="A recovered Claude Code session tries git stash -u and gets blocked with exit code 2, citing the exact incident that produced the guard" width="760">

@@ -5,8 +5,25 @@
 **License:** Apache-2.0  
 **Codex session ID:** `019f7184-325b-7ec0-879a-856b59de5e17`
 
-VibeBloat turns mistakes found in coding-agent history into deterministic,
+VibeBloat is a private, personalized learning loop for coding agents. It onboards
+to each developer's tools and history, retrieves old incidents semantically even
+when the next mistake is reworded, and keeps proposing stronger protections as
+new history arrives. Human-approved lessons compile into deterministic,
 cross-agent guards that run before dangerous commands execute.
+
+## What makes it different
+
+1. **Onboarding is custom to you.** VibeBloat detects agent runners and history
+   sources, asks explicit privacy and recall questions, measures the available
+   evidence, and installs only approved integrations and guards.
+2. **Recall is semantic.** Optional local MiniLM embeddings retrieve incidents by
+   meaning rather than exact tokens. A destructive-shape prefilter keeps benign
+   same-tool commands quiet and avoids unnecessary model startup.
+3. **It learns over time.** Returning-user incremental scans and an optional
+   native daily scheduler propose new or strengthened guards as history grows.
+4. **Learning cannot silently become enforcement.** Semantic hits remain
+   advisory. Every promotion to a hard block requires human approval, and the
+   runtime hot path remains deterministic.
 
 ## Two-minute evaluation
 
@@ -37,6 +54,55 @@ The output then shows:
 - `write .mcp.json` blocked with exit code `2`.
 - Safe variants `docker compose down` and `git stash` allowed with exit code `0`.
 - Same guard returned as a structured Codex `PreToolUse` denial.
+
+This proves the final enforcement result. The personalized learning system that
+produces those guards can be evaluated below.
+
+## Evaluate personalized onboarding
+
+```sh
+bun src/cli.ts init --pretty
+```
+
+The onboarding detects supported agents and history sources, explains what it
+would read, asks for consent, lets the user choose lexical or local semantic
+recall, reviews mined incidents, and installs only explicitly approved guards.
+The user can decline before any personal history is ingested.
+
+Automated onboarding proof:
+
+```sh
+bun test tests/e2e/onboarding-12min.test.ts tests/onboarding-returning.test.ts
+```
+
+## Evaluate semantic and ongoing learning
+
+Fast deterministic coverage:
+
+```sh
+bun test tests/recall-local.test.ts tests/onboarding/returning-service.test.ts tests/onboarding-daily-scheduler.test.ts
+```
+
+Optional live MiniLM coverage requires Node.js `>=20` and downloads the model on
+first run:
+
+macOS or Linux:
+
+```sh
+VIBEBLOAT_REQUIRE_REALMODEL=1 bun test tests/recall-local-realmodel.test.ts
+```
+
+Windows PowerShell:
+
+```powershell
+$env:VIBEBLOAT_REQUIRE_REALMODEL = '1'
+bun test tests/recall-local-realmodel.test.ts
+```
+
+The real-model test requires benign same-family Git commands to remain below the
+warning threshold while a genuine reworded destructive incident remains above
+it. If the model cannot load, the required gate fails instead of reporting a
+false green result.
 
 ## Reproduce the submitted proof
 
