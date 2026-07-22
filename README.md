@@ -2,6 +2,9 @@
 
 **Your coding agent keeps making the same mistake. VibeBloat learns it once and never lets it through again.**
 
+> [!IMPORTANT]
+> **OpenAI Build Week judges:** start with the [two-minute judge guide](JUDGES.md). It includes exact setup commands, expected proof, supported platforms, CI evidence, and an architecture map.
+
 Give an agent enough rope and it will eventually run `git stash -u` over untracked files, `docker compose down -v` on the dev database, or `git reset --hard` over an hour of uncommitted work. You fix it, you move on, and three days later a different agent does the same thing. The lesson lives in your head, not in the tools.
 
 VibeBloat reads your agent history, finds the commands that actually burned you, and compiles each one into a deterministic guard that blocks it before it runs again. One heavy scan up front. After that the guards enforce for free, on every agent, forever. No tokens, no prompt budget, nothing the model can talk itself out of.
