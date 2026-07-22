@@ -8,6 +8,39 @@ when they are reworded, and turns the lessons you approve into deterministic
 guards shared across your tools. Incremental scans keep proposing new and
 stronger protections as you work; a human still approves every hard block.
 
+## Install and onboard (recommended)
+
+The onboarding is the product setup, not an optional tutorial. It discovers your
+agents and history sources, asks what VibeBloat may read, lets you choose lexical
+or local semantic recall, reviews the lessons it finds, and installs only the
+hooks and guards you approve.
+
+```sh
+git clone https://github.com/veltri-23/vibebloat.git
+cd vibebloat
+bun install --frozen-lockfile --omit peer
+bun link
+vibebloat init --pretty
+```
+
+Onboarding prints one consent gate at a time so every decision is explicit and
+resumable. Answer with an option exactly as displayed, then repeat until the flow
+finishes:
+
+```sh
+vibebloat init --answer "Yes"
+vibebloat init --pretty
+```
+
+Finish by verifying the approved integrations:
+
+```sh
+vibebloat doctor
+```
+
+See the [judge guide's personalized onboarding path](JUDGES.md#evaluate-personalized-onboarding)
+for focused proof of onboarding, semantic recall, and learning over time.
+
 ## OpenAI Build Week judges: start here
 
 The fast demo shows the enforcement end of VibeBloat's larger learning loop:
@@ -20,21 +53,19 @@ The fast demo shows the enforcement end of VibeBloat's larger learning loop:
    lessons as your history grows.
 4. **Safe enforcement:** only human-approved guards become deterministic blocks.
 
-This deterministic two-minute path uses invented sample history. It reads none
-of your data, needs no API key, and makes no model call:
+After the source install above, this deterministic two-minute path uses invented
+sample history. It reads none of your data, needs no API key, and makes no model
+call:
 
 ```sh
-git clone https://github.com/veltri-23/vibebloat.git
-cd vibebloat
-bun install --frozen-lockfile --omit peer
-bun src/cli.ts demo --no-model
+vibebloat demo --no-model
 ```
 
 Expected proof: three dangerous commands blocked with exit code `2`, two safe
 variants allowed with exit code `0`, then the same guard returned as a structured
 Codex denial.
 
-**[Full judge guide](JUDGES.md)** · **[Green public CI](https://github.com/veltri-23/vibebloat/actions/runs/29879437084)** · **Codex session:** `019f7184-325b-7ec0-879a-856b59de5e17`
+**[Full judge guide](JUDGES.md)** · **[Green public CI](https://github.com/veltri-23/vibebloat/actions/runs/29882290235)** · **Codex session:** `019f7184-325b-7ec0-879a-856b59de5e17`
 
 Give an agent enough rope and it will eventually run `git stash -u` over untracked files, `docker compose down -v` on the dev database, or `git reset --hard` over an hour of uncommitted work. You fix it, you move on, and three days later a different agent does the same thing. The lesson lives in your head, not in the tools.
 

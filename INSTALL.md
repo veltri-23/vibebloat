@@ -13,17 +13,40 @@ install a development checkout without claiming release provenance.
 
 ## Source checkout
 
-Run on Windows, macOS, or Linux:
+Run on Windows, macOS, or Linux. The recommended installation goes through
+personalized onboarding so history consent, semantic recall, guard review, and
+agent bindings are configured together:
 
 ```sh
-bun install --frozen-lockfile
+git clone https://github.com/veltri-23/vibebloat.git
+cd vibebloat
+bun install --frozen-lockfile --omit peer
 bun link
-vibebloat install --yes
+vibebloat init --pretty
+```
+
+Answer each displayed gate explicitly and rerun for the next one:
+
+```sh
+vibebloat init --answer "Yes"
+vibebloat init --pretty
+```
+
+After onboarding reaches its end:
+
+```sh
 vibebloat doctor
 ```
 
-The installer preserves existing Claude Code and Codex hook order. It refuses unsafe
-configuration shapes instead of overwriting them.
+Onboarding preserves existing Claude Code and Codex hook order. It refuses unsafe
+configuration shapes instead of overwriting them and installs only selected,
+verified bindings.
+
+## Non-interactive lower-level install
+
+`vibebloat install --yes` exists for controlled automation. It installs bindings
+without personalized history mining, semantic-recall selection, incident review,
+or guard approval. New users should run `vibebloat init --pretty` instead.
 
 ## Hermes
 
