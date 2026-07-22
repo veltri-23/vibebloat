@@ -33,7 +33,8 @@ Prerequisites: Git and [Bun](https://bun.sh) `>=1.3.0`.
 git clone https://github.com/veltri-23/vibebloat.git
 cd vibebloat
 bun install --frozen-lockfile --omit peer
-bun src/cli.ts demo --no-model
+bun link
+vibebloat demo --no-model
 ```
 
 This demonstration uses labelled, invented sample history. It does not read your
@@ -60,8 +61,21 @@ produces those guards can be evaluated below.
 
 ## Evaluate personalized onboarding
 
+This is the recommended real installation path, also shown near the top of the
+[README](README.md#install-and-onboard-recommended). Do not run the low-level
+`install --yes` command first; it bypasses the personalized mining and approval
+flow that makes VibeBloat useful.
+
 ```sh
-bun src/cli.ts init --pretty
+vibebloat init --pretty
+```
+
+The flow is deliberately explicit and resumable. Submit an option exactly as
+shown, then rerun for the next gate:
+
+```sh
+vibebloat init --answer "Yes"
+vibebloat init --pretty
 ```
 
 The onboarding detects supported agents and history sources, explains what it
@@ -72,7 +86,7 @@ The user can decline before any personal history is ingested.
 Automated onboarding proof:
 
 ```sh
-bun test tests/e2e/onboarding-12min.test.ts tests/onboarding-returning.test.ts
+bun test tests/e2e/onboarding-12min.test.ts tests/install-onboarding-bindings.test.ts tests/onboarding-returning.test.ts
 ```
 
 ## Evaluate semantic and ongoing learning
@@ -145,7 +159,7 @@ Public default-branch CI is green for validation plus standalone builds on:
 - macOS x64
 - macOS arm64
 
-[Open the green CI run](https://github.com/veltri-23/vibebloat/actions/runs/29877330907).
+[Open the green CI run](https://github.com/veltri-23/vibebloat/actions/runs/29882290235).
 
 ## What to inspect
 
