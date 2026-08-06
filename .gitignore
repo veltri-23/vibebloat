@@ -10,3 +10,6 @@ release/*.key
 
 # local neural embedder model cache (recall = local)
 .vibebloat-model-cache/
+
+# git-stack local state (audit #44)
+.gstack/
